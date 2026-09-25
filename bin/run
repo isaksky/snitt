@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+"$ROOT/bin/build"
+
+if [ -x "$ROOT/build/xshot.app/Contents/MacOS/xshot" ]; then
+    exec "$ROOT/build/xshot.app/Contents/MacOS/xshot" "$@"
+fi
+exec "$ROOT/build/xshot" "$@"
