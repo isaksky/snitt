@@ -7,6 +7,9 @@
 #include <QScreen>
 #include <QCursor>
 #include <QPixmap>
+#include <QClipboard>
+#include <QDir>
+#include <QWindow>
 #include "regionselector.h"
 #ifdef Q_OS_MACOS
 #include <CoreGraphics/CoreGraphics.h>
@@ -17,6 +20,15 @@
 #endif
 
 Backend::Backend(QObject *parent) : QObject(parent) {
+    connect(&m_recorder, &VideoRecorder::changed, this, &Backend::recordingChanged);
+    connect(&m_recorder, &VideoRecorder::elapsedChanged, this, &Backend::recordingElapsedChanged);
+    connect(&m_recorder, &VideoRecorder::canceled, this, &Backend::recordingCanceled);
+    connect(&m_recorder, &VideoRecorder::error, this, &Backend::error);
+    connect(&m_recorder, &VideoRecorder::saved, this, [this](const QString &path) {
+        const QString nativePath = QDir::toNativeSeparators(path);
+        QGuiApplication::clipboard()->setText(nativePath);
+        emit recordingSaved(nativePath);
+    });
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus state) {
         if (!m_capturing) return;
         const bool success = state == QProcess::NormalExit && code == 0
@@ -47,8 +59,21 @@ Backend::~Backend() {
     }
 }
 
-void Backend::capture(bool multiple) {
-    if (m_capturing) return;
+bool Backend::protectRecordingControls(QObject *object) {
+#ifdef Q_OS_WIN
+    auto *window = qobject_cast<QWindow *>(object);
+    if (!window) return false;
+    // Windows 10 2004+ omits this window from desktop capture. On older
+    // releases the same value falls back to the protected black rectangle.
+    return SetWindowDisplayAffinity(reinterpret_cast<HWND>(window->winId()), 0x00000011) != FALSE;
+#else
+    Q_UNUSED(object);
+    return false;
+#endif
+}
+
+void Backend::capture(bool multiple, bool video) {
+    if (m_capturing || recording()) return;
 #ifdef Q_OS_MACOS
     // Without permission macOS can return a successful wallpaper-only image.
     if (!CGPreflightScreenCaptureAccess() && !CGRequestScreenCaptureAccess()) {
@@ -66,7 +91,8 @@ void Backend::capture(bool multiple) {
     emit capturingChanged();
     m_output = m_temp.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png");
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    m_multiple = multiple;
+    m_video = video;
+    m_multiple = multiple && !video;
     m_screens.clear();
     m_screenIndex = 0;
     for (QScreen *screen : QGuiApplication::screens()) m_screens.append({screen->geometry(), {}});
@@ -118,14 +144,23 @@ void Backend::showSelectors() {
             finish(true);
         });
         connect(selector, &RegionSelector::multipleRequested, this, [this] {
-            m_multiple = true; updateSelections();
+            if (!m_video) { m_multiple = true; updateSelections(); }
+        });
+        connect(selector, &RegionSelector::videoRequested, this, [this] {
+            m_video = !m_video;
+            m_multiple = false;
+            m_selections.clear();
+            updateSelections();
+        });
+        connect(selector, &RegionSelector::videoSelected, this, [this, selector](const QRectF &area) {
+            startRecording(selector, area);
         });
         connect(selector, &RegionSelector::regionAdded, this, [this, selector](const QRectF &area) {
             qint64 bytes = 0;
             for (const auto &selection : m_selections) bytes += selection.image.sizeInBytes();
             const QImage image = selector->crop(area);
             if (m_selections.size() >= 24 || image.isNull() || bytes + image.sizeInBytes() > 256 * 1024 * 1024) {
-                selector->setNotice(QStringLiteral("Selection limit reached. Remove a region, or press Enter to arrange."));
+                selector->setNotice(QStringLiteral("Selection limit reached. Remove a region, or use Copy to arrange."));
                 return;
             }
             m_selections.append({selector, area, image});
@@ -161,7 +196,60 @@ void Backend::updateSelections() {
         for (int i = 0; i < m_selections.size(); ++i)
             if (m_selections[i].owner == selector) areas.append({i, m_selections[i].area});
         selector->setSelections(m_multiple, areas, m_selections.size());
+        selector->setVideo(m_video);
     }
+}
+
+void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
+    if (!m_capturing || !m_video) return;
+    recording::Source source;
+    m_recordingRegion = area.toAlignedRect().translated(selector->geometry().topLeft());
+#ifdef Q_OS_MACOS
+    source.platform = recording::Platform::Mac;
+    source.relativeRegion = QRectF(area.x() / selector->width(), area.y() / selector->height(),
+                                  area.width() / selector->width(), area.height() / selector->height());
+    // AVFoundation's Capture screen N follows CGGetActiveDisplayList order,
+    // which need not match Qt's screen list order.
+    uint32_t count = 0;
+    CGGetActiveDisplayList(0, nullptr, &count);
+    QList<CGDirectDisplayID> displays(count);
+    CGGetActiveDisplayList(count, displays.data(), &count);
+    source.screenIndex = -1;
+    for (uint32_t i = 0; i < count; ++i) {
+        const CGRect bounds = CGDisplayBounds(displays[i]);
+        const QRect geometry(qRound(bounds.origin.x), qRound(bounds.origin.y),
+                             qRound(bounds.size.width), qRound(bounds.size.height));
+        if (geometry == selector->geometry()) { source.screenIndex = int(i); break; }
+    }
+    if (source.screenIndex < 0) {
+        emit error(QStringLiteral("The selected display changed. Select the region again."));
+        finish();
+        return;
+    }
+#elif defined(Q_OS_WIN)
+    source.platform = recording::Platform::Windows;
+    const HMONITOR monitor = MonitorFromWindow(reinterpret_cast<HWND>(selector->winId()), MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {}; info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, &info)) {
+        emit error(QStringLiteral("Could not determine the selected display's recording coordinates."));
+        finish();
+        return;
+    }
+    const QRect monitorPixels(info.rcMonitor.left, info.rcMonitor.top,
+                              info.rcMonitor.right - info.rcMonitor.left, info.rcMonitor.bottom - info.rcMonitor.top);
+    source.pixelRegion = RegionSelector::pixelRect(area, selector->size(), monitorPixels.size()).translated(monitorPixels.topLeft());
+#else
+    emit error(QStringLiteral("Screen recording supports macOS and Windows."));
+    finish();
+    return;
+#endif
+    // Hide all frozen overlays before FFmpeg starts sampling the live desktop.
+    for (auto overlay : m_selectors) if (overlay) overlay->hide();
+#ifdef Q_OS_WIN
+    DwmFlush();
+#endif
+    m_recorder.start(source);
+    finish(false);
 }
 
 void Backend::removeSelection(int index) {

@@ -10,6 +10,8 @@
 #include <QApplication>
 #include <QScreen>
 #include <QTimer>
+#include <QFileInfo>
+#include <QScopeGuard>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -29,6 +31,8 @@ private slots:
     void scaledGesturesAndClipboard();
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
+    void qmlKeyboardCommands();
+    void qmlRecordingControls();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void gridArrangementPreservesPixels();
@@ -45,6 +49,13 @@ static QImage pattern() {
         for (int x = 0; x < image.width(); ++x)
             image.setPixelColor(x, y, QColor(x * 3, y * 4, 60, 200));
     return image;
+}
+
+static QQuickItem *visualItem(QQuickItem *parent, const QString &name) {
+    if (parent->objectName() == name) return parent;
+    for (QQuickItem *child : parent->childItems())
+        if (auto *found = visualItem(child, name)) return found;
+    return nullptr;
 }
 
 void EditorTests::cutsJoinExactPixels() {
@@ -257,6 +268,218 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
 }
 
+void EditorTests::qmlKeyboardCommands() {
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
+    QGuiApplication::setFont(QFont("Helvetica"));
+#endif
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    const QString path = dir.filePath("input.png");
+    QVERIFY(pattern().save(path));
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(window->isVisible() && canvas->hasImage());
+    window->requestActivate();
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+
+    // The displayed accelerator and actual keyboard command stay together.
+    const QList<QPair<QString, Qt::Key>> tools{
+        {"cut", Qt::Key_X}, {"rect", Qt::Key_R}, {"text", Qt::Key_T},
+        {"arrow", Qt::Key_A}, {"blur", Qt::Key_B}, {"erase", Qt::Key_E}};
+    for (const auto &tool : tools) {
+        auto *button = visualItem(window->contentItem(), "tool_" + tool.first);
+        QVERIFY2(button, qPrintable("Missing tool button: " + tool.first));
+        QVERIFY(button->property("text").toString().endsWith(QStringLiteral("(") + QChar(ushort(tool.second)) + ")"));
+        QTest::keyClick(window, tool.second);
+        QTRY_COMPARE(canvas->tool(), tool.first);
+        QVERIFY(button->property("checked").toBool());
+    }
+    QTest::keyClick(window, Qt::Key_G);
+    QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
+    QTest::keyClick(window, Qt::Key_B);
+    QTRY_COMPARE(canvas->tool(), QString("blur"));
+    QCOMPARE(canvas->ink(), QColor("#22c55e"));
+    QTest::keyClick(window, Qt::Key_D);
+    QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));
+    QCOMPARE(canvas->tool(), QString("blur"));
+    auto *redButton = visualItem(window->contentItem(), "ink_D");
+    QVERIFY(redButton);
+    QVERIFY(redButton->property("checked").toBool());
+
+    canvas->setTool("rect");
+    const QPointF start = canvas->imageRect().topLeft() + QPointF(10, 10) * canvas->imageScale();
+    const QPointF end = canvas->imageRect().topLeft() + QPointF(50, 40) * canvas->imageScale();
+    canvas->begin(start.x(), start.y()); canvas->end(end.x(), end.y());
+    QVERIFY(canvas->canUndo());
+    QVERIFY(canvas->copy());
+    const QImage expectedImage = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("not submitted");
+    QTest::keyClick(window, Qt::Key_Return);
+    QCoreApplication::processEvents();
+    QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("not submitted"));
+    auto *copyButton = visualItem(window->contentItem(), "copyButton");
+    QVERIFY(copyButton);
+    QVERIFY(copyButton->property("text").toString().endsWith("(" + window->property("copyKey").toString() + ")"));
+    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->image(), expectedImage);
+
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QVERIFY(canvas->loadRegions({pattern(), pattern(), pattern(), pattern(), pattern(), pattern(), pattern()}));
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QCOMPARE(canvas->columns(), 2);
+    QTest::keyClick(window, Qt::Key_Plus);
+    QTRY_COMPARE(canvas->columns(), 3);
+    QTest::keyClick(window, Qt::Key_Equal);
+    QTRY_COMPARE(canvas->columns(), 4);
+    for (int i = 0; i < 5; ++i) QTest::keyClick(window, Qt::Key_Plus);
+    QTRY_COMPARE(canvas->columns(), 6);
+    auto *moreColumns = visualItem(window->contentItem(), "moreColumnsButton");
+    auto *fewerColumns = visualItem(window->contentItem(), "fewerColumnsButton");
+    QVERIFY(moreColumns); QVERIFY(fewerColumns);
+    QVERIFY(!moreColumns->isEnabled()); QVERIFY(fewerColumns->isEnabled());
+    for (int i = 0; i < 8; ++i) QTest::keyClick(window, Qt::Key_Minus);
+    QTRY_COMPARE(canvas->columns(), 1);
+    QVERIFY(moreColumns->isEnabled()); QVERIFY(!fewerColumns->isEnabled());
+    const QPoint plusCenter = moreColumns->mapToScene(QPointF(moreColumns->width() / 2, moreColumns->height() / 2)).toPoint();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, plusCenter);
+    QTRY_COMPARE(canvas->columns(), 2);
+
+    QTest::keyClick(window, Qt::Key_Return);
+    QTRY_VERIFY(!canvas->arranging());
+    QVERIFY(canvas->hasImage()); QVERIFY(window->isVisible());
+    QTest::keyClick(window, Qt::Key_Plus);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->columns(), 2);
+    QTest::keyClick(window, Qt::Key_Minus);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->columns(), 2); // Layout keys do not change an annotated image.
+    canvas->arrange();
+    QVERIFY(canvas->copy());
+    const QImage expectedGrid = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("not submitted");
+    canvas->forceActiveFocus();
+    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(canvas->regionCount(), 0);
+    QCOMPARE(QGuiApplication::clipboard()->image(), expectedGrid);
+}
+
+void EditorTests::qmlRecordingControls() {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Recording controls require FFmpeg and an unlocked desktop");
+    QVERIFY2(!recording::toolPath("ffmpeg").isEmpty(), "Interactive recording tests require FFmpeg");
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
+    QGuiApplication::setFont(QFont("Helvetica"));
+#endif
+    QTest::failOnWarning(QRegularExpression(".*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend;
+    QString error;
+    connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
+    QSignalSpy saved(&backend, &Backend::recordingSaved);
+    const auto cleanup = qScopeGuard([&backend] {
+        const QString ownClip = backend.recordingPath();
+        if (backend.recording()) {
+            backend.cancelRecording();
+            QElapsedTimer timeout; timeout.start();
+            while (backend.recording() && timeout.elapsed() < 5000) QTest::qWait(20);
+        }
+        if (!ownClip.isEmpty() && !backend.recording()) QFile::remove(ownClip);
+    });
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
+    QVERIFY(controls);
+    QVERIFY(!window->isVisible()); QVERIFY(!controls->isVisible());
+
+    QWidget marker;
+    marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    const QRect screen = QGuiApplication::primaryScreen()->geometry();
+    marker.setGeometry(screen.x() + 80, screen.y() + 80, 420, 320);
+    marker.setAutoFillBackground(true);
+    QPalette palette; palette.setColor(QPalette::Window, QColor("#123456")); marker.setPalette(palette);
+    marker.show(); marker.raise(); marker.activateWindow();
+    QVERIFY(QTest::qWaitForWindowExposed(&marker));
+    QTest::qWait(100);
+    backend.capture(false, true);
+    RegionSelector *selector = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            auto *candidate = qobject_cast<RegionSelector *>(widget);
+            if (candidate && candidate->isVisible() && candidate->geometry().contains(marker.geometry().center())) {
+                selector = candidate; return true;
+            }
+        }
+        return false;
+    })() || !error.isEmpty(), 10000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(selector);
+    const QPoint start = marker.geometry().topLeft() + QPoint(20, 20) - selector->geometry().topLeft();
+    const QPoint end = start + QPoint(240, 160);
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(selector, end);
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, end);
+    QTRY_VERIFY_WITH_TIMEOUT(controls->isVisible() || !error.isEmpty(), 10000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(backend.recording());
+    QVERIFY(!window->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1 || !error.isEmpty(), 6000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QImage preview;
+    QTRY_VERIFY(!(preview = controls->grabWindow()).isNull());
+    QVERIFY(preview.save("recording-controls.png"));
+    controls->requestActivate();
+    QTRY_VERIFY(controls->isActive());
+    QGuiApplication::clipboard()->setText("waiting for recording");
+    QTest::keySequence(controls, QKeySequence(QKeySequence::Copy));
+    QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !error.isEmpty(), 15000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(saved.size(), 1);
+    const QString path = saved.first().first().toString();
+    const QFileInfo clip(path);
+    QVERIFY(clip.isAbsolute()); QCOMPARE(clip.suffix(), QString("mp4"));
+    QVERIFY(clip.exists() && clip.size() > 0);
+    QCOMPARE(QGuiApplication::clipboard()->text(), path);
+    QVERIFY(!backend.recording());
+    QTRY_VERIFY(!controls->isVisible());
+    QVERIFY(!window->isVisible());
+    QVERIFY(QFile::remove(path));
+#else
+    QSKIP("Screen recording requires macOS or Windows");
+#endif
+}
+
 void EditorTests::multipleRegionSelection() {
     RegionSelector selector(pattern(), QRect(0, 0, 400, 300));
     QSignalSpy single(&selector, &RegionSelector::selected);
@@ -280,6 +503,8 @@ void EditorTests::multipleRegionSelection() {
     QCOMPARE(removed.first().first().toInt(), 2); // Global order across monitors.
     QCOMPARE(added.size(), 1);
     QTest::keyClick(&selector, Qt::Key_Return);
+    QCOMPARE(accepted.size(), 0);
+    QTest::keySequence(&selector, QKeySequence(QKeySequence::Copy));
     QCOMPARE(accepted.size(), 1);
     QTest::keyClick(&selector, Qt::Key_Escape);
     QCOMPARE(canceled.size(), 1);
@@ -409,6 +634,8 @@ void EditorTests::desktopMultipleCapture() {
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(80, 60));
     QCOMPARE(batch.size(), 0);
     QTest::keyClick(selector, Qt::Key_Return);
+    QCOMPARE(batch.size(), 0);
+    QTest::keySequence(selector, QKeySequence(QKeySequence::Copy));
     QTRY_COMPARE(batch.size(), 1);
     QCOMPARE(finished.size(), 1);
     QVERIFY(finished.first().first().toBool());
@@ -423,7 +650,7 @@ void EditorTests::desktopMultipleCapture() {
     backend.capture(true);
     selector = nullptr;
     QTRY_VERIFY_WITH_TIMEOUT(findSelector(), 10000);
-    QTest::keyClick(selector, Qt::Key_Return); // Empty multi-selection stays open.
+    QTest::keySequence(selector, QKeySequence(QKeySequence::Copy)); // Empty multi-selection stays open.
     QVERIFY(backend.capturing());
     QTest::keyClick(selector, Qt::Key_Escape);
     QCOMPARE(finished.size(), 2);

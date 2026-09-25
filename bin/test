@@ -9,8 +9,12 @@ else
     echo "Qt 6 qmake is required." >&2
     exit 1
 fi
-mkdir -p "$ROOT/build/tests"
-cd "$ROOT/build/tests"
-"$QMAKE" "$ROOT/tests/editor_tests.pro"
-make -j4
-QT_QPA_PLATFORM=offscreen ./editor_tests
+for SUITE in editor_tests imagetool_tests recording_tests; do
+    TEST_DIR="$ROOT/build/tests"
+    [ "$SUITE" = editor_tests ] || TEST_DIR="$TEST_DIR/$SUITE"
+    mkdir -p "$TEST_DIR"
+    cd "$TEST_DIR"
+    "$QMAKE" "$ROOT/tests/$SUITE.pro"
+    make -j4
+    QT_QPA_PLATFORM=offscreen "./$SUITE"
+done

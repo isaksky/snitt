@@ -12,10 +12,13 @@ public:
     QImage crop(const QRectF &area) const;
     void setSelections(bool multiple, const QList<QPair<int, QRectF>> &areas, int total);
     void setNotice(const QString &notice);
+    void setVideo(bool video);
 signals:
     void selected(const QImage &image);
     void canceled();
     void multipleRequested();
+    void videoRequested();
+    void videoSelected(const QRectF &area);
     void regionAdded(const QRectF &area);
     void regionRemoved(int index);
     void removeLastRequested();
@@ -32,6 +35,7 @@ private:
     QPointF m_start, m_end;
     bool m_dragging = false;
     bool m_multiple = false;
+    bool m_video = false;
     int m_total = 0;
     QList<QPair<int, QRectF>> m_areas;
     QString m_notice;

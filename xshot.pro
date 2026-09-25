@@ -11,6 +11,8 @@ HEADERS += src/backend.h src/imagedocument.h src/editorcanvas.h
 SOURCES += src/main.cpp src/backend.cpp src/imagedocument.cpp src/editorcanvas.cpp
 HEADERS += src/globalhotkey.h src/appservice.h src/regionselector.h
 SOURCES += src/globalhotkey.cpp src/appservice.cpp src/regionselector.cpp
+HEADERS += src/videorecorder.h
+SOURCES += src/videorecorder.cpp
 macx {
     LIBS += -framework Carbon -framework CoreGraphics
     QMAKE_INFO_PLIST = platform/macos/Info.plist

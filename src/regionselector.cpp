@@ -2,6 +2,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QKeySequence>
 #include <cmath>
 
 RegionSelector::RegionSelector(QImage image, const QRect &geometry)
@@ -46,6 +47,12 @@ void RegionSelector::setSelections(bool multiple, const QList<QPair<int, QRectF>
 
 void RegionSelector::setNotice(const QString &notice) { m_notice = notice; update(); }
 
+void RegionSelector::setVideo(bool video) {
+    m_video = video;
+    setWindowTitle(video ? "xshot — Select a recording region" : "xshot — Select a region");
+    update();
+}
+
 void RegionSelector::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.drawImage(rect(), m_image);
@@ -73,12 +80,14 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.drawRect(area);
     }
     const QRect pixels = pixelRect(area, size(), m_image.size());
+    const QString copyKey = QKeySequence(QKeySequence::Copy).toString(QKeySequence::NativeText);
     const QString hint = !m_notice.isEmpty() ? m_notice
         : m_dragging ? QStringLiteral("%1 × %2 px · Release to %3 · Esc to cancel")
                                          .arg(pixels.width()).arg(pixels.height())
-                                         .arg(m_multiple ? "add region" : "capture")
-        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click a region to remove · Enter to arrange · Esc to cancel").arg(m_total)
-        : QStringLiteral("Drag to select a region · M for multiple regions · Esc to cancel");
+                                         .arg(m_video ? "start recording" : m_multiple ? "add region" : "capture")
+        : m_video ? QStringLiteral("Drag to record one region · Screenshot (V) · Cancel (Esc)")
+        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click to remove · Arrange (%2) · Video (V) · Cancel (Esc)").arg(m_total).arg(copyKey)
+        : QStringLiteral("Drag to select a region · Multiple (M) · Video (V) · Cancel (Esc)");
     QFont font = p.font(); font.setPixelSize(16); font.setBold(false); p.setFont(font);
     const int boxWidth = qMin(width() - 24, p.fontMetrics().horizontalAdvance(hint) + 32);
     const QRect box((width() - boxWidth) / 2, 24, boxWidth, 42);
@@ -112,7 +121,8 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
     }
     const QRect region = pixelRect(selection(), size(), m_image.size());
     if (region.width() >= 2 && region.height() >= 2) {
-        if (m_multiple) emit regionAdded(selection());
+        if (m_video) emit videoSelected(selection());
+        else if (m_multiple) emit regionAdded(selection());
         else emit selected(m_image.copy(region));
     }
     else update();
@@ -120,8 +130,9 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
 
 void RegionSelector::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Escape) emit canceled();
-    else if (event->key() == Qt::Key_M) emit multipleRequested();
-    else if (m_multiple && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) emit accepted();
+    else if (event->key() == Qt::Key_V) emit videoRequested();
+    else if (event->key() == Qt::Key_M && !m_video) emit multipleRequested();
+    else if (m_multiple && event->matches(QKeySequence::Copy)) emit accepted();
     else if (m_multiple && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)) emit removeLastRequested();
     else QWidget::keyPressEvent(event);
 }

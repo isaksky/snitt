@@ -1,0 +1,9 @@
+QT += core gui quick testlib
+CONFIG += c++17 testcase console
+CONFIG -= app_bundle
+TARGET = imagetool_tests
+TEMPLATE = app
+macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
+INCLUDEPATH += ../src
+HEADERS += ../src/imagedocument.h ../src/editorcanvas.h
+SOURCES += imagetool_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp

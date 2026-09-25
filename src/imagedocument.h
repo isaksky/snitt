@@ -18,10 +18,13 @@ public:
     void undo();
     void redo();
     bool cut(bool vertical, int start, int end);
+    bool blur(QRectF area);
+    bool erase(QRectF area, QPointF samplePosition);
     bool annotate(const QString &tool, QPointF start, QPointF end, QColor color);
     bool text(QRectF box, const QString &text, QColor color);
     static void drawAnnotation(QPainter &painter, const QString &tool,
                                QPointF start, QPointF end, QColor color);
+    static void drawPrivacyMask(QPainter &painter, const QRect &area);
 private:
     void commit(QImage image);
     QVector<QImage> m_history;

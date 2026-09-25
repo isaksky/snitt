@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QPainter>
+#include <cmath>
 
 EditorCanvas::EditorCanvas(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setAntialiasing(true);
@@ -74,6 +75,22 @@ void EditorCanvas::paint(QPainter *p) {
         p->fillRect(strip, QColor(239, 68, 68, 85));
         p->setPen(QPen(QColor("#ef4444"), 1.5 / imageScale(), Qt::DashLine));
         p->drawRect(strip);
+    } else if (m_tool == "blur" || m_tool == "erase") {
+        const QRect area = QRectF(m_start, m_end).normalized().toAlignedRect()
+            .intersected(m_document.image().rect());
+        if (m_tool == "blur") {
+            ImageDocument::drawPrivacyMask(*p, area);
+        } else {
+            const int x = qBound(0, int(std::floor(m_start.x())), imageWidth() - 1);
+            const int y = qBound(0, int(std::floor(m_start.y())), imageHeight() - 1);
+            p->save();
+            p->setCompositionMode(QPainter::CompositionMode_Source);
+            p->fillRect(area, m_document.image().pixelColor(x, y));
+            p->restore();
+        }
+        p->setPen(QPen(QColor("#172331"), 1.5 / imageScale(), Qt::DashLine));
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(area);
     } else {
         ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink);
     }
@@ -163,6 +180,10 @@ void EditorCanvas::end(qreal x, qreal y) {
         const bool vertical = qAbs(m_end.x() - m_start.x()) >= qAbs(m_end.y() - m_start.y());
         m_document.cut(vertical, qRound(vertical ? m_start.x() : m_start.y()),
                        qRound(vertical ? m_end.x() : m_end.y()));
+    } else if (m_tool == "blur") {
+        m_document.blur(QRectF(m_start, m_end));
+    } else if (m_tool == "erase") {
+        m_document.erase(QRectF(m_start, m_end), m_start);
     } else {
         m_document.annotate(m_tool, m_start, m_end, m_ink);
     }

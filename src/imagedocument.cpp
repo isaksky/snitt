@@ -1,7 +1,57 @@
 #include "imagedocument.h"
 #include <QFont>
 #include <QPainter>
+#include <algorithm>
 #include <cmath>
+
+namespace {
+QRect selectedPixels(QRectF area, const QSize &size) {
+    if (!std::isfinite(area.x()) || !std::isfinite(area.y())
+        || !std::isfinite(area.width()) || !std::isfinite(area.height())) return {};
+    return area.normalized().intersected(QRectF(QPointF(0, 0), size)).toAlignedRect();
+}
+
+const QImage &privacyTexture() {
+    // This opaque pattern never uses screenshot pixels. Blurring the source
+    // would retain information about the contents the user meant to hide.
+    static const QImage texture = [] {
+        constexpr int side = 96;
+        constexpr int block = 12;
+        constexpr int radius = 2;
+        QImage pixels(side, side, QImage::Format_ARGB32_Premultiplied);
+        for (int y = 0; y < side; ++y) {
+            auto *row = reinterpret_cast<QRgb *>(pixels.scanLine(y));
+            for (int x = 0; x < side; ++x) {
+                const quint32 seed = quint32(x / block) * 0x9e3779b9U
+                                   ^ quint32(y / block) * 0x85ebca6bU;
+                const int shade = int((seed ^ (seed >> 13)) % 25);
+                row[x] = qRgb(125 + shade, 133 + shade, 144 + shade);
+            }
+        }
+        QImage horizontal(side, side, pixels.format());
+        QImage softened(side, side, pixels.format());
+        for (int pass = 0; pass < 2; ++pass) {
+            const QImage &input = pass == 0 ? pixels : horizontal;
+            QImage &output = pass == 0 ? horizontal : softened;
+            for (int y = 0; y < side; ++y) {
+                auto *row = reinterpret_cast<QRgb *>(output.scanLine(y));
+                for (int x = 0; x < side; ++x) {
+                    int red = 0, green = 0, blue = 0;
+                    for (int offset = -radius; offset <= radius; ++offset) {
+                        const QRgb value = input.pixel(
+                            pass == 0 ? (x + offset + side) % side : x,
+                            pass == 1 ? (y + offset + side) % side : y);
+                        red += qRed(value); green += qGreen(value); blue += qBlue(value);
+                    }
+                    row[x] = qRgb(red / 5, green / 5, blue / 5);
+                }
+            }
+        }
+        return softened;
+    }();
+    return texture;
+}
+}
 
 const QImage &ImageDocument::image() const {
     static const QImage empty;
@@ -53,6 +103,43 @@ bool ImageDocument::cut(bool vertical, int start, int end) {
         p.drawImage(QRect(0, start, result.width(), length - end), image(), QRect(0, end, image().width(), length - end));
     }
     p.end();
+    commit(std::move(result));
+    return true;
+}
+
+void ImageDocument::drawPrivacyMask(QPainter &painter, const QRect &area) {
+    painter.save();
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.fillRect(area, QBrush(privacyTexture()));
+    painter.restore();
+}
+
+bool ImageDocument::blur(QRectF area) {
+    if (image().isNull()) return false;
+    const QRect pixels = selectedPixels(area, image().size());
+    if (pixels.isEmpty()) return false;
+    QImage result = image().copy();
+    QPainter painter(&result);
+    drawPrivacyMask(painter, pixels);
+    painter.end();
+    commit(std::move(result));
+    return true;
+}
+
+bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
+    if (image().isNull() || !std::isfinite(samplePosition.x())
+        || !std::isfinite(samplePosition.y())) return false;
+    const QRect pixels = selectedPixels(area, image().size());
+    if (pixels.isEmpty()) return false;
+    const int sampleX = int(qBound(0.0, std::floor(samplePosition.x()), double(image().width() - 1)));
+    const int sampleY = int(qBound(0.0, std::floor(samplePosition.y()), double(image().height() - 1)));
+    const QRgb sampledPixel = image().pixel(sampleX, sampleY);
+    QImage result = image().copy();
+    for (int y = pixels.top(); y <= pixels.bottom(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(result.scanLine(y));
+        // Copy the stored pixel exactly, including its alpha and premultiplication.
+        std::fill(row + pixels.left(), row + pixels.right() + 1, sampledPixel);
+    }
     commit(std::move(result));
     return true;
 }

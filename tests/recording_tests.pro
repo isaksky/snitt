@@ -1,0 +1,11 @@
+QT += core gui widgets testlib
+CONFIG += c++17 testcase console
+CONFIG -= app_bundle
+TARGET = recording_tests
+TEMPLATE = app
+macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
+INCLUDEPATH += ../src
+HEADERS += ../src/backend.h ../src/regionselector.h ../src/videorecorder.h
+SOURCES += recording_tests.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/videorecorder.cpp
+macx: LIBS += -framework CoreGraphics
+win32: LIBS += -luser32 -ldwmapi

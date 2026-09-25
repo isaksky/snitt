@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Package an already deployed, signed macOS bundle without changing its signature."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import plistlib
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+
+
+ROOT = Path(__file__).resolve().parent.parent
+MACHO = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+         b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
+
+
+def run(*args):
+    return subprocess.check_output([str(arg) for arg in args], text=True).strip()
+
+
+def digest(path):
+    result = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            result.update(chunk)
+    return result.hexdigest()
+
+
+def binary_files(directory):
+    for path in directory.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            with path.open("rb") as handle:
+                if handle.read(4) in MACHO:
+                    yield path
+
+
+def verify_bundle(bundle):
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+    contents = bundle / "Contents"
+    binaries = list(binary_files(bundle))
+    dependencies = {}
+    for binary in binaries:
+        archs = run("lipo", "-archs", binary).split()
+        if archs != ["arm64"]:
+            raise RuntimeError(f"Expected arm64 binary, found {archs}: {binary}")
+        identity_lines = run("otool", "-D", binary).splitlines()[1:]
+        identity = identity_lines[0].strip() if identity_lines else ""
+        linked = []
+        for line in run("otool", "-L", binary).splitlines()[1:]:
+            name = line.strip().split(" (compatibility version", 1)[0]
+            # otool -L includes a dylib's own install-name as its first entry.
+            # It is metadata, not a dependency loaded from that original path.
+            if name == identity:
+                continue
+            linked.append(name)
+            if name.startswith(("/System/Library/", "/usr/lib/")):
+                continue
+            if name.startswith("@executable_path/"):
+                target = contents / "MacOS" / name[len("@executable_path/"):]
+            elif name.startswith("@loader_path/"):
+                target = binary.parent / name[len("@loader_path/"):]
+            elif name.startswith("@rpath/"):
+                target = contents / "Frameworks" / name[len("@rpath/"):]
+            else:
+                raise RuntimeError(f"External runtime dependency in {binary}: {name}")
+            if not target.is_file() or not target.resolve().is_relative_to(bundle.resolve()):
+                raise RuntimeError(f"Unresolved bundled dependency in {binary}: {name}")
+        dependencies[str(binary.relative_to(bundle))] = linked
+    return binaries, dependencies
+
+
+def uuid(path):
+    output = run("dwarfdump", "--uuid", path)
+    match = re.search(r"UUID: ([0-9A-Fa-f-]+) \(arm64\)", output)
+    if not match:
+        raise RuntimeError(f"No arm64 Mach-O UUID found: {path}")
+    return match.group(1).lower()
+
+
+def source_packages(bundle, binaries, cellar):
+    frameworks = bundle / "Contents" / "Frameworks"
+    deployed = [p for p in binaries if p.is_relative_to(frameworks)]
+    names = {p.name for p in deployed}
+    candidates = {}
+    for path in cellar.rglob("*"):
+        if path.name in names and path.is_file():
+            with path.open("rb") as handle:
+                if handle.read(4) in MACHO:
+                    candidates.setdefault(path.name, set()).add(path.resolve())
+    packages = {}
+    for binary in deployed:
+        wanted = uuid(binary)
+        matched = None
+        for candidate in sorted(candidates.get(binary.name, [])):
+            if uuid(candidate) == wanted:
+                matched = candidate
+                break
+        if matched is None:
+            raise RuntimeError(f"Cannot match bundled binary to its Homebrew source package: {binary}")
+        parts = matched.relative_to(cellar).parts
+        package = cellar / parts[0] / parts[1]
+        packages.setdefault(package, []).append(str(binary.relative_to(bundle)))
+    return packages
+
+
+def notice_file(path):
+    name = path.name.lower()
+    return name.startswith(("license", "licence", "copying", "copyright", "notice")) \
+        or name in {"ftl.txt", "gplv2.txt", "qt_attribution.json"}
+
+
+def copy_file(source, destination):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
+def download_source(package, cache):
+    recipe = next((package / ".brew").glob("*.rb"))
+    contents = recipe.read_text()
+    source = re.search(r'^\s*url "([^"\n]+)"', contents, re.MULTILINE)
+    checksum = re.search(r'^\s*sha256 "([0-9a-f]{64})"', contents, re.MULTILINE)
+    if not source or not checksum or not source.group(1).startswith("https://"):
+        raise RuntimeError(f"Cannot find a pinned HTTPS source archive in {recipe}")
+    expected = checksum.group(1)
+    archive = cache / (expected + ".source")
+    if not archive.exists() or digest(archive) != expected:
+        print(f"Fetching license source for {package.parent.name} {package.name}", flush=True)
+        partial = archive.with_suffix(".download")
+        request = urllib.request.Request(source.group(1), headers={"User-Agent": "xshot-release-packager"})
+        with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+        if digest(partial) != expected:
+            partial.unlink()
+            raise RuntimeError(f"Source checksum mismatch: {source.group(1)}")
+        partial.replace(archive)
+    return archive, source.group(1), expected
+
+
+def archive_notices(archive, destination):
+    # Read selected files directly; never extract untrusted archive paths.
+    with tarfile.open(archive) as source:
+        members = {member.name: member for member in source if member.isfile()}
+        chosen = set()
+        for name in members:
+            path = PurePosixPath(name)
+            if notice_file(path) or "LICENSES" in path.parts:
+                chosen.add(name)
+            # FreeType and libjpeg also keep complete terms in these files.
+            if path.name in {"README", "README.md", "README.ijg"} and len(path.parts) <= 3:
+                chosen.add(name)
+        # Preserve archive order: seeking backwards repeatedly through an XZ
+        # stream would decompress the whole source for each small notice.
+        for name in members:
+            if name not in chosen or not name.endswith("qt_attribution.json"):
+                continue
+            # Some upstream attribution strings contain literal line breaks.
+            attribution = json.loads(source.extractfile(members[name]).read(), strict=False)
+            entries = attribution if isinstance(attribution, list) else [attribution]
+            for entry in entries:
+                files = entry.get("LicenseFile", "") or []
+                if isinstance(files, str):
+                    files = [files]
+                for license_file in files:
+                    relative = os.path.normpath(str(PurePosixPath(name).parent / license_file))
+                    if relative in members:
+                        chosen.add(relative)
+        for name in members:
+            if name not in chosen:
+                continue
+            relative = PurePosixPath(*PurePosixPath(name).parts[1:])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(f"Unsafe license source path: {name}")
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source.extractfile(members[name]) as origin, target.open("wb") as output:
+                shutil.copyfileobj(origin, output)
+    if not chosen:
+        raise RuntimeError(f"No license material found in source archive {archive}")
+
+
+def add_notices(payload, packages, cache, dependencies):
+    inventory = []
+    licenses = payload / "licenses"
+    for package, files in sorted(packages.items()):
+        name = package.parent.name
+        destination = licenses / f"{name}-{package.name}"
+        found = 0
+        for path in package.rglob("*"):
+            if path.is_file() and notice_file(path) and "man" not in path.parts:
+                copy_file(path, destination / "installed" / path.relative_to(package))
+                found += 1
+        for path in package.glob("share/qt/sbom/*.spdx"):
+            copy_file(path, destination / path.name)
+        for path in (package / ".brew").glob("*.rb"):
+            copy_file(path, destination / path.name)
+        receipt = package / "INSTALL_RECEIPT.json"
+        if receipt.exists():
+            copy_file(receipt, destination / receipt.name)
+        record = {"package": name, "version": package.name, "binaries": files}
+        # Homebrew omits Qt/glib terms and some licenses referenced by the
+        # FreeType/JPEG top-level notice. Use the exact recipe-pinned source.
+        if name.startswith("qt") or name in {"glib", "freetype", "jpeg-turbo"} or not found:
+            archive, url, sha256 = download_source(package, cache)
+            archive_notices(archive, destination / "upstream")
+            record.update({"source_url": url, "source_sha256": sha256})
+        inventory.append(record)
+    (payload / "DEPENDENCIES.json").write_text(json.dumps({"packages": inventory, "linkage": dependencies}, indent=2) + "\n")
+    (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and Homebrew runtime libraries.
+Their exact versions, bundled binaries, and link dependencies are listed in
+DEPENDENCIES.json. License texts, copyright notices, Qt component attributions,
+Qt SBOMs, and the installed Homebrew source recipes are under licenses/.
+The Qt source material includes notices for its complete modules, including
+components that may not be part of this application. These notices apply to
+the named third-party components, not to xshot itself.
+
+The original frameworks and libraries remain separate and may be replaced by
+compatible builds. After replacing a signed library, sign the modified bundle
+locally (for example codesign --force --deep --sign - xshot.app). The original
+publisher's private signing key is neither included nor needed to do this.
+Modified signing identities may require renewing macOS screen-capture permission.
+
+Qt is copyright The Qt Company Ltd. and other contributors, distributed under
+the LGPLv3 option for the included Qt runtime modules. Qt licenses and applicable
+third-party terms are included in licenses/qt*/upstream/.
+Qt source and build recipes: https://code.qt.io/cgit/qt/
+Homebrew source recipes and patches: https://github.com/Homebrew/homebrew-core
+The included recipe files identify exact upstream source URLs and checksums.
+Qt's installed SBOMs identify additional component source locations.
+
+Portions of this software are copyright The FreeType Project
+(https://freetype.org/). All rights reserved.
+
+FFmpeg is a separate command-line dependency. It is not included in this archive.
+Its own installation supplies its licenses and source information.
+""")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bundle", type=Path, default=ROOT / "build/package/macos/xshot.app")
+    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--release-directory", type=Path, default=ROOT / "build/release")
+    parser.add_argument("--skip-checksum-manifest", action="store_true",
+                        help="Print the digest without changing a shared platform checksum file")
+    args = parser.parse_args()
+    if sys.platform != "darwin":
+        parser.error("macOS is required")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.]+)?", args.version):
+        parser.error("Expected a release version such as 0.1.0")
+    bundle = args.bundle.resolve()
+    with (bundle / "Contents/Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    if info.get("CFBundleShortVersionString") != args.version:
+        raise RuntimeError("Bundle version does not match the requested release version")
+    binaries, dependencies = verify_bundle(bundle)
+    cellar = Path(run("brew", "--cellar")).resolve()
+    packages = source_packages(bundle, binaries, cellar)
+    release = args.release_directory.resolve()
+    release.mkdir(parents=True, exist_ok=True)
+    cache = ROOT / "build/package/license-sources"
+    cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="xshot-macos-release-", dir=release) as temporary:
+        payload = Path(temporary) / "payload"
+        payload.mkdir()
+        subprocess.run(["ditto", str(bundle), str(payload / "xshot.app")], check=True)
+        copy_file(ROOT / "README.md", payload / "README.md")
+        (payload / "VERSION").write_text(args.version + "\n")
+        (payload / "MACOS-INSTALL.txt").write_text("""xshot for macOS 15 or later, Apple silicon (arm64)
+
+Move xshot.app into your Applications folder, then open it. xshot remains in the
+menu bar. Use Ctrl+Print Screen (F13 on Mac), or Ctrl+Shift+X, to select a region.
+Grant Screen & System Audio Recording permission to xshot when macOS requests it.
+For login startup, add xshot in System Settings > General > Login Items.
+Install FFmpeg separately with `brew install ffmpeg` to enable video recording.
+
+This release is signed with a persistent local development certificate. It is
+not signed with an Apple Developer ID and is not notarized. macOS Gatekeeper
+may require approval in System Settings > Privacy & Security > Open Anyway.
+The archive contains no private signing key, certificate export, or keychain.
+
+The application and its bundled libraries are self-contained. Homebrew Qt is
+not required to run the app. FFmpeg remains a separate optional video dependency.
+See README.md for tools and shortcuts and THIRD-PARTY-NOTICES.txt for licenses.
+""")
+        add_notices(payload, packages, cache, dependencies)
+        verify_bundle(payload / "xshot.app")
+        copy_file(ROOT / "README.md", payload / "README.md")
+        archive_name = f"xshot_{args.version}_macos_arm64.zip"
+        staged_archive = Path(temporary) / archive_name
+        subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", str(payload), str(staged_archive)], check=True)
+        # Verify the actual archived app, including framework symlinks and code signature.
+        extracted = Path(temporary) / "verified"
+        subprocess.run(["ditto", "-x", "-k", str(staged_archive), str(extracted)], check=True)
+        verify_bundle(extracted / "xshot.app")
+        archive = release / archive_name
+        staged_archive.replace(archive)
+    sha256 = digest(archive)
+    if not args.skip_checksum_manifest:
+        manifest = release / f"xshot_{args.version}_checksums.txt"
+        existing = manifest.read_text().splitlines() if manifest.exists() else []
+        # Preserve Windows/other platform entries, replacing only this archive's line.
+        lines = [line for line in existing if line.strip() and line.split()[-1].lstrip("*") != archive_name]
+        lines.append(f"{sha256}  {archive_name}")
+        manifest.write_text("\n".join(sorted(lines, key=lambda line: line.split()[-1])) + "\n")
+    print(f"Packaged {archive}\nSHA-256 {sha256}")
+
+
+if __name__ == "__main__":
+    main()

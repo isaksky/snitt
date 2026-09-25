@@ -25,20 +25,23 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 } finally { Pop-Location }
 if ($Test) {
-    $testDir = Join-Path $build 'tests'
-    New-Item -ItemType Directory -Force $testDir | Out-Null
-    Push-Location $testDir
-    $oldPlatform = $env:QT_QPA_PLATFORM
-    try {
-        & $qmake "$root\tests\editor_tests.pro" 'CONFIG+=release' 'CONFIG-=debug_and_release'
-        if ($LASTEXITCODE -ne 0) { throw 'Test qmake failed' }
-        & $make '-j4'
-        if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
-        $env:QT_QPA_PLATFORM = 'offscreen'
-        & '.\editor_tests.exe' '-o' 'results.txt,txt' '-o' 'results.xml,junitxml'
-        $code = $LASTEXITCODE
-        Get-Content results.txt
-        if ($code -ne 0) { throw "Tests failed: $code" }
-    } finally { $env:QT_QPA_PLATFORM = $oldPlatform; Pop-Location }
+    foreach ($suite in @('editor_tests', 'imagetool_tests', 'recording_tests')) {
+        $testDir = Join-Path $build 'tests'
+        if ($suite -ne 'editor_tests') { $testDir = Join-Path $testDir $suite }
+        New-Item -ItemType Directory -Force $testDir | Out-Null
+        Push-Location $testDir
+        $oldPlatform = $env:QT_QPA_PLATFORM
+        try {
+            & $qmake "$root\tests\$suite.pro" 'CONFIG+=release' 'CONFIG-=debug_and_release'
+            if ($LASTEXITCODE -ne 0) { throw "$suite qmake failed" }
+            & $make '-j4'
+            if ($LASTEXITCODE -ne 0) { throw "$suite build failed" }
+            $env:QT_QPA_PLATFORM = 'offscreen'
+            & ".\$suite.exe" '-o' 'results.txt,txt' '-o' 'results.xml,junitxml'
+            $code = $LASTEXITCODE
+            Get-Content results.txt
+            if ($code -ne 0) { throw "${suite} failed: $code" }
+        } finally { $env:QT_QPA_PLATFORM = $oldPlatform; Pop-Location }
+    }
 }
 Write-Output "Built $build\xshot.exe"
