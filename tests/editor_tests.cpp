@@ -6,6 +6,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QApplication>
 #include <QScreen>
 #include <QTimer>
@@ -29,6 +30,9 @@ private slots:
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
     void regionSelectionScalesAndCancels();
+    void multipleRegionSelection();
+    void gridArrangementPreservesPixels();
+    void desktopMultipleCapture();
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
     void windowsCaptureLatency();
@@ -161,6 +165,28 @@ void EditorTests::makePreviewFixture() {
     }
     p.end();
     QVERIFY(image.save("preview.png"));
+    if (qEnvironmentVariableIsEmpty("XSHOT_RENDER_PREVIEW")) return;
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", true);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QVariantList regions;
+    for (int i = 0; i < 4; ++i) regions.append(image.copy(48, 190 + i * 125, 640, 86));
+    QVERIFY(canvas->loadRegions(regions));
+    QTRY_VERIFY(window->isVisible());
+    QImage preview;
+    QTRY_VERIFY(!(preview = window->grabWindow()).isNull());
+    QVERIFY(preview.save("arrangement-preview.png"));
 }
 
 void EditorTests::qmlLoadsAndPlacesText() {
@@ -208,6 +234,104 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QCOMPARE(QGuiApplication::clipboard()->image(), copied);
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     QVERIFY(window->property("visible").toBool());
+    emit backend.regionsCaptured({pattern(), pattern(), pattern()});
+    QVERIFY(canvas->arranging());
+    QCOMPARE(canvas->regionCount(), 3);
+    QCOMPARE(canvas->columns(), 2);
+    canvas->setColumns(1);
+    QCOMPARE(canvas->columns(), 1);
+    canvas->annotate();
+    QVERIFY(!canvas->arranging());
+    QVERIFY(QMetaObject::invokeMethod(window, "finish"));
+    QVERIFY(!canvas->hasImage());
+    QCOMPARE(canvas->regionCount(), 0);
+    const QString captureError = QStringLiteral("Allow screen recording in System Settings.");
+    emit backend.error(captureError);
+    emit backend.captureFinished(false);
+    auto *dialog = window->findChild<QObject *>("captureErrorDialog");
+    QVERIFY(dialog);
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    QCOMPARE(dialog->property("message").toString(), captureError);
+    QVERIFY(window->property("visible").toBool());
+    QVERIFY(!window->property("shortcutsOn").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+}
+
+void EditorTests::multipleRegionSelection() {
+    RegionSelector selector(pattern(), QRect(0, 0, 400, 300));
+    QSignalSpy single(&selector, &RegionSelector::selected);
+    QSignalSpy multiple(&selector, &RegionSelector::multipleRequested);
+    QSignalSpy added(&selector, &RegionSelector::regionAdded);
+    QSignalSpy removed(&selector, &RegionSelector::regionRemoved);
+    QSignalSpy accepted(&selector, &RegionSelector::accepted);
+    QSignalSpy canceled(&selector, &RegionSelector::canceled);
+    QTest::keyClick(&selector, Qt::Key_M);
+    QCOMPARE(multiple.size(), 1);
+    selector.setSelections(true, {}, 0);
+    QTest::mousePress(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTest::mouseRelease(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(150, 200));
+    QCOMPARE(added.size(), 1);
+    QCOMPARE(single.size(), 0);
+    const QRectF area = added.first().first().toRectF();
+    QCOMPARE(selector.crop(area), pattern().copy(10, 10, 20, 30));
+    selector.setSelections(true, {{2, area}}, 3);
+    QTest::mouseClick(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(75, 75));
+    QCOMPARE(removed.size(), 1);
+    QCOMPARE(removed.first().first().toInt(), 2); // Global order across monitors.
+    QCOMPARE(added.size(), 1);
+    QTest::keyClick(&selector, Qt::Key_Return);
+    QCOMPARE(accepted.size(), 1);
+    QTest::keyClick(&selector, Qt::Key_Escape);
+    QCOMPARE(canceled.size(), 1);
+}
+
+void EditorTests::gridArrangementPreservesPixels() {
+    QImage first = pattern();
+    for (int y = 0; y < first.height(); ++y)
+        for (int x = 0; x < first.width(); ++x) {
+            QColor color = first.pixelColor(x, y); color.setAlpha(255); first.setPixelColor(x, y, color);
+        }
+    QImage second(32, 90, QImage::Format_RGB32); second.fill(Qt::red);
+    QImage third(50, 20, QImage::Format_RGB32); third.fill(Qt::green);
+    EditorCanvas canvas;
+    canvas.setWidth(800); canvas.setHeight(600);
+    QVERIFY(canvas.loadRegions({first, second, third}));
+    QVERIFY(canvas.arranging());
+    QCOMPARE(canvas.regionCount(), 3);
+    QCOMPARE(canvas.columns(), 2);
+    QVERIFY(canvas.copy());
+    QImage grid = QGuiApplication::clipboard()->image();
+    QCOMPARE(grid.size(), QSize(184, 182));
+    QCOMPARE(grid.copy(24, 24, 80, 60), first);
+    QCOMPARE(grid.pixelColor(128, 24), QColor(Qt::red));
+    QCOMPARE(grid.pixelColor(24, 138), QColor(Qt::green));
+    QCOMPARE(grid.pixelColor(0, 0), QColor("#f5f7fa"));
+    canvas.setColumns(1);
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image().size(), QSize(128, 266));
+    canvas.setColumns(2);
+    const QPointF origin = canvas.imageRect().topLeft();
+    const QPointF from = origin + QPointF(64, 54) * canvas.imageScale();
+    const QPointF to = origin + QPointF(49, 148) * canvas.imageScale();
+    canvas.begin(from.x(), from.y()); canvas.move(to.x(), to.y()); canvas.end(to.x(), to.y());
+    QCOMPARE(canvas.selectedRegion(), 2);
+    QVERIFY(canvas.copy());
+    grid = QGuiApplication::clipboard()->image();
+    QCOMPARE(grid.copy(24, 138, 80, 60), first);
+    QCOMPARE(grid.pixelColor(24, 24), QColor(Qt::red));
+    canvas.annotate();
+    QVERIFY(!canvas.arranging());
+    canvas.addText(24, 24, 100, 40, "Test");
+    QVERIFY(canvas.canUndo());
+    canvas.arrange();
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), grid);
+    QVERIFY(!canvas.loadRegions({}));
+    QCOMPARE(canvas.regionCount(), 3);
+    canvas.removeRegion(2); canvas.removeRegion(1); canvas.removeRegion(0);
+    QVERIFY(!canvas.hasImage());
+    QVERIFY(!canvas.arranging());
+    QCOMPARE(canvas.regionCount(), 0);
 }
 
 void EditorTests::regionSelectionScalesAndCancels() {
@@ -251,6 +375,61 @@ void EditorTests::windowsHotkeyRegistration() {
     QVERIFY(released.registered());
 #else
     QSKIP("Windows native hotkey test");
+#endif
+}
+
+void EditorTests::desktopMultipleCapture() {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Multiple-region capture requires a real desktop");
+    QWidget marker;
+    marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    marker.setGeometry(QGuiApplication::primaryScreen()->geometry().adjusted(80, 80, -80, -80));
+    marker.setAutoFillBackground(true);
+    QPalette palette; palette.setColor(QPalette::Window, QColor("#123456")); marker.setPalette(palette);
+    marker.show(); marker.raise(); marker.activateWindow();
+    QVERIFY(QTest::qWaitForWindowExposed(&marker));
+    QTest::qWait(150);
+    Backend backend;
+    QSignalSpy batch(&backend, &Backend::regionsCaptured);
+    QSignalSpy finished(&backend, &Backend::captureFinished);
+    backend.capture();
+    RegionSelector *selector = nullptr;
+    const auto findSelector = [&selector] {
+        for (QWidget *widget : QApplication::topLevelWidgets())
+            if (auto *region = qobject_cast<RegionSelector *>(widget); region && region->isVisible()) { selector = region; return true; }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(findSelector(), 10000);
+    QTest::keyClick(selector, Qt::Key_M);
+    const QPoint center = selector->rect().center();
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center - QPoint(80, 60));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center - QPoint(20, 20));
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(20, 20));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(80, 60));
+    QCOMPARE(batch.size(), 0);
+    QTest::keyClick(selector, Qt::Key_Return);
+    QTRY_COMPARE(batch.size(), 1);
+    QCOMPARE(finished.size(), 1);
+    QVERIFY(finished.first().first().toBool());
+    const QVariantList images = batch.first().first().toList();
+    QCOMPARE(images.size(), 2);
+    for (const auto &value : images) {
+        const QImage image = qvariant_cast<QImage>(value);
+        QVERIFY(!image.isNull());
+        QCOMPARE(image.pixelColor(image.width() / 2, image.height() / 2), QColor("#123456"));
+    }
+    QVERIFY(!backend.capturing());
+    backend.capture(true);
+    selector = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(findSelector(), 10000);
+    QTest::keyClick(selector, Qt::Key_Return); // Empty multi-selection stays open.
+    QVERIFY(backend.capturing());
+    QTest::keyClick(selector, Qt::Key_Escape);
+    QCOMPARE(finished.size(), 2);
+    QVERIFY(!finished.last().first().toBool());
+#else
+    QSKIP("Screen capture requires macOS or Windows");
 #endif
 }
 

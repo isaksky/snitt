@@ -15,7 +15,7 @@ rm -rf "$PACKAGE/xshot.app"
 ditto "$ROOT/build/xshot.app" "$PACKAGE/xshot.app"
 QTLIBS="$(qmake -query QT_INSTALL_LIBS)"
 "$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$QTLIBS" -always-overwrite
-codesign --force --deep --sign - "$PACKAGE/xshot.app"
+"$ROOT/bin/sign-macos" "$PACKAGE/xshot.app"
 DEST="$HOME/Applications/xshot.app"
 AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
 DOMAIN="gui/$(id -u)"
@@ -27,6 +27,7 @@ if [ -d "$DEST" ]; then
     mv "$DEST" "$DEST.previous"
 fi
 ditto "$PACKAGE/xshot.app" "$DEST"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
 # plutil handles XML escaping in the user's home path.
 plutil -create xml1 "$AGENT"
 plutil -insert Label -string local.xshot "$AGENT"

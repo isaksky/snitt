@@ -30,6 +30,15 @@ On a PC keyboard, Print Screen usually arrives as **F13** on macOS, so the bindi
 is **Control+F13**. **Control+Shift+X** also works for keyboards without that key.
 These use the actual Control key, not Command. macOS may request Screen & System
 Audio Recording permission for xshot or the terminal launching a development build.
+If capture opens an error dialog, enable the installed `~/Applications/xshot.app`
+in System Settings → Privacy & Security → Screen & System Audio Recording, then
+quit and reopen xshot. The installer creates a persistent local signing identity
+in `~/Library/Application Support/xshot/signing`; macOS may authenticate its first
+setup. Keep that directory across rebuilds so updates retain the same identity.
+Trust is limited to code signing by Apple's `codesign` tool. This is a local
+development certificate, not an Apple Developer ID or notarized release. Set
+`XSHOT_SIGN_IDENTITY` to use your own signing identity instead. Migrating from
+an older ad-hoc signed build requires renewing screen-recording permission once.
 
 ### Windows 10/11 x64
 
@@ -45,6 +54,22 @@ reports the conflict; disable that binding in the other app, then restart xshot.
 The tray's **New screenshot** action is always available. The Windows region
 picker supports selecting within any connected monitor and accounts for display
 scaling. A region currently stays within one monitor.
+
+## Multiple regions
+
+Start a capture and press **M**, or choose **Multiple regions** in the editor.
+Drag each rectangle in the order you want it to appear. Numbered selections stay
+on the frozen screen; click one to remove it, or use Backspace to remove the last.
+**Enter** opens the arrangement preview; Escape cancels the capture.
+
+The preview defaults to two columns. Change **Columns**, drag tiles to reorder
+them, or select a tile and use **Move left**, **Move right**, or **Remove**.
+Original pixels are kept without resizing or cropping, with 24-pixel neutral
+spacing. Numbers and selection outlines appear only in the preview.
+Choose **Annotate** (Enter) to use the drawing tools, or **Copy** to finish directly.
+Rearranging after annotation asks before resetting annotations and cuts; the
+original regions are retained until the session is finished. Captures are limited
+to 24 regions and 256 MiB, and each rectangle stays within one monitor.
 
 ## Editing
 
@@ -69,8 +94,9 @@ the source pixels. Cut also removes annotations in the selected strip.
 Annotations are flattened when placed; use undo to correct them. History is
 limited to 50 images or 256 MiB.
 
-No ffmpeg or third-party capture utility is used. macOS uses its built-in region
-picker; Windows uses a frozen screenshot overlay. Nothing is uploaded.
+No ffmpeg or third-party capture utility is used. macOS snapshots the desktop
+with its built-in screenshot tool; Windows uses Qt screen capture. Both use
+xshot's frozen selection overlay. Nothing is uploaded.
 
 ## Development
 
@@ -116,6 +142,6 @@ keyboard input or capture from a real unlocked desktop.
 - `src/appservice.cpp`: tray menu and single-instance local IPC.
 - `src/globalhotkey.cpp`: native Windows/macOS global hotkey registration.
 - `src/backend.cpp`: platform capture lifecycle.
-- `src/regionselector.cpp`: Windows region selection overlay.
+- `src/regionselector.cpp`: single- and multiple-region selection overlay.
 - `src/editorcanvas.cpp`: image display, gesture mapping, and clipboard access.
 - `src/imagedocument.cpp`: full-resolution image edits and bounded undo history.

@@ -12,7 +12,7 @@ SOURCES += src/main.cpp src/backend.cpp src/imagedocument.cpp src/editorcanvas.c
 HEADERS += src/globalhotkey.h src/appservice.h src/regionselector.h
 SOURCES += src/globalhotkey.cpp src/appservice.cpp src/regionselector.cpp
 macx {
-    LIBS += -framework Carbon
+    LIBS += -framework Carbon -framework CoreGraphics
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }
 win32: LIBS += -luser32 -ldwmapi

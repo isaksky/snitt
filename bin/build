@@ -32,3 +32,8 @@ mkdir -p "$ROOT/build"
 cd "$ROOT/build"
 "$QMAKE" "$ROOT/xshot.pro"
 make -j"$JOBS"
+# qmake's generated plist target has no input dependencies. Refresh our fixed
+# metadata even when an older development bundle already exists.
+if [ "$(uname -s)" = Darwin ]; then
+    cp "$ROOT/platform/macos/Info.plist" "$ROOT/build/xshot.app/Contents/Info.plist"
+fi

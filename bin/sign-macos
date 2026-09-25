@@ -1,0 +1,79 @@
+#!/usr/bin/env sh
+# Keep a stable local signing identity so macOS recognizes installed updates.
+set -eu
+[ "$(uname -s)" = Darwin ] || exit 1
+[ "$#" -eq 1 ] || { echo 'Usage: sign-macos app-bundle' >&2; exit 1; }
+if [ -n "${XSHOT_SIGN_IDENTITY:-}" ]; then
+    codesign --force --sign "$XSHOT_SIGN_IDENTITY" "$1"
+    codesign --verify --deep --strict "$1"
+    exit
+fi
+
+umask 077
+SIGNING_DIR="$HOME/Library/Application Support/xshot/signing"
+KEYCHAIN="$SIGNING_DIR/local.keychain-db"
+mkdir -p "$SIGNING_DIR"
+chmod 700 "$SIGNING_DIR"
+if [ ! -f "$KEYCHAIN" ]; then
+    # Do not replace a partly initialized identity: changing it loses grants.
+    [ ! -e "$SIGNING_DIR/password" ] || {
+        echo "Incomplete signing setup in $SIGNING_DIR; refusing to replace it." >&2
+        exit 1
+    }
+    WORK="$(mktemp -d "$SIGNING_DIR/setup.XXXXXX")"
+    trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+    /usr/bin/openssl rand -hex 32 > "$SIGNING_DIR/password"
+    cat > "$WORK/certificate.cnf" <<'EOF'
+[req]
+distinguished_name = subject
+x509_extensions = codesign
+prompt = no
+[subject]
+CN = xshot Local Development
+[codesign]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+EOF
+    /usr/bin/openssl req -new -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 \
+        -config "$WORK/certificate.cnf" -keyout "$WORK/key.pem" \
+        -out "$SIGNING_DIR/certificate.pem" 2> "$WORK/openssl.log"
+    /usr/bin/openssl pkcs12 -export -inkey "$WORK/key.pem" \
+        -in "$SIGNING_DIR/certificate.pem" -out "$WORK/identity.p12" \
+        -passout "file:$SIGNING_DIR/password"
+    KEYCHAIN_PASSWORD="$(cat "$SIGNING_DIR/password")"
+    security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+    security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+    security import "$WORK/identity.p12" -k "$KEYCHAIN" -P "$KEYCHAIN_PASSWORD" \
+        -x -T /usr/bin/codesign > /dev/null
+    security set-key-partition-list -S apple-tool: -t private -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+    rm -rf "$WORK"
+    trap - EXIT HUP INT TERM
+fi
+
+# macOS must be able to discover the certificate when resolving its trust and
+# private key, even with codesign's --keychain argument. Preserve other entries.
+/usr/bin/python3 - "$KEYCHAIN" <<'PY'
+import shlex
+import subprocess
+import sys
+command = ["security", "list-keychains", "-d", "user"]
+existing = shlex.split(subprocess.check_output(command, text=True))
+if sys.argv[1] not in existing:
+    subprocess.run(command + ["-s", *existing, sys.argv[1]], check=True)
+PY
+
+KEYCHAIN_PASSWORD="$(cat "$SIGNING_DIR/password")"
+security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+trap 'security lock-keychain "$KEYCHAIN" >/dev/null 2>&1' EXIT HUP INT TERM
+if [ ! -f "$SIGNING_DIR/trust-configured" ]; then
+    # User-domain trust, constrained to Apple's signing tool and code signing.
+    # No TLS, system-wide, or Gatekeeper trust is added. macOS may authenticate.
+    security add-trusted-cert -r trustRoot -p codeSign -a /usr/bin/codesign \
+        -k "$KEYCHAIN" "$SIGNING_DIR/certificate.pem"
+    touch "$SIGNING_DIR/trust-configured"
+fi
+IDENTITY="$(/usr/bin/openssl x509 -in "$SIGNING_DIR/certificate.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
+# Nested Qt code is already signed by macdeployqt. Only the app needs our identity.
+codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" "$1"
+codesign --verify --deep --strict "$1"

@@ -32,10 +32,37 @@ QRectF RegionSelector::selection() const {
     return QRectF(m_start, m_end).normalized().intersected(rect());
 }
 
+QImage RegionSelector::crop(const QRectF &area) const {
+    return m_image.copy(pixelRect(area, size(), m_image.size()));
+}
+
+void RegionSelector::setSelections(bool multiple, const QList<QPair<int, QRectF>> &areas, int total) {
+    m_multiple = multiple;
+    m_areas = areas;
+    m_total = total;
+    m_notice.clear();
+    update();
+}
+
+void RegionSelector::setNotice(const QString &notice) { m_notice = notice; update(); }
+
 void RegionSelector::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.drawImage(rect(), m_image);
     p.fillRect(rect(), QColor(0, 0, 0, 115));
+    for (const auto &entry : m_areas) {
+        p.save();
+        p.setClipRect(entry.second);
+        p.drawImage(rect(), m_image);
+        p.restore();
+        p.setPen(QPen(QColor("#a3e6ca"), 2));
+        p.drawRect(entry.second);
+        const QRectF badge(entry.second.topLeft(), QSizeF(28, 28));
+        p.fillRect(badge, QColor("#a3e6ca"));
+        p.setPen(QColor("#142820"));
+        QFont numberFont = p.font(); numberFont.setPixelSize(16); numberFont.setBold(true); p.setFont(numberFont);
+        p.drawText(badge, Qt::AlignCenter, QString::number(entry.first + 1));
+    }
     const QRectF area = selection();
     if (m_dragging && !area.isEmpty()) {
         p.save();
@@ -46,10 +73,13 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.drawRect(area);
     }
     const QRect pixels = pixelRect(area, size(), m_image.size());
-    const QString hint = m_dragging ? QStringLiteral("%1 × %2 px · Release to capture · Esc to cancel")
+    const QString hint = !m_notice.isEmpty() ? m_notice
+        : m_dragging ? QStringLiteral("%1 × %2 px · Release to %3 · Esc to cancel")
                                          .arg(pixels.width()).arg(pixels.height())
-                                   : QStringLiteral("Drag to select a region · Esc to cancel");
-    QFont font = p.font(); font.setPixelSize(16); p.setFont(font);
+                                         .arg(m_multiple ? "add region" : "capture")
+        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click a region to remove · Enter to arrange · Esc to cancel").arg(m_total)
+        : QStringLiteral("Drag to select a region · M for multiple regions · Esc to cancel");
+    QFont font = p.font(); font.setPixelSize(16); font.setBold(false); p.setFont(font);
     const int boxWidth = qMin(width() - 24, p.fontMetrics().horizontalAdvance(hint) + 32);
     const QRect box((width() - boxWidth) / 2, 24, boxWidth, 42);
     p.fillRect(box, QColor("#1b1e23"));
@@ -75,12 +105,23 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
     if (!m_dragging || event->button() != Qt::LeftButton) return;
     m_end = event->position();
     m_dragging = false;
+    if (m_multiple && (m_end - m_start).manhattanLength() < 4) {
+        for (auto it = m_areas.crbegin(); it != m_areas.crend(); ++it) {
+            if (it->second.contains(m_end)) { emit regionRemoved(it->first); return; }
+        }
+    }
     const QRect region = pixelRect(selection(), size(), m_image.size());
-    if (region.width() >= 2 && region.height() >= 2) emit selected(m_image.copy(region));
+    if (region.width() >= 2 && region.height() >= 2) {
+        if (m_multiple) emit regionAdded(selection());
+        else emit selected(m_image.copy(region));
+    }
     else update();
 }
 
 void RegionSelector::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Escape) emit canceled();
+    else if (event->key() == Qt::Key_M) emit multipleRequested();
+    else if (m_multiple && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) emit accepted();
+    else if (m_multiple && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)) emit removeLastRequested();
     else QWidget::keyPressEvent(event);
 }

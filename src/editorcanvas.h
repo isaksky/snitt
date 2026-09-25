@@ -1,6 +1,7 @@
 #pragma once
 #include <QQuickPaintedItem>
 #include <QUrl>
+#include <QVariantList>
 #include "imagedocument.h"
 
 class EditorCanvas : public QQuickPaintedItem {
@@ -14,6 +15,10 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(qreal imageScale READ imageScale NOTIFY imageRectChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
+    Q_PROPERTY(bool arranging READ arranging NOTIFY arrangementChanged)
+    Q_PROPERTY(int regionCount READ regionCount NOTIFY arrangementChanged)
+    Q_PROPERTY(int columns READ columns WRITE setColumns NOTIFY arrangementChanged)
+    Q_PROPERTY(int selectedRegion READ selectedRegion NOTIFY arrangementChanged)
 public:
     explicit EditorCanvas(QQuickItem *parent = nullptr);
     bool hasImage() const { return !m_document.image().isNull(); }
@@ -28,6 +33,16 @@ public:
     QColor ink() const { return m_ink; }
     void setInk(QColor ink);
     void paint(QPainter *painter) override;
+    bool arranging() const { return m_arranging; }
+    int regionCount() const { return m_regions.size(); }
+    int columns() const { return m_columns; }
+    int selectedRegion() const { return m_selectedRegion; }
+    void setColumns(int columns);
+    Q_INVOKABLE bool loadRegions(const QVariantList &images);
+    Q_INVOKABLE void arrange();
+    Q_INVOKABLE void annotate();
+    Q_INVOKABLE void moveRegion(int from, int to);
+    Q_INVOKABLE void removeRegion(int index);
     Q_INVOKABLE bool load(const QUrl &url);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
@@ -46,14 +61,24 @@ signals:
     void inkChanged();
     void error(const QString &message);
     void textRequested(qreal x, qreal y);
+    void arrangementChanged();
 protected:
     void geometryChange(const QRectF &next, const QRectF &previous) override;
 private:
     QPointF imagePoint(qreal x, qreal y) const;
     void changed();
+    bool composeRegions();
+    void clearRegions();
+    int regionAt(const QPointF &point) const;
     ImageDocument m_document;
     QString m_tool = QStringLiteral("rect");
     QColor m_ink = QColor("#ef4444");
     bool m_dragging = false;
     QPointF m_start, m_end;
+    QList<QImage> m_regions;
+    QList<QRect> m_regionRects;
+    int m_columns = 2;
+    int m_selectedRegion = -1;
+    int m_dropRegion = -1;
+    bool m_arranging = false;
 };
