@@ -6,7 +6,14 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QApplication>
+#include <QScreen>
 #include "backend.h"
+#include "regionselector.h"
+#include "globalhotkey.h"
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #include "imagedocument.h"
 #include "editorcanvas.h"
 
@@ -20,6 +27,9 @@ private slots:
     void scaledGesturesAndClipboard();
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
+    void regionSelectionScalesAndCancels();
+    void windowsHotkeyRegistration();
+    void windowsDesktopCapture();
     void makePreviewFixture();
 };
 
@@ -132,7 +142,7 @@ void EditorTests::makePreviewFixture() {
     QPainter p(&image);
     p.fillRect(0, 0, 1200, 90, QColor("#ffffff"));
     p.setPen(QColor("#172b40"));
-    QFont font("Helvetica"); font.setPixelSize(28); font.setBold(true); p.setFont(font);
+    QFont font = QGuiApplication::font(); font.setPixelSize(28); font.setBold(true); p.setFont(font);
     p.drawText(48, 57, "Release checklist");
     font.setPixelSize(16); font.setBold(false); p.setFont(font);
     p.setPen(QColor("#617187"));
@@ -152,8 +162,13 @@ void EditorTests::makePreviewFixture() {
 }
 
 void EditorTests::qmlLoadsAndPlacesText() {
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
     QGuiApplication::setFont(QFont("Helvetica"));
-    QTest::failOnWarning(QRegularExpression(".*"));
+#endif
+    // The offscreen platform cannot raise native windows; QML warnings still fail.
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
@@ -163,6 +178,8 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
     engine.load(QUrl("qrc:/Main.qml"));
     QCOMPARE(engine.rootObjects().size(), 1);
     QObject *window = engine.rootObjects().first();
@@ -182,6 +199,102 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(canvas->canUndo());
     QVERIFY(canvas->copy());
     QVERIFY(QGuiApplication::clipboard()->image() != pattern());
+    const QImage copied = QGuiApplication::clipboard()->image();
+    QVERIFY(QMetaObject::invokeMethod(window, "finish"));
+    QVERIFY(!window->property("visible").toBool());
+    QVERIFY(!canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->image(), copied);
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QVERIFY(window->property("visible").toBool());
+}
+
+void EditorTests::regionSelectionScalesAndCancels() {
+    QCOMPARE(RegionSelector::pixelRect(QRectF(100, 50, 200, 100), QSizeF(800, 600), QSize(1600, 1200)),
+             QRect(200, 100, 400, 200));
+    QCOMPARE(RegionSelector::pixelRect(QRectF(300, 150, -200, -100), QSizeF(800, 600), QSize(1600, 1200)),
+             QRect(200, 100, 400, 200));
+    QCOMPARE(RegionSelector::pixelRect(QRectF(-10, -10, 50, 50), QSizeF(800, 600), QSize(1000, 750)),
+             QRect(0, 0, 50, 50));
+    RegionSelector selector(pattern(), QRect(0, 0, 400, 300));
+    QSignalSpy selected(&selector, &RegionSelector::selected);
+    QSignalSpy canceled(&selector, &RegionSelector::canceled);
+    QTest::mousePress(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+    QTest::mouseRelease(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(150, 200));
+    QCOMPARE(selected.size(), 1);
+    QCOMPARE(qvariant_cast<QImage>(selected.first().first()), pattern().copy(10, 10, 20, 30));
+    QTest::keyClick(&selector, Qt::Key_Escape);
+    QCOMPARE(canceled.size(), 1);
+}
+
+void EditorTests::windowsHotkeyRegistration() {
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Native hotkeys require an interactive Windows desktop; set XSHOT_INTERACTIVE_TESTS=1");
+    {
+        GlobalHotkey hotkey;
+        QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
+        QSignalSpy activated(&hotkey, &GlobalHotkey::activated);
+        GlobalHotkey conflict;
+        QVERIFY(!conflict.registered());
+        INPUT input[4]{};
+        for (auto &key : input) key.type = INPUT_KEYBOARD;
+        input[0].ki.wVk = VK_CONTROL;
+        input[1].ki.wVk = VK_SNAPSHOT;
+        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+        QTRY_COMPARE(activated.size(), 1);
+    }
+    GlobalHotkey released;
+    QVERIFY(released.registered());
+#else
+    QSKIP("Windows native hotkey test");
+#endif
+}
+
+void EditorTests::windowsDesktopCapture() {
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Real screen capture requires an interactive Windows desktop");
+    QWidget marker;
+    marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    marker.setGeometry(QGuiApplication::primaryScreen()->geometry().adjusted(80, 80, -80, -80));
+    marker.setAutoFillBackground(true);
+    QPalette palette; palette.setColor(QPalette::Window, QColor("#123456"));
+    marker.setPalette(palette);
+    marker.show(); marker.raise(); marker.activateWindow();
+    QVERIFY(QTest::qWaitForWindowExposed(&marker));
+    QTest::qWait(300);
+    Backend backend;
+    QSignalSpy finished(&backend, &Backend::captureFinished);
+    QImage captured;
+    connect(&backend, &Backend::captured, this, [&captured](const QUrl &url) { captured.load(url.toLocalFile()); });
+    backend.capture();
+    RegionSelector *selector = nullptr;
+    const auto findSelector = [&selector] {
+        for (QWidget *widget : QApplication::topLevelWidgets())
+            if (auto *region = qobject_cast<RegionSelector *>(widget); region && region->isVisible()) { selector = region; return true; }
+        return false;
+    };
+    QTRY_VERIFY(findSelector());
+    const QPoint center = selector->rect().center();
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center - QPoint(40, 30));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(40, 30));
+    QTRY_COMPARE(finished.size(), 1);
+    QVERIFY(finished.first().first().toBool());
+    QVERIFY(!captured.isNull());
+    QCOMPARE(captured.pixelColor(captured.width() / 2, captured.height() / 2), QColor("#123456"));
+    QVERIFY(captured.save("native-capture.png"));
+    QVERIFY(!backend.capturing());
+    backend.capture();
+    selector = nullptr;
+    QTRY_VERIFY(findSelector());
+    QTest::keyClick(selector, Qt::Key_Escape);
+    QTRY_COMPARE(finished.size(), 2);
+    QVERIFY(!finished.last().first().toBool());
+#else
+    QSKIP("Windows desktop capture test");
+#endif
 }
 
 QTEST_MAIN(EditorTests)

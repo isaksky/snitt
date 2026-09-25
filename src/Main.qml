@@ -11,7 +11,7 @@ ApplicationWindow {
     height: 760
     minimumWidth: 860
     minimumHeight: 480
-    visible: true
+    visible: false
     title: "xshot"
     color: "#111317"
     Material.theme: Material.Dark
@@ -21,8 +21,10 @@ ApplicationWindow {
     property real textY: 0
     property real textWidth: 0
     property string notice: ""
+    property bool restoreAfterCapture: false
+    readonly property string commandKey: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
     readonly property bool shortcutsOn: !editingText && !backend.capturing && !openDialog.visible
-    readonly property string hint: editingText ? "Type your note · ⌘Enter to place · Esc to cancel"
+    readonly property string hint: editingText ? "Type your note · " + commandKey + "Enter to place · Esc to cancel"
         : canvas.tool === "cut" ? "Drag sideways to remove a column · drag up or down to remove a row"
         : canvas.tool === "rect" ? "Drag to draw a rectangle"
         : canvas.tool === "arrow" ? "Drag from the tail to the arrow tip"
@@ -37,31 +39,39 @@ ApplicationWindow {
     }
     function chooseTool(tool) { commitText(); canvas.tool = tool }
     function capture() {
+        if (backend.capturing) return
         commitText()
         notice = ""
+        restoreAfterCapture = win.visible
         win.hide()
         backend.capture()
     }
     function finish() {
         commitText()
         canvas.cancel()
-        if (canvas.copy()) win.close()
+        if (canvas.copy()) { win.hide(); canvas.clear() }
     }
+    function showEditor() { win.show(); win.raise(); win.requestActivate() }
+    function openImage(file) { commitText(); canvas.load(file); showEditor() }
+    onClosing: close => { close.accepted = false; win.hide() }
     function showError(message) { notice = message; noticeTimer.restart() }
 
     Timer { id: noticeTimer; interval: 9000; onTriggered: win.notice = "" }
     Timer {
         interval: 200; running: true
         onTriggered: {
-            if (initialImage.toString() !== "") canvas.load(initialImage)
-            else win.capture()
+            if (initialImage.toString() !== "") win.openImage(initialImage)
+            else if (showOnStart) win.showEditor()
+            else if (!startInBackground) win.capture()
         }
     }
     Connections {
         target: backend
         function onCaptured(file) { canvas.load(file) }
         function onError(message) { win.showError(message) }
-        function onCaptureFinished() { win.show(); win.raise(); win.requestActivate() }
+        function onCaptureFinished(captured) {
+            if (captured || win.restoreAfterCapture || win.notice !== "") win.showEditor()
+        }
     }
     FileDialog {
         id: openDialog
@@ -169,7 +179,7 @@ ApplicationWindow {
                 }
                 onClicked: win.finish()
                 ToolTip.visible: hovered
-                ToolTip.text: "Copy image to clipboard and close"
+                ToolTip.text: "Copy image to clipboard and finish"
             }
         }
     }
@@ -215,7 +225,7 @@ ApplicationWindow {
             bottomInset: 0
             leftInset: 0
             rightInset: 0
-            font.family: "Helvetica"
+            font.family: Qt.platform.os === "windows" ? "Segoe UI" : "Helvetica"
             font.pixelSize: Math.max(1, 24 * canvas.imageScale)
             font.weight: Font.DemiBold
             color: canvas.ink
@@ -268,7 +278,7 @@ ApplicationWindow {
                 ActionButton { text: "Redo"; enabled: canvas.canRedo && !win.editingText; onClicked: canvas.redo() }
                 Item { Layout.fillWidth: true }
                 Label {
-                    text: canvas.hasImage ? canvas.imageWidth + " × " + canvas.imageHeight + " px" : "⌘V to paste an image"
+                    text: canvas.hasImage ? canvas.imageWidth + " × " + canvas.imageHeight + " px" : win.commandKey + "V to paste an image"
                     color: "#8f99a8"; font.pixelSize: 12; Layout.rightMargin: 8
                 }
             }

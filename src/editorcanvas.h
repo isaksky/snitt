@@ -31,6 +31,7 @@ public:
     Q_INVOKABLE bool load(const QUrl &url);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
+    Q_INVOKABLE void clear();
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
     Q_INVOKABLE void begin(qreal x, qreal y);

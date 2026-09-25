@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+DEST="$HOME/Applications/xshot.app"
+AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
+if [ -f "$AGENT" ]; then
+    launchctl bootout "gui/$(id -u)" "$AGENT" 2>/dev/null || true
+    rm "$AGENT"
+fi
+if [ -x "$DEST/Contents/MacOS/xshot" ]; then "$DEST/Contents/MacOS/xshot" --quit; fi
+if [ -d "$DEST" ]; then
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/Contents/Info.plist" | /usr/bin/grep -qx local.xshot || exit 1
+    rm -rf "$DEST"
+fi
+echo 'xshot removed.'

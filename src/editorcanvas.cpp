@@ -99,6 +99,7 @@ bool EditorCanvas::copy() {
 }
 
 void EditorCanvas::undo() { m_document.undo(); changed(); }
+void EditorCanvas::clear() { m_document.reset({}); changed(); }
 void EditorCanvas::redo() { m_document.redo(); changed(); }
 
 QPointF EditorCanvas::imagePoint(qreal x, qreal y) const {

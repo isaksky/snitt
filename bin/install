@@ -1,0 +1,39 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+[ "$(uname -s)" = Darwin ] || { echo 'Use the Windows package Install.cmd on Windows.' >&2; exit 1; }
+"$ROOT/bin/build"
+DEPLOY="$(command -v macdeployqt || true)"
+if [ -z "$DEPLOY" ] && command -v brew >/dev/null 2>&1; then
+    DEPLOY="$(brew --prefix)/opt/qtbase/bin/macdeployqt"
+fi
+[ -x "$DEPLOY" ] || { echo 'Qt macdeployqt is required.' >&2; exit 1; }
+PACKAGE="$ROOT/build/package/macos"
+mkdir -p "$PACKAGE"
+# Only the generated staging bundle is replaced here.
+rm -rf "$PACKAGE/xshot.app"
+ditto "$ROOT/build/xshot.app" "$PACKAGE/xshot.app"
+QTLIBS="$(qmake -query QT_INSTALL_LIBS)"
+"$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$QTLIBS" -always-overwrite
+codesign --force --deep --sign - "$PACKAGE/xshot.app"
+DEST="$HOME/Applications/xshot.app"
+AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
+DOMAIN="gui/$(id -u)"
+if [ -f "$AGENT" ]; then launchctl bootout "$DOMAIN" "$AGENT" 2>/dev/null || true; fi
+"$ROOT/build/xshot.app/Contents/MacOS/xshot" --quit
+mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
+if [ -d "$DEST" ]; then
+    [ ! -e "$DEST.previous" ] || { echo "Existing backup: $DEST.previous" >&2; exit 1; }
+    mv "$DEST" "$DEST.previous"
+fi
+ditto "$PACKAGE/xshot.app" "$DEST"
+# plutil handles XML escaping in the user's home path.
+plutil -create xml1 "$AGENT"
+plutil -insert Label -string local.xshot "$AGENT"
+plutil -insert ProgramArguments -array "$AGENT"
+plutil -insert ProgramArguments.0 -string "$DEST/Contents/MacOS/xshot" "$AGENT"
+plutil -insert ProgramArguments.1 -string --background "$AGENT"
+plutil -insert RunAtLoad -bool YES "$AGENT"
+launchctl bootstrap "$DOMAIN" "$AGENT"
+[ ! -d "$DEST.previous" ] || rm -rf "$DEST.previous"
+echo "Installed $DEST and enabled launch at login. Ctrl+Print Screen (F13), or Ctrl+Shift+X."

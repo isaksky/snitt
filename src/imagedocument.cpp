@@ -98,7 +98,11 @@ bool ImageDocument::text(QRectF box, const QString &text, QColor color) {
     QPainter p(&result);
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
+#ifdef Q_OS_WIN
+    QFont font(QStringLiteral("Segoe UI"));
+#else
     QFont font(QStringLiteral("Helvetica"));
+#endif
     font.setPixelSize(24);
     font.setWeight(QFont::DemiBold);
     p.setFont(font);
