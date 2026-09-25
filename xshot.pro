@@ -15,5 +15,5 @@ macx {
     LIBS += -framework Carbon
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }
-win32: LIBS += -luser32
+win32: LIBS += -luser32 -ldwmapi
 RESOURCES += src/resources.qrc

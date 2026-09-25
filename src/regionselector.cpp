@@ -9,6 +9,8 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
       m_image(std::move(image)) {
     setObjectName("regionSelector");
     setWindowTitle("xshot — Select a region");
+    // paintEvent covers the entire window with the frozen desktop.
+    setAttribute(Qt::WA_OpaquePaintEvent);
     m_image.setDevicePixelRatio(1);
     setGeometry(geometry);
     setCursor(Qt::CrossCursor);

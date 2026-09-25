@@ -114,7 +114,7 @@ ApplicationWindow {
         contentItem: Text {
             text: actionControl.text
             font: actionControl.font
-            color: actionControl.enabled ? actionControl.textColor : "#626a77"
+            color: actionControl.enabled ? actionControl.textColor : "#8f99a8"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
@@ -122,7 +122,35 @@ ApplicationWindow {
             radius: 7
             color: parent.checked ? "#303b3a" : parent.hovered ? "#2a2e35" : "transparent"
             border.width: parent.checked ? 1 : 0
-            border.color: "#51645f"
+            border.color: "#82988f"
+        }
+    }
+
+    component PrimaryButton: Button {
+        id: primaryControl
+        highlighted: true
+        font.weight: Font.DemiBold
+        leftPadding: 16
+        rightPadding: 16
+        topPadding: 10
+        bottomPadding: 10
+        topInset: 0
+        bottomInset: 0
+        // Explicit colors avoid Material's light highlighted label on our mint accent.
+        contentItem: Text {
+            text: primaryControl.text
+            font: primaryControl.font
+            color: primaryControl.enabled ? "#142820" : "#9ba5b5"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 7
+            color: !primaryControl.enabled ? "#30343b"
+                : primaryControl.down ? "#84ccb0"
+                : primaryControl.hovered ? "#b5efd8" : "#a3e6ca"
+            border.width: primaryControl.visualFocus ? 2 : 0
+            border.color: "#142820"
         }
     }
 
@@ -150,11 +178,12 @@ ApplicationWindow {
             }
             Rectangle { width: 1; height: 24; color: "#373c44"; Layout.leftMargin: 12; Layout.rightMargin: 12 }
             Repeater {
-                model: [ {label: "Good", ink: "#22c55e", key: "G"}, {label: "Bad", ink: "#ef4444", key: "B"} ]
+                model: [ {label: "Good", ink: "#22c55e", labelColor: "#57dc8b", key: "G"},
+                         {label: "Bad", ink: "#ef4444", labelColor: "#ff9999", key: "B"} ]
                 ActionButton {
                     required property var modelData
                     text: "●  " + modelData.label
-                    textColor: modelData.ink
+                    textColor: modelData.labelColor
                     checked: canvas.ink.toString() === modelData.ink
                     onClicked: { win.commitText(); canvas.ink = modelData.ink }
                     ToolTip.visible: hovered
@@ -162,21 +191,11 @@ ApplicationWindow {
                 }
             }
             Item { Layout.fillWidth: true }
-            Button {
+            PrimaryButton {
                 id: doneButton
                 text: "Done   ↵"
-                highlighted: true
-                Material.foreground: "#142820"
                 enabled: canvas.hasImage
                 focusPolicy: Qt.NoFocus
-                font.weight: Font.DemiBold
-                contentItem: Text {
-                    text: doneButton.text
-                    font: doneButton.font
-                    color: doneButton.enabled ? "#142820" : "#626a77"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
                 onClicked: win.finish()
                 ToolTip.visible: hovered
                 ToolTip.text: "Copy image to clipboard and finish"
@@ -252,13 +271,20 @@ ApplicationWindow {
         anchors.centerIn: parent
         visible: !canvas.hasImage
         spacing: 16
-        Label { text: "Capture. Mark. Copy."; font.pixelSize: 32; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
-        Label { text: "Just enough tools to make your point."; color: "#9ba5b5"; font.pixelSize: 16; Layout.alignment: Qt.AlignHCenter }
-        Button { text: "Select a screen region"; highlighted: true; Layout.alignment: Qt.AlignHCenter; onClicked: win.capture() }
+        Label { text: "No screenshot open"; font.pixelSize: 26; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
+        Label {
+            text: Qt.platform.os === "osx"
+                ? "Press Control+Shift+X to select a screen region, or open or paste an image."
+                : "Press Ctrl+Print Screen to select a screen region, or open or paste an image."
+            color: "#9ba5b5"
+            font.pixelSize: 14
+            Layout.alignment: Qt.AlignHCenter
+        }
+        PrimaryButton { text: "Select a screen region"; Layout.alignment: Qt.AlignHCenter; onClicked: win.capture() }
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
             ActionButton { text: "Open image"; onClicked: openDialog.open() }
-            Label { text: "or"; color: "#6b7380" }
+            Label { text: "or"; color: "#9ba5b5" }
             ActionButton { text: "Paste image"; onClicked: canvas.paste() }
         }
     }

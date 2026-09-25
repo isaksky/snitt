@@ -8,6 +8,10 @@
 #include <QCursor>
 #include <QPixmap>
 #include "regionselector.h"
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <dwmapi.h>
+#endif
 
 Backend::Backend(QObject *parent) : QObject(parent) {
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus state) {
@@ -53,7 +57,10 @@ void Backend::capture() {
                         {"-i", "-s", "-x", "-t", "png", m_output});
     });
 #elif defined(Q_OS_WIN)
-    QTimer::singleShot(200, this, [this] {
+    QTimer::singleShot(0, this, [this] {
+        // Let Qt process the editor hide, then wait for the compositor instead
+        // of delaying every hotkey capture by a fixed 200 ms.
+        DwmFlush();
         // Freeze every monitor before showing any overlay, so none is captured.
         QPointer<RegionSelector> active;
         for (QScreen *screen : QGuiApplication::screens()) {

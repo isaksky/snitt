@@ -8,5 +8,5 @@ INCLUDEPATH += ../src
 HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/backend.h ../src/regionselector.h ../src/globalhotkey.h
 SOURCES += editor_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/globalhotkey.cpp
 macx: LIBS += -framework Carbon
-win32: LIBS += -luser32
+win32: LIBS += -luser32 -ldwmapi
 RESOURCES += ../src/resources.qrc

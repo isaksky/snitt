@@ -8,6 +8,7 @@
 #include <QQuickStyle>
 #include <QApplication>
 #include <QScreen>
+#include <QTimer>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -30,6 +31,7 @@ private slots:
     void regionSelectionScalesAndCancels();
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
+    void windowsCaptureLatency();
     void makePreviewFixture();
 };
 
@@ -269,6 +271,18 @@ void EditorTests::windowsDesktopCapture() {
     QSignalSpy finished(&backend, &Backend::captureFinished);
     QImage captured;
     connect(&backend, &Backend::captured, this, [&captured](const QUrl &url) { captured.load(url.toLocalFile()); });
+    // Cover the marker, then hide immediately before capture, like the editor.
+    // Removing the fixed delay must not capture this stale window.
+    QWidget cover;
+    cover.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    cover.setGeometry(marker.geometry());
+    cover.setAutoFillBackground(true);
+    QPalette coverPalette; coverPalette.setColor(QPalette::Window, Qt::red);
+    cover.setPalette(coverPalette);
+    cover.show(); cover.raise();
+    QVERIFY(QTest::qWaitForWindowExposed(&cover));
+    QTest::qWait(100);
+    cover.hide();
     backend.capture();
     RegionSelector *selector = nullptr;
     const auto findSelector = [&selector] {
@@ -294,6 +308,77 @@ void EditorTests::windowsDesktopCapture() {
     QVERIFY(!finished.last().first().toBool());
 #else
     QSKIP("Windows desktop capture test");
+#endif
+}
+
+void EditorTests::windowsCaptureLatency() {
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Capture latency requires an interactive Windows desktop");
+    class PaintProbe : public QObject {
+    public:
+        QElapsedTimer timer;
+        qint64 firstPaintMs = -1;
+        QPointer<RegionSelector> selector;
+        bool eventFilter(QObject *object, QEvent *event) override {
+            if (firstPaintMs < 0 && event->type() == QEvent::Paint) {
+                if (auto *region = qobject_cast<RegionSelector *>(object)) {
+                    selector = region;
+                    // Measure after painting returns, when input can be handled.
+                    QTimer::singleShot(0, this, [this] {
+                        if (firstPaintMs < 0) firstPaintMs = timer.elapsed();
+                    });
+                }
+            }
+            return false;
+        }
+    } probe;
+    Backend backend;
+    // Include the real QML capture/hide path used by the resident app.
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *window = engine.rootObjects().first();
+    GlobalHotkey hotkey;
+    QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
+    connect(&hotkey, &GlobalHotkey::activated, window, [window] {
+        QMetaObject::invokeMethod(window, "capture");
+    });
+    qApp->installEventFilter(&probe);
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        probe.firstPaintMs = -1;
+        probe.selector.clear();
+        probe.timer.start();
+        INPUT input[4]{};
+        for (auto &key : input) key.type = INPUT_KEYBOARD;
+        input[0].ki.wVk = VK_CONTROL;
+        input[1].ki.wVk = VK_SNAPSHOT;
+        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+        QTRY_VERIFY_WITH_TIMEOUT(probe.firstPaintMs >= 0, 5000);
+        qInfo("Hotkey to painted selector, attempt %d: %lld ms", attempt + 1, probe.firstPaintMs);
+        QVERIFY(probe.selector);
+        QTest::keyClick(probe.selector, Qt::Key_Escape);
+        QVERIFY(!backend.capturing());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QTest::qWait(100);
+    }
+    qApp->removeEventFilter(&probe);
+    for (QScreen *screen : QGuiApplication::screens()) {
+        QElapsedTimer timer; timer.start();
+        const QImage image = screen->grabWindow(0).toImage();
+        QVERIFY(!image.isNull());
+        qInfo("Raw screen grab %dx%d: %lld ms", image.width(), image.height(), timer.elapsed());
+    }
+#else
+    QSKIP("Windows capture latency test");
 #endif
 }
 
