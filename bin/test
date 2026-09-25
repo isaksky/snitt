@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+if command -v qmake6 >/dev/null 2>&1; then
+    QMAKE=qmake6
+elif command -v qmake >/dev/null 2>&1; then
+    QMAKE=qmake
+else
+    echo "Qt 6 qmake is required." >&2
+    exit 1
+fi
+mkdir -p "$ROOT/build/tests"
+cd "$ROOT/build/tests"
+"$QMAKE" "$ROOT/tests/editor_tests.pro"
+make -j4
+QT_QPA_PLATFORM=offscreen ./editor_tests

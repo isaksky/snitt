@@ -1,0 +1,10 @@
+QT += core gui quick quickcontrols2 testlib
+CONFIG += c++17 testcase console
+CONFIG -= app_bundle
+TARGET = editor_tests
+TEMPLATE = app
+macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
+INCLUDEPATH += ../src
+HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/backend.h
+SOURCES += editor_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../src/backend.cpp
+RESOURCES += ../src/resources.qrc

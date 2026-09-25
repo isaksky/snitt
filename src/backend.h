@@ -1,29 +1,26 @@
 #pragma once
 
 #include <QObject>
-#include <QString>
+#include <QProcess>
+#include <QTemporaryDir>
+#include <QUrl>
 
 class Backend : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString greeting READ greeting NOTIFY greetingChanged)
-
+    Q_PROPERTY(bool capturing READ capturing NOTIFY capturingChanged)
 public:
-    explicit Backend(QObject *parent = nullptr) : QObject(parent) {}
-
-    QString greeting() const {
-        return m_count == 0
-            ? QStringLiteral("Hello, world!")
-            : QStringLiteral("Hello from C++! (%1)").arg(m_count);
-    }
-
-    Q_INVOKABLE void sayHello() {
-        ++m_count;
-        emit greetingChanged();
-    }
-
+    explicit Backend(QObject *parent = nullptr);
+    bool capturing() const { return m_capturing; }
+    Q_INVOKABLE void capture();
 signals:
-    void greetingChanged();
-
+    void capturingChanged();
+    void captured(const QUrl &file);
+    void captureFinished();
+    void error(const QString &message);
 private:
-    int m_count = 0;
+    void finish();
+    QTemporaryDir m_temp;
+    QProcess m_process;
+    bool m_capturing = false;
+    QString m_output;
 };
