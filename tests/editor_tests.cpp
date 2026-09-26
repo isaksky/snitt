@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QTemporaryDir>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -47,6 +48,7 @@ private slots:
     void qmlRecordingControls();
     void qmlRecordingHotkeyStop();
     void qmlRecordingReview();
+    void qmlTrimBarZoomMapping();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void captureToolbarInteraction();
@@ -924,6 +926,37 @@ void EditorTests::qmlDismissal() {
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 }
 
+void EditorTests::qmlTrimBarZoomMapping() {
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl("qrc:/TrimBar.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> bar(component.create());
+    QVERIFY(bar);
+    bar->setProperty("width", 1000);
+    bar->setProperty("durationSec", 4.0);
+    bar->setProperty("startSec", 1.5);
+    bar->setProperty("endSec", 2.5);
+    QSignalSpy views(bar.get(), SIGNAL(viewChanged(double,double)));
+    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
+    QCOMPARE(bar->property("windowStart").toDouble(), 1.375);
+    QCOMPARE(bar->property("windowEnd").toDouble(), 2.625);
+    QCOMPARE(views.size(), 1);
+    QCOMPARE(views.first().at(0).toDouble(), 1.375);
+    QCOMPARE(views.first().at(1).toDouble(), 2.625);
+    bar->setProperty("activeMode", 1);
+    const double x = bar->property("activeHandleX").toDouble();
+    QVERIFY(qAbs(x - (14.0 + 0.1 * 972.0 - 7.0)) < 0.01);
+    bar->setProperty("startSec", 1.7);
+    bar->setProperty("endSec", 2.3);
+    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
+    QCOMPARE(bar->property("windowStart").toDouble(), 1.625);
+    QCOMPARE(bar->property("windowEnd").toDouble(), 2.375);
+    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
+    QCOMPARE(bar->property("windowStart").toDouble(), 0.0);
+    QCOMPARE(bar->property("windowEnd").toDouble(), 4.0);
+    QCOMPARE(views.size(), 3);
+}
+
 void EditorTests::qmlRecordingReview() {
     if (QGuiApplication::platformName() == "offscreen")
         QSKIP("Qt Multimedia playback requires an interactive display");
@@ -971,6 +1004,21 @@ void EditorTests::qmlRecordingReview() {
     review->resize(680, 520);
     QTest::qWait(150);
     QVERIFY(review->grabWindow().save("trim-review-minimum.png"));
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
+        return true;
+    })(), 45000);
+    const QString fullStripFirst = trim->thumbnails().first();
+    bar->setProperty("startSec", 0.5);
+    bar->setProperty("endSec", 2.0);
+    QVERIFY(QMetaObject::invokeMethod(bar, "toggleZoom"));
+    QTRY_VERIFY(bar->property("windowStart").toDouble() > 0.3);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
+        return trim->thumbnails().first() != fullStripFirst;
+    })(), 45000);
+    QVERIFY(QMetaObject::invokeMethod(bar, "toggleZoom"));
+    QCOMPARE(bar->property("windowStart").toDouble(), 0.0);
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
         return true;

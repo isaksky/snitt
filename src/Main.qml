@@ -477,6 +477,8 @@ ApplicationWindow {
                 thumbCount: 12
                 thumbnails: backend.trim.thumbnails
                 onScrub: seconds => reviewPlayer.position = Math.round(seconds * 1000)
+                onViewChanged: (startSeconds, endSeconds) =>
+                    backend.trim.setThumbnailWindow(Math.round(startSeconds * 1000), Math.round(endSeconds * 1000))
             }
             RowLayout {
                 Layout.fillWidth: true

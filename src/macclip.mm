@@ -7,6 +7,7 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QTimer>
+#include <algorithm>
 #include <cmath>
 
 bool macProbeClip(const QString &path, qint64 *durationMs, int *width, int *height) {
@@ -23,7 +24,8 @@ bool macProbeClip(const QString &path, qint64 *durationMs, int *width, int *heig
     return true;
 }
 
-void macGenerateClipThumbnails(const QString &path, const QString &directory, qint64 durationMs,
+void macGenerateClipThumbnails(const QString &path, const QString &directory,
+                               qint64 startMs, qint64 endMs,
                                QObject *receiver, quint64 generation,
                                std::function<void(int, const QString &, quint64)> ready) {
     QPointer<QObject> guard(receiver);
@@ -38,10 +40,13 @@ void macGenerateClipThumbnails(const QString &path, const QString &directory, qi
             // Filmstrip samples may use the nearest decoded frame. Exact edge
             // positions are checked on export, while zero tolerance here can
             // force a long full decode for every thumbnail.
-            generator.requestedTimeToleranceBefore = CMTimeMake(1, 5);
-            generator.requestedTimeToleranceAfter = CMTimeMake(1, 5);
+            const double windowSeconds = double(endMs - startMs) / 1000.0;
+            const double tolerance = std::min(0.2, windowSeconds / 24.0);
+            generator.requestedTimeToleranceBefore = CMTimeMakeWithSeconds(tolerance, 600);
+            generator.requestedTimeToleranceAfter = CMTimeMakeWithSeconds(tolerance, 600);
             for (int index = 0; index < 12; ++index) {
-                const double seconds = double(durationMs) * (index + 0.5) / 12000.0;
+                const double seconds = double(startMs) / 1000.0
+                    + windowSeconds * (index + 0.5) / 12.0;
                 NSError *error = nil;
                 CGImageRef frame = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(seconds, 600)
                                                         actualTime:nil error:&error];

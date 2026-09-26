@@ -38,6 +38,7 @@ Item {
         : xForTime(endSec) + handleW / 2
 
     signal scrub(real seconds)
+    signal viewChanged(real startSeconds, real endSeconds)
 
     function xForTime(t) {
         if (durationSec <= 0)
@@ -62,11 +63,13 @@ Item {
         var newEnd = Math.min(durationSec, endSec + slack);
         if (zoomed && newStart === viewStartSec && newEnd === viewEndSec) {
             zoomed = false;
+            viewChanged(0, durationSec);
             return;
         }
         viewStartSec = newStart;
         viewEndSec = newEnd;
         zoomed = true;
+        viewChanged(newStart, newEnd);
     }
 
     // ---- filmstrip ----

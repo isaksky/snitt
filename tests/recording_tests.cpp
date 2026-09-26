@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCryptographicHash>
+#include <QImage>
 #include <QFile>
 #include <QFileInfo>
 #include <QElapsedTimer>
@@ -28,6 +29,7 @@ private slots:
     void desktopRecording();
     void trimKeepsOriginalOnDismissAndInvalidRange();
     void trimHeadAndTailAccurately();
+    void trimThumbnailsFollowWindow();
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
 #ifdef Q_OS_MACOS
@@ -128,6 +130,53 @@ void RecordingTests::trimHeadAndTailAccurately() {
     QVERIFY2(last.blue() > last.red() * 1.5 && last.blue() > last.green() * 1.5,
              qPrintable(QStringLiteral("Last frame %1 was not blue").arg(last.name())));
     QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+}
+
+void RecordingTests::trimThumbnailsFollowWindow() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the color fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY(!path.isEmpty());
+    QFile source(path);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256);
+    source.close();
+    TrimSession trim;
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    const auto thumbnailsReady = [&] {
+        if (trim.thumbnails().size() != 12) return false;
+        for (const QString &url : trim.thumbnails()) if (url.isEmpty()) return false;
+        return true;
+    };
+    const auto colorAt = [&](int index) {
+        const QImage image(QUrl(trim.thumbnails().at(index)).toLocalFile());
+        return image.isNull() ? QColor() : image.pixelColor(image.width() / 2, image.height() / 2);
+    };
+    const auto isRed = [](QColor c) { return c.red() > 90 && c.red() > c.green() * 2 && c.red() > c.blue() * 2; };
+    const auto isGreen = [](QColor c) { return c.green() > 60 && c.green() > c.red() * 2 && c.green() > c.blue() * 2; };
+    const auto isBlue = [](QColor c) { return c.blue() > 90 && c.blue() > c.red() * 2 && c.blue() > c.green() * 2; };
+    const auto isYellow = [](QColor c) { return c.red() > 90 && c.green() > 90 && c.blue() < 60; };
+    QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
+    QVERIFY2(isRed(colorAt(0)), qPrintable(colorAt(0).name()));
+    QVERIFY2(isYellow(colorAt(11)), qPrintable(colorAt(11).name()));
+
+    trim.setThumbnailWindow(1375, 2625);
+    QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
+    QVERIFY2(isGreen(colorAt(0)), qPrintable(colorAt(0).name()));
+    QVERIFY2(isBlue(colorAt(11)), qPrintable(colorAt(11).name()));
+
+    // Switch twice before older asynchronous results finish; only the latest
+    // full-width strip may be published.
+    trim.setThumbnailWindow(1625, 2375);
+    trim.setThumbnailWindow(0, 4000);
+    QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
+    QTest::qWait(500);
+    QVERIFY2(isRed(colorAt(0)), qPrintable(colorAt(0).name()));
+    QVERIFY2(isYellow(colorAt(11)), qPrintable(colorAt(11).name()));
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
 }
 
 void RecordingTests::trimCancellationPreservesOriginal() {

@@ -33,6 +33,7 @@ public:
     QStringList thumbnails() const { return m_thumbnails; }
     void open(const QString &path);
     Q_INVOKABLE void setDuration(qint64 milliseconds);
+    Q_INVOKABLE void setThumbnailWindow(qint64 startMs, qint64 endMs);
     Q_INVOKABLE void keepOriginal();
     Q_INVOKABLE void exportRange(qint64 startMs, qint64 endMs);
     Q_INVOKABLE void cancelExport();
@@ -67,6 +68,8 @@ private:
     bool m_busy = false;
     bool m_canceling = false;
     int m_nextThumb = 0;
+    qint64 m_thumbnailStartMs = 0;
+    qint64 m_thumbnailEndMs = 0;
     quint64 m_generation = 0;
 #ifdef Q_OS_MACOS
     std::unique_ptr<MacClipExport> m_macExport;

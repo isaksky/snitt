@@ -122,6 +122,8 @@ void TrimSession::open(const QString &path) {
     m_problem.clear();
     m_duration = 0;
     m_progress = 0;
+    m_thumbnailStartMs = 0;
+    m_thumbnailEndMs = 0;
     m_thumbnails = QStringList(thumbnailCount, QString());
     m_thumbDir = std::make_unique<QTemporaryDir>();
     ++m_generation;
@@ -141,10 +143,32 @@ void TrimSession::setDuration(qint64 milliseconds) {
     generateThumbnails();
 }
 
+void TrimSession::setThumbnailWindow(qint64 startMs, qint64 endMs) {
+    if (m_path.isEmpty() || m_duration <= 0 || m_busy) return;
+    const qint64 start = qBound<qint64>(0, startMs, m_duration - 1);
+    const qint64 end = qBound(start + 1, endMs, m_duration);
+    const qint64 currentEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
+    if (start == m_thumbnailStartMs && end == currentEnd) return;
+    ++m_generation;
+    if (!stopThumbnails()) {
+        m_thumbnails = QStringList(thumbnailCount, QString());
+        m_problem = QStringLiteral("Could not refresh the filmstrip preview.");
+        emit changed();
+        return;
+    }
+    m_thumbnailStartMs = start;
+    m_thumbnailEndMs = end;
+    m_thumbnails = QStringList(thumbnailCount, QString());
+    m_thumbDir = std::make_unique<QTemporaryDir>();
+    emit changed();
+    generateThumbnails();
+}
+
 void TrimSession::generateThumbnails() {
     if (!m_thumbDir || !m_thumbDir->isValid() || m_duration <= 0) return;
 #ifdef Q_OS_MACOS
-    macGenerateClipThumbnails(m_path, m_thumbDir->path(), m_duration, this, m_generation,
+    macGenerateClipThumbnails(m_path, m_thumbDir->path(), m_thumbnailStartMs,
+        m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration, this, m_generation,
         [this](int index, const QString &file, quint64 generation) {
             if (generation != m_generation || index < 0 || index >= m_thumbnails.size()) return;
             if (!file.isEmpty()) m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
@@ -161,7 +185,9 @@ void TrimSession::nextWindowsThumbnail() {
     if (m_path.isEmpty() || m_nextThumb >= thumbnailCount || !m_thumbDir) return;
     const QString ffmpeg = recording::toolPath("ffmpeg");
     if (ffmpeg.isEmpty()) return;
-    const qint64 time = qRound64(double(m_duration) * (m_nextThumb + 0.5) / thumbnailCount);
+    const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
+    const qint64 time = m_thumbnailStartMs
+        + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
     m_thumbProcess.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y",
         "-ss", timestamp(time), "-i", m_path, "-frames:v", "1", "-vf", "scale=-1:90",
         "-vcodec", "mjpeg", m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg")});
@@ -379,6 +405,8 @@ void TrimSession::clear() {
     m_path.clear();
     m_thumbnails.clear();
     m_duration = 0;
+    m_thumbnailStartMs = 0;
+    m_thumbnailEndMs = 0;
     m_busy = false;
     m_canceling = false;
     m_problem.clear();
