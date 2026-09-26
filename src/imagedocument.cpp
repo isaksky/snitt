@@ -58,24 +58,188 @@ const QImage &ImageDocument::image() const {
     return m_index < 0 ? empty : m_history[m_index];
 }
 
+bool ImageDocument::hasAnnotations() const {
+    if (m_index < 0) return false;
+    const auto &ops = m_operationHistory[m_index];
+    int lastAnnotation = -1;
+    int lastDestructiveEdit = -1;
+    for (int i = 0; i < ops.size(); ++i) {
+        if (ops[i].kind == Operation::Annotation || ops[i].kind == Operation::Text) lastAnnotation = i;
+        else lastDestructiveEdit = i;
+    }
+    if (lastAnnotation < 0) return false;
+    if (lastAnnotation > lastDestructiveEdit) return true;
+    // A later cut, mask, or erase may have removed every visible annotation.
+    // Replay an alpha-only layer so that export size reflects current content.
+    QImage mask(m_source.size(), QImage::Format_Alpha8);
+    if (mask.isNull()) return true;
+    mask.fill(Qt::transparent);
+    for (const auto &op : ops) {
+        if (op.kind == Operation::Cut) {
+            QImage next(mask.width() - (op.vertical ? op.end - op.start : 0),
+                        mask.height() - (op.vertical ? 0 : op.end - op.start), mask.format());
+            if (next.isNull()) return true;
+            next.fill(Qt::transparent);
+            QPainter p(&next);
+            if (op.vertical) {
+                p.drawImage(QPoint(0, 0), mask, QRect(0, 0, op.start, mask.height()));
+                p.drawImage(QPoint(op.start, 0), mask, QRect(op.end, 0, mask.width() - op.end, mask.height()));
+            } else {
+                p.drawImage(QPoint(0, 0), mask, QRect(0, 0, mask.width(), op.start));
+                p.drawImage(QPoint(0, op.start), mask, QRect(0, op.end, mask.width(), mask.height() - op.end));
+            }
+            p.end();
+            mask = std::move(next);
+        } else if (op.kind == Operation::Blur || op.kind == Operation::Erase) {
+            QPainter p(&mask);
+            p.setCompositionMode(QPainter::CompositionMode_Clear);
+            p.fillRect(selectedPixels(op.area, mask.size()), Qt::white);
+        } else if (op.kind == Operation::Annotation) {
+            QPainter p(&mask);
+            drawAnnotation(p, op.tool, op.from, op.to, Qt::white, op.strokeWidth);
+        } else {
+            QPainter p(&mask);
+            p.setRenderHint(QPainter::TextAntialiasing);
+#ifdef Q_OS_WIN
+            QFont font(QStringLiteral("Segoe UI"));
+#else
+            QFont font(QStringLiteral("Helvetica"));
+#endif
+            font.setPixelSize(op.fontSize);
+            font.setWeight(QFont::DemiBold);
+            p.setFont(font);
+            p.setPen(Qt::white);
+            p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
+        }
+    }
+    for (int y = 0; y < mask.height(); ++y) {
+        const uchar *row = mask.constScanLine(y);
+        for (int x = 0; x < mask.width(); ++x)
+            if (row[x]) return true;
+    }
+    return false;
+}
+
+qreal ImageDocument::exportScale() const {
+    if (!hasAnnotations()) return 1;
+    const QSize size = image().size();
+    const int shorter = qMin(size.width(), size.height());
+    if (shorter >= 720) return 1;
+    qreal scale = qMin(3.0, 720.0 / qMax(1, shorter));
+    // Replay starts with the pre-cut source; budget that intermediate too.
+    scale = qMin(scale, 16384.0 / qMax(m_source.width(), m_source.height()));
+    scale = qMin(scale, std::sqrt(32.0 * 1024 * 1024 /
+                                      qMax(1.0, double(m_source.width()) * m_source.height())));
+    return qMax(1.0, scale);
+}
+
+QImage ImageDocument::render(qreal scale) const {
+    if (image().isNull() || !std::isfinite(scale) || scale <= 0) return {};
+    if (qFuzzyCompare(scale, 1.0)) return image();
+    if (scale > 1 && (m_source.width() * scale > 16384 || m_source.height() * scale > 16384
+                      || double(m_source.width()) * m_source.height() * scale * scale > 32.0 * 1024 * 1024))
+        return {};
+    const auto scaledSize = [&](QSize size) {
+        return QSize(qMax(1, qRound(size.width() * scale)), qMax(1, qRound(size.height() * scale)));
+    };
+    QImage result(scaledSize(m_source.size()), QImage::Format_ARGB32_Premultiplied);
+    if (result.isNull()) return {};
+    result.fill(Qt::transparent);
+    {
+        QPainter p(&result);
+        // Interpolating source pixels before a later privacy edit would blend
+        // hidden pixels into its boundary. Use exact source pixels in that case.
+        bool replacesPixels = false;
+        for (const auto &op : m_operationHistory[m_index]) {
+            if (op.kind == Operation::Blur || op.kind == Operation::Erase) {
+                replacesPixels = true;
+                break;
+            }
+        }
+        p.setRenderHint(QPainter::SmoothPixmapTransform, !replacesPixels);
+        p.drawImage(QRect(QPoint(), result.size()), m_source);
+    }
+    for (const auto &op : m_operationHistory[m_index]) {
+        if (op.kind == Operation::Cut) {
+            const int start = qBound(0, qRound(op.start * scale), op.vertical ? result.width() : result.height());
+            const int removed = qMax(1, qRound((op.end - op.start) * scale));
+            const int end = qMin(op.vertical ? result.width() : result.height(), start + removed);
+            QImage next(result.width() - (op.vertical ? end - start : 0),
+                        result.height() - (op.vertical ? 0 : end - start), result.format());
+            if (next.isNull()) return {};
+            next.fill(Qt::transparent);
+            QPainter p(&next);
+            if (op.vertical) {
+                p.drawImage(QPoint(0, 0), result, QRect(0, 0, start, result.height()));
+                p.drawImage(QPoint(start, 0), result, QRect(end, 0, result.width() - end, result.height()));
+            } else {
+                p.drawImage(QPoint(0, 0), result, QRect(0, 0, result.width(), start));
+                p.drawImage(QPoint(0, start), result, QRect(0, end, result.width(), result.height() - end));
+            }
+            p.end();
+            result = std::move(next);
+            continue;
+        }
+        QColor eraseSample;
+        if (op.kind == Operation::Erase) {
+            const int x = qBound(0, qRound(op.samplePosition.x() * scale), result.width() - 1);
+            const int y = qBound(0, qRound(op.samplePosition.y() * scale), result.height() - 1);
+            eraseSample = result.pixelColor(x, y);
+        }
+        QPainter p(&result);
+        p.scale(scale, scale);
+        if (op.kind == Operation::Blur) {
+            drawPrivacyMask(p, selectedPixels(op.area, QSize(qRound(result.width() / scale), qRound(result.height() / scale))));
+        } else if (op.kind == Operation::Erase) {
+            p.setCompositionMode(QPainter::CompositionMode_Source);
+            p.fillRect(selectedPixels(op.area, QSize(qRound(result.width() / scale), qRound(result.height() / scale))), eraseSample);
+        } else if (op.kind == Operation::Annotation) {
+            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+        } else if (op.kind == Operation::Text) {
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setRenderHint(QPainter::TextAntialiasing);
+#ifdef Q_OS_WIN
+            QFont font(QStringLiteral("Segoe UI"));
+#else
+            QFont font(QStringLiteral("Helvetica"));
+#endif
+            font.setPixelSize(op.fontSize);
+            font.setWeight(QFont::DemiBold);
+            p.setFont(font);
+            p.setPen(op.color);
+            p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
+        }
+    }
+    return result;
+}
+
 void ImageDocument::reset(QImage image) {
     m_history.clear();
+    m_operationHistory.clear();
     m_index = -1;
     if (!image.isNull()) {
         image.setDevicePixelRatio(1);
-        commit(image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+        m_source = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        commit(m_source);
+    } else {
+        m_source = {};
     }
 }
 
-void ImageDocument::commit(QImage image) {
+void ImageDocument::commit(QImage image, const Operation *operation) {
     m_history.resize(m_index + 1);
+    m_operationHistory.resize(m_index + 1);
+    QVector<Operation> operations = m_index < 0 ? QVector<Operation>() : m_operationHistory[m_index];
+    if (operation) operations.append(*operation);
     m_history.append(std::move(image));
+    m_operationHistory.append(std::move(operations));
     ++m_index;
     qint64 bytes = 0;
     for (const auto &frame : m_history) bytes += frame.sizeInBytes();
     while (m_history.size() > 1 && (bytes > 256LL * 1024 * 1024 || m_history.size() > 50)) {
         bytes -= m_history.front().sizeInBytes();
         m_history.removeFirst();
+        m_operationHistory.removeFirst();
         --m_index;
     }
 }
@@ -103,7 +267,8 @@ bool ImageDocument::cut(bool vertical, int start, int end) {
         p.drawImage(QRect(0, start, result.width(), length - end), image(), QRect(0, end, image().width(), length - end));
     }
     p.end();
-    commit(std::move(result));
+    Operation op; op.kind = Operation::Cut; op.vertical = vertical; op.start = start; op.end = end;
+    commit(std::move(result), &op);
     return true;
 }
 
@@ -122,7 +287,8 @@ bool ImageDocument::blur(QRectF area) {
     QPainter painter(&result);
     drawPrivacyMask(painter, pixels);
     painter.end();
-    commit(std::move(result));
+    Operation op; op.kind = Operation::Blur; op.area = pixels;
+    commit(std::move(result), &op);
     return true;
 }
 
@@ -140,7 +306,8 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
         // Copy the stored pixel exactly, including its alpha and premultiplication.
         std::fill(row + pixels.left(), row + pixels.right() + 1, sampledPixel);
     }
-    commit(std::move(result));
+    Operation op; op.kind = Operation::Erase; op.area = pixels; op.samplePosition = samplePosition;
+    commit(std::move(result), &op);
     return true;
 }
 
@@ -184,7 +351,9 @@ bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QC
     QPainter p(&result);
     drawAnnotation(p, tool, start, end, color, strokeWidth);
     p.end();
-    commit(std::move(result));
+    Operation op; op.kind = Operation::Annotation; op.tool = tool; op.from = start; op.to = end;
+    op.color = color; op.strokeWidth = strokeWidth;
+    commit(std::move(result), &op);
     return true;
 }
 
@@ -206,6 +375,7 @@ bool ImageDocument::text(QRectF box, const QString &text, QColor color, int font
     p.setPen(color);
     p.drawText(box, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
     p.end();
-    commit(std::move(result));
+    Operation op; op.kind = Operation::Text; op.area = box; op.text = text; op.color = color; op.fontSize = fontSize;
+    commit(std::move(result), &op);
     return true;
 }

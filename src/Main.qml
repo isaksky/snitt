@@ -656,15 +656,28 @@ ApplicationWindow {
                 ActionButton { text: ""; icon.source: "qrc:/icons/undo-2.svg"; Accessible.name: "Undo"; ToolTip.visible: hovered; ToolTip.text: "Undo (" + win.commandKey + "Z)"; visible: !canvas.arranging; enabled: canvas.canUndo && !win.editingText; onClicked: canvas.undo() }
                 ActionButton { text: ""; icon.source: "qrc:/icons/redo-2.svg"; Accessible.name: "Redo"; ToolTip.visible: hovered; ToolTip.text: "Redo (" + win.redoKey + ")"; visible: !canvas.arranging; enabled: canvas.canRedo && !win.editingText; onClicked: canvas.redo() }
             }
-            Label {
-                text: win.notice !== "" ? win.notice
-                    : canvas.arranging ? "Drag to reorder · +/− changes columns · Enter to annotate · " + win.copyKey + " to copy and close"
-                    : canvas.hasImage ? win.hint : "Select a region · M for multiple regions · V for recording · Esc closes"
-                color: win.notice !== "" ? "#a3e6ca" : "#8f99a8"
-                font.pixelSize: 12
-                elide: Text.ElideRight
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 14
+                Label {
+                    text: win.notice !== "" ? win.notice
+                        : canvas.arranging ? "Drag to reorder · +/− changes columns · Enter to annotate · C to copy or S to save"
+                        : canvas.hasImage ? win.hint : "Select a region · M for multiple regions · V for recording · Esc closes"
+                    color: win.notice !== "" ? "#a3e6ca" : "#8f99a8"
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Label {
+                    visible: canvas.hasImage
+                    text: "Preview " + Math.round(canvas.imageScale * 100) + "% · Image "
+                        + canvas.imageWidth + " × " + canvas.imageHeight + " px"
+                    color: "#8f99a8"
+                    font.pixelSize: 12
+                    ToolTip.visible: hoverHandler.hovered
+                    ToolTip.text: "Preview zoom only; unannotated exports keep the image's natural pixel size"
+                    HoverHandler { id: hoverHandler }
+                }
             }
         }
     }

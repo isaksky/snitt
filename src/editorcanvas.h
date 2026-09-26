@@ -55,6 +55,7 @@ public:
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
     Q_INVOKABLE QString save();
+    QString saveTo(const QString &picturesDirectory);
     Q_INVOKABLE void clear();
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();

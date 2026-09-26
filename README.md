@@ -192,6 +192,17 @@ started at login.
 | Record video | V | Starts a video capture, or enables it in the screenshot picker. |
 | Open / paste | Command/Ctrl+O / Command/Ctrl+V | Opens an existing image for editing. |
 
+The footer shows preview zoom and the current image's natural pixel dimensions.
+Zoom changes only the editor view. Copy and Save keep those dimensions for
+unannotated images, including cuts, arranged regions, blur, and erase. When
+visible shapes or text remain on a small image, xshot renders them fresh at a
+larger output size: it raises the
+shorter edge toward 720 pixels, never more than 3×, 16,384 pixels on either edge,
+or 32 million output pixels. Images already at least 720 pixels on the shorter
+edge stay at natural size. This improves annotation edges; enlarged screenshot
+pixels do not gain missing captured detail. Undoing or completely removing the
+annotations restores natural-size export. Copy and Save use the same output.
+
 Use Command on macOS, Ctrl on Windows. Escape cancels region selection or an
 in-progress drawing gesture. Tool shortcuts are inactive while entering text.
 Buttons show their shortcuts in parentheses, for example **Rectangle (R)**.

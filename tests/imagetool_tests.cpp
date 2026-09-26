@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <QBuffer>
 #include <QClipboard>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -19,6 +20,10 @@ private slots:
     void scaledGesturesAndClipboard();
     void highlightsPreviewAndHistory();
     void annotationSizingAndPreview();
+    void replayedAnnotationsAndExportPolicy();
+    void replayedEditsKeepOperationOrder();
+    void annotationPreviewDoesNotSoftenOnRelease();
+    void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
 };
 
@@ -155,23 +160,27 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     canvas.end(end.x(), end.y());
     QVERIFY(canvas.copy());
     const QImage one = QGuiApplication::clipboard()->image();
-    QVERIFY(one.pixelColor(30, 25).blue() >= 177 && one.pixelColor(30, 25).blue() <= 179);
-    QCOMPARE(one.pixelColor(9, 25), QColor(Qt::white));
-    QCOMPARE(one.pixelColor(61, 25), QColor(Qt::white));
-    QCOMPARE(preview.pixelColor(point({30, 25}).toPoint()), one.pixelColor(30, 25));
+    QCOMPARE(one.size(), QSize(240, 180));
+    const auto pixelAt = [](const QImage &image, int x, int y) {
+        return image.pixelColor(x * image.width() / 80, y * image.height() / 60);
+    };
+    QVERIFY(pixelAt(one, 30, 25).blue() >= 177 && pixelAt(one, 30, 25).blue() <= 179);
+    QCOMPARE(pixelAt(one, 9, 25), QColor(Qt::white));
+    QCOMPARE(pixelAt(one, 61, 25), QColor(Qt::white));
+    QCOMPARE(preview.pixelColor(point({30, 25}).toPoint()), pixelAt(one, 30, 25));
 
     canvas.begin(point({30, 20}).x(), point({30, 20}).y());
     canvas.end(point({70, 50}).x(), point({70, 50}).y());
     QVERIFY(canvas.copy());
     const QImage overlap = QGuiApplication::clipboard()->image();
-    QVERIFY(overlap.pixelColor(40, 30).blue() < one.pixelColor(40, 30).blue());
+    QVERIFY(pixelAt(overlap, 40, 30).blue() < pixelAt(one, 40, 30).blue());
     canvas.setInk(QColor("#ef4444"));
     canvas.begin(point({5, 5}).x(), point({5, 5}).y());
     canvas.end(point({15, 15}).x(), point({15, 15}).y());
     QVERIFY(canvas.copy());
     const QImage bothModes = QGuiApplication::clipboard()->image();
-    QVERIFY(bothModes.pixelColor(7, 7).green() < bothModes.pixelColor(7, 7).red());
-    QCOMPARE(bothModes.pixelColor(20, 20), overlap.pixelColor(20, 20));
+    QVERIFY(pixelAt(bothModes, 7, 7).green() < pixelAt(bothModes, 7, 7).red());
+    QCOMPARE(pixelAt(bothModes, 20, 20), pixelAt(overlap, 20, 20));
     canvas.undo(); canvas.undo();
     QVERIFY(canvas.copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), one);
@@ -252,6 +261,167 @@ void ImageToolTests::annotationSizingAndPreview() {
     QCOMPARE(canvas.strokeWidth(), 7);
     canvas.setTool("text"); canvas.adjustToolSize(120 * 100);
     QCOMPARE(canvas.textSize(), 20);
+}
+
+void ImageToolTests::replayedAnnotationsAndExportPolicy() {
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    ImageDocument doc;
+    doc.reset(white);
+    QVERIFY(!doc.hasAnnotations());
+    QCOMPARE(doc.exportScale(), 1.0);
+    QCOMPARE(doc.render(doc.exportScale()).size(), white.size());
+    QVERIFY(doc.blur(QRectF(1, 1, 5, 5)));
+    QCOMPARE(doc.exportScale(), 1.0); // Raster-only edits stay at natural size.
+    QVERIFY(doc.annotate("arrow", {8, 30}, {75, 30}, Qt::red, 2));
+    QVERIFY(doc.hasAnnotations());
+    QCOMPARE(doc.exportScale(), 3.0);
+    QCOMPARE(doc.render(doc.exportScale()).size(), QSize(240, 180));
+    const QImage enlarged = doc.render(3);
+    QVERIFY(enlarged.pixelColor(60, 90).red() > enlarged.pixelColor(60, 90).green());
+    doc.undo();
+    QVERIFY(!doc.hasAnnotations());
+    QCOMPARE(doc.exportScale(), 1.0);
+    doc.redo();
+    QCOMPARE(doc.render(3), enlarged);
+
+    QImage adequate(1200, 800, QImage::Format_ARGB32_Premultiplied);
+    adequate.fill(Qt::white);
+    doc.reset(adequate);
+    QVERIFY(doc.text(QRectF(10, 10, 300, 100), "Sharp text", Qt::red, 24));
+    QCOMPARE(doc.exportScale(), 1.0);
+    QCOMPARE(doc.render(doc.exportScale()).size(), adequate.size());
+}
+
+void ImageToolTests::replayedEditsKeepOperationOrder() {
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    ImageDocument doc;
+    doc.reset(white);
+    QVERIFY(doc.annotate("rect", {10, 10}, {70, 50}, Qt::red, 2));
+    const QImage beforeCut = doc.render(3);
+    QVERIFY(beforeCut.pixelColor(45, 30).red() > beforeCut.pixelColor(45, 30).green());
+    QVERIFY(doc.cut(true, 20, 40));
+    const QImage afterCut = doc.render(3);
+    QCOMPARE(afterCut.size(), QSize(180, 180));
+    QVERIFY(afterCut.pixelColor(45, 30).red() > afterCut.pixelColor(45, 30).green());
+    QVERIFY(afterCut.pixelColor(120, 30).red() > afterCut.pixelColor(120, 30).green());
+    QVERIFY(doc.blur(QRectF(0, 8, 25, 8)));
+    const QImage masked = doc.render(3);
+    QVERIFY(masked.pixelColor(45, 30).red() < 180);
+    QVERIFY(masked.pixelColor(120, 30).red() > masked.pixelColor(120, 30).green());
+    doc.undo();
+    QCOMPARE(doc.render(3), afterCut);
+    doc.redo();
+    QCOMPARE(doc.render(3), masked);
+    QVERIFY(doc.erase(QRectF(35, 8, 15, 8), {35, 8}));
+    const QImage erased = doc.render(3);
+    QVERIFY(erased.pixelColor(120, 30).red() <= erased.pixelColor(120, 30).green() + 20);
+    QVERIFY(doc.annotate("highlight", {35, 8}, {50, 16}, Qt::green, 2));
+    const QImage lateAnnotation = doc.render(3);
+    QVERIFY(lateAnnotation != erased); // A later annotation remains above the erase.
+
+    doc.reset(white);
+    QVERIFY(doc.annotate("rect", {10, 10}, {18, 18}, Qt::red, 2));
+    QVERIFY(doc.cut(true, 8, 22));
+    QVERIFY(!doc.hasAnnotations());
+    QCOMPARE(doc.exportScale(), 1.0);
+    doc.undo();
+    QVERIFY(doc.hasAnnotations());
+    QVERIFY(doc.blur(QRectF(0, 0, 25, 25)));
+    QVERIFY(!doc.hasAnnotations());
+    doc.undo();
+    QVERIFY(doc.erase(QRectF(0, 0, 25, 25), {40, 40}));
+    QVERIFY(!doc.hasAnnotations());
+
+    QImage secret = white;
+    for (int y = 10; y < 30; ++y)
+        for (int x = 10; x < 30; ++x)
+            secret.setPixelColor(x, y, Qt::black);
+    ImageDocument clean, changed;
+    clean.reset(white); changed.reset(secret);
+    QVERIFY(clean.annotate("arrow", {40, 40}, {70, 40}, Qt::red, 2));
+    QVERIFY(changed.annotate("arrow", {40, 40}, {70, 40}, Qt::red, 2));
+    QVERIFY(clean.blur(QRectF(10, 10, 20, 20)));
+    QVERIFY(changed.blur(QRectF(10, 10, 20, 20)));
+    QCOMPARE(clean.render(3), changed.render(3)); // Hidden source pixels cannot bleed past the mask.
+}
+
+void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    QTemporaryDir temporary;
+    const QString path = temporary.filePath("small.png");
+    QVERIFY(white.save(path));
+    for (const QString &tool : {QStringLiteral("arrow"), QStringLiteral("rect"), QStringLiteral("highlight")}) {
+      for (const qreal zoom : {2.5, 3.0}) {
+        for (const int displayScale : {1, 2}) {
+            EditorCanvas canvas;
+            canvas.setWidth(80 * zoom + 32); canvas.setHeight(60 * zoom + 32);
+            QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+            canvas.setTool(tool);
+            if (tool != "highlight") canvas.adjustToolSize(-120); // Thin 3 px stroke.
+            const auto point = [&](QPointF source) {
+                return canvas.imageRect().topLeft() + source * canvas.imageScale();
+            };
+            const QPointF start = point({5, 15}), end = point({72, 42});
+            canvas.begin(start.x(), start.y()); canvas.move(end.x(), end.y());
+            const QSize viewport(qRound(canvas.width() * displayScale), qRound(canvas.height() * displayScale));
+            const auto snapshot = [&]() {
+                QImage frame(viewport, QImage::Format_ARGB32_Premultiplied);
+                frame.fill(Qt::transparent);
+                QPainter painter(&frame);
+                painter.scale(displayScale, displayScale);
+                canvas.paint(&painter);
+                return frame;
+            };
+            const QImage live = snapshot();
+            canvas.end(end.x(), end.y());
+            const QImage committed = snapshot();
+            QCOMPARE(committed, live);
+        }
+      }
+    }
+
+    ImageDocument text;
+    text.reset(white);
+    QVERIFY(text.text(QRectF(3, 3, 74, 40), "Sharp", Qt::red, 14));
+    const QImage fresh = text.render(3);
+    const QImage stretched = text.image().scaled(fresh.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    QVERIFY(fresh != stretched); // Export re-renders glyphs, not the flattened bitmap.
+}
+
+void ImageToolTests::failedSavePreservesSession() {
+    QTemporaryDir temporary;
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    const QString imagePath = temporary.filePath("source.png");
+    QVERIFY(white.save(imagePath));
+    EditorCanvas canvas;
+    canvas.setWidth(272); canvas.setHeight(212);
+    QVERIFY(canvas.load(QUrl::fromLocalFile(imagePath)));
+    canvas.setTool("rect");
+    const QPointF start = canvas.imageRect().topLeft() + QPointF(10, 10) * canvas.imageScale();
+    const QPointF end = canvas.imageRect().topLeft() + QPointF(70, 50) * canvas.imageScale();
+    canvas.begin(start.x(), start.y()); canvas.end(end.x(), end.y());
+    QVERIFY(canvas.canUndo());
+    QVERIFY(canvas.copy());
+    const QImage before = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("leave this clipboard alone");
+    const QString blocked = temporary.filePath("not-a-folder");
+    QFile file(blocked);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+    QSignalSpy error(&canvas, &EditorCanvas::error);
+    QVERIFY(canvas.saveTo(blocked).isEmpty());
+    QCOMPARE(error.size(), 1);
+    QVERIFY(error.first().first().toString().contains("folder"));
+    QVERIFY(canvas.hasImage());
+    QVERIFY(canvas.canUndo());
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), before);
+    QGuiApplication::clipboard()->setText("leave this clipboard alone");
+    QVERIFY(!QFileInfo::exists(QDir(blocked).filePath("xshot")));
 }
 
 void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {

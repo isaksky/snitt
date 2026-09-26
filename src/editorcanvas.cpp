@@ -75,7 +75,13 @@ void EditorCanvas::paint(QPainter *p) {
     p->translate(imageRect().topLeft());
     p->scale(imageScale(), imageScale());
     p->setClipRect(QRectF(0, 0, imageWidth(), imageHeight()));
-    p->drawImage(QPointF(0, 0), m_document.image());
+    // Replay retained geometry at preview resolution so a committed stroke uses
+    // the same raster resolution as the live drag, including enlarged previews.
+    const QTransform device = p->deviceTransform();
+    const qreal previewScale = std::hypot(device.m11(), device.m12());
+    const QImage preview = m_document.render(previewScale);
+    p->drawImage(QRectF(0, 0, imageWidth(), imageHeight()),
+                 preview.isNull() ? m_document.image() : preview);
     if (m_arranging) {
         for (int i = 0; i < m_regionRects.size(); ++i) {
             const QRectF area = m_regionRects[i];
@@ -167,12 +173,16 @@ bool EditorCanvas::copy() {
 }
 
 QImage EditorCanvas::exportImage() const {
-    return m_document.image();
+    const QImage exported = m_document.render(m_document.exportScale());
+    return exported.isNull() ? m_document.image() : exported;
 }
 
 QString EditorCanvas::save() {
+    return saveTo(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation));
+}
+
+QString EditorCanvas::saveTo(const QString &pictures) {
     if (!hasImage()) return {};
-    const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     QString message;
     const QString path = screenshots::savePng(exportImage(), pictures, &message);
     if (path.isEmpty()) emit error(message);

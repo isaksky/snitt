@@ -449,8 +449,21 @@ void EditorTests::qmlSaveAndClose() {
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     const QString fromButton = newSavedFile();
     QVERIFY(!fromButton.isEmpty()); created.append(fromButton);
-    QCOMPARE(QImage(fromButton).size(), pattern().size());
+    QCOMPARE(QImage(fromButton).size(), pattern().size() * 3);
     QVERIFY(QImage(fromButton).convertToFormat(pattern().format()) != pattern());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
+
+    QVERIFY(canvas->load(QUrl::fromLocalFile(inputPath)));
+    window->show();
+    canvas->addText(4, 4, 70, 40, "Sharp", 16);
+    QVERIFY(canvas->copy());
+    const QImage annotatedCopy = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    const QString matchedFile = newSavedFile();
+    QVERIFY(!matchedFile.isEmpty()); created.append(matchedFile);
+    QCOMPARE(QImage(matchedFile).convertToFormat(annotatedCopy.format()), annotatedCopy);
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
 
     QVERIFY(canvas->load(QUrl::fromLocalFile(inputPath)));

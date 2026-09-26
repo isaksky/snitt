@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QPointF>
 #include <QRectF>
+#include <QString>
 #include <QVector>
 
 class QPainter;
@@ -12,6 +13,9 @@ class QPainter;
 class ImageDocument {
 public:
     const QImage &image() const;
+    QImage render(qreal scale = 1) const;
+    bool hasAnnotations() const;
+    qreal exportScale() const;
     void reset(QImage image);
     bool canUndo() const { return m_index > 0; }
     bool canRedo() const { return m_index + 1 < m_history.size(); }
@@ -26,7 +30,21 @@ public:
                                QPointF start, QPointF end, QColor color, qreal strokeWidth = 4);
     static void drawPrivacyMask(QPainter &painter, const QRect &area);
 private:
-    void commit(QImage image);
+    struct Operation {
+        enum Kind { Cut, Blur, Erase, Annotation, Text } kind;
+        bool vertical = false;
+        int start = 0, end = 0;
+        QRectF area;
+        QPointF samplePosition;
+        QString tool, text;
+        QPointF from, to;
+        QColor color;
+        qreal strokeWidth = 0;
+        int fontSize = 0;
+    };
+    void commit(QImage image, const Operation *operation = nullptr);
+    QImage m_source;
     QVector<QImage> m_history;
+    QVector<QVector<Operation>> m_operationHistory;
     int m_index = -1;
 };
