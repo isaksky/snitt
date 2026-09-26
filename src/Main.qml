@@ -31,6 +31,7 @@ ApplicationWindow {
     readonly property string hint: editingText ? "Type your note · " + commandKey + "Enter to place · Esc to cancel"
         : canvas.tool === "cut" ? "Drag sideways to remove a column · drag up or down to remove a row"
         : canvas.tool === "rect" ? "Drag to draw a rectangle"
+        : canvas.tool === "highlight" ? "Drag to highlight an area"
         : canvas.tool === "arrow" ? "Drag from the tail to the arrow tip"
         : canvas.tool === "blur" ? "Drag to hide an area with an opaque pixelated blur"
         : canvas.tool === "erase" ? "Drag to fill an area with the color where you started"
@@ -246,6 +247,7 @@ ApplicationWindow {
 
     Shortcut { sequence: "X"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("cut") }
     Shortcut { sequence: "R"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("rect") }
+    Shortcut { sequence: "H"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("highlight") }
     Shortcut { sequence: "T"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("text") }
     Shortcut { sequence: "A"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("arrow") }
     Shortcut { sequence: "B"; enabled: win.annotationShortcuts; onActivated: win.chooseTool("blur") }
@@ -426,6 +428,7 @@ ApplicationWindow {
                 Repeater {
                     model: [ {label: "Cut", key: "X", tool: "cut"},
                              {label: "Rectangle", key: "R", tool: "rect"},
+                             {label: "Highlight", key: "H", tool: "highlight"},
                              {label: "Text", key: "T", tool: "text"},
                              {label: "Arrow", key: "A", tool: "arrow"},
                              {label: "Blur", key: "B", tool: "blur"},

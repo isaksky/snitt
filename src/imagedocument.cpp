@@ -147,6 +147,13 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
 void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
                                    QPointF start, QPointF end, QColor color) {
     p.setRenderHint(QPainter::Antialiasing);
+    if (tool == "highlight") {
+        // Source-over composition makes overlapping highlights accumulate.
+        QColor fill = color == QColor("#22c55e") ? QColor("#ffff00") : QColor("#ff6b6b");
+        fill.setAlphaF(0.3);
+        p.fillRect(QRectF(start, end).normalized(), fill);
+        return;
+    }
     p.setPen(QPen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
     if (tool == "rect") {
@@ -166,9 +173,11 @@ void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
 }
 
 bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color) {
-    if (image().isNull() || (tool != "rect" && tool != "arrow") || QLineF(start, end).length() < 3)
+    if (image().isNull() || (tool != "rect" && tool != "arrow" && tool != "highlight")
+        || QLineF(start, end).length() < 3)
         return false;
-    if (tool == "rect" && (qAbs(start.x() - end.x()) < 2 || qAbs(start.y() - end.y()) < 2))
+    if ((tool == "rect" || tool == "highlight")
+        && (qAbs(start.x() - end.x()) < 2 || qAbs(start.y() - end.y()) < 2))
         return false;
     QImage result = image().copy();
     QPainter p(&result);

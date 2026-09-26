@@ -2,6 +2,7 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QPainter>
 #include <QTemporaryDir>
 #include "imagedocument.h"
 #include "editorcanvas.h"
@@ -13,6 +14,7 @@ private slots:
     void selectionBoundsAndHistory();
     void eraseUsesExactDragStartPixel();
     void scaledGesturesAndClipboard();
+    void highlightsPreviewAndHistory();
 };
 
 static QImage sourceImage() {
@@ -123,6 +125,54 @@ void ImageToolTests::scaledGesturesAndClipboard() {
     QVERIFY(canvas.copy());
     expected.reset(original); QVERIFY(expected.blur(QRectF(sourceStart, sourceEnd)));
     QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(original.format()), expected.image());
+}
+
+void ImageToolTests::highlightsPreviewAndHistory() {
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    QTemporaryDir temporary;
+    const QString path = temporary.filePath("white.png");
+    QVERIFY(white.save(path));
+    EditorCanvas canvas;
+    canvas.setWidth(432); canvas.setHeight(332); // 5x fit preview.
+    QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+    canvas.setTool("highlight");
+    canvas.setInk(QColor("#22c55e"));
+    const auto point = [&canvas](QPointF source) {
+        return canvas.imageRect().topLeft() + source * canvas.imageScale();
+    };
+    const QPointF start = point({60, 40}), end = point({10, 10});
+    canvas.begin(start.x(), start.y());
+    canvas.move(end.x(), end.y());
+    QImage preview(432, 332, QImage::Format_ARGB32_Premultiplied);
+    preview.fill(Qt::transparent);
+    { QPainter painter(&preview); canvas.paint(&painter); }
+    canvas.end(end.x(), end.y());
+    QVERIFY(canvas.copy());
+    const QImage one = QGuiApplication::clipboard()->image();
+    QVERIFY(one.pixelColor(30, 25).blue() >= 177 && one.pixelColor(30, 25).blue() <= 179);
+    QCOMPARE(one.pixelColor(9, 25), QColor(Qt::white));
+    QCOMPARE(one.pixelColor(61, 25), QColor(Qt::white));
+    QCOMPARE(preview.pixelColor(point({30, 25}).toPoint()), one.pixelColor(30, 25));
+
+    canvas.begin(point({30, 20}).x(), point({30, 20}).y());
+    canvas.end(point({70, 50}).x(), point({70, 50}).y());
+    QVERIFY(canvas.copy());
+    const QImage overlap = QGuiApplication::clipboard()->image();
+    QVERIFY(overlap.pixelColor(40, 30).blue() < one.pixelColor(40, 30).blue());
+    canvas.setInk(QColor("#ef4444"));
+    canvas.begin(point({5, 5}).x(), point({5, 5}).y());
+    canvas.end(point({15, 15}).x(), point({15, 15}).y());
+    QVERIFY(canvas.copy());
+    const QImage bothModes = QGuiApplication::clipboard()->image();
+    QVERIFY(bothModes.pixelColor(7, 7).green() < bothModes.pixelColor(7, 7).red());
+    QCOMPARE(bothModes.pixelColor(20, 20), overlap.pixelColor(20, 20));
+    canvas.undo(); canvas.undo();
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), one);
+    canvas.redo(); canvas.redo();
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), bothModes);
 }
 
 QTEST_MAIN(ImageToolTests)

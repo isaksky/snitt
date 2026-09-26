@@ -320,7 +320,7 @@ void EditorTests::qmlKeyboardCommands() {
 
     // The displayed accelerator and actual keyboard command stay together.
     const QList<QPair<QString, Qt::Key>> tools{
-        {"cut", Qt::Key_X}, {"rect", Qt::Key_R}, {"text", Qt::Key_T},
+        {"cut", Qt::Key_X}, {"rect", Qt::Key_R}, {"highlight", Qt::Key_H}, {"text", Qt::Key_T},
         {"arrow", Qt::Key_A}, {"blur", Qt::Key_B}, {"erase", Qt::Key_E}};
     for (const auto &tool : tools) {
         auto *button = visualItem(window->contentItem(), "tool_" + tool.first);
@@ -394,9 +394,10 @@ void EditorTests::qmlKeyboardCommands() {
     canvas->begin(textPoint.x(), textPoint.y());
     QVERIFY(window->property("editingText").toBool());
     QTest::keyClick(window, Qt::Key_C);
+    QTest::keyClick(window, Qt::Key_H);
     auto *annotationText = window->findChild<QObject *>("annotationText");
     QVERIFY(annotationText);
-    QTRY_COMPARE(annotationText->property("text").toString(), QString("c"));
+    QTRY_COMPARE(annotationText->property("text").toString(), QString("ch"));
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->property("editingText").toBool());
