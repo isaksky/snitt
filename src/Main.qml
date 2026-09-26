@@ -15,7 +15,7 @@ ApplicationWindow {
     title: "xshot"
     color: "#111317"
     Material.theme: Material.Dark
-    Material.accent: "#a3e6ca"
+    Material.accent: "#91bff0"
     property bool editingText: false
     property real textX: 0
     property real textY: 0
@@ -194,7 +194,7 @@ ApplicationWindow {
                 context.reset()
                 context.lineWidth = Math.max(7, width * 0.06)
                 context.lineCap = "round"
-                context.strokeStyle = "#a3e6ca"
+                context.strokeStyle = "#91bff0"
                 context.beginPath()
                 context.arc(width / 2, height / 2, width * 0.42,
                             -Math.PI / 2, startupIndicator.completing ? 3 * Math.PI / 2 : Math.PI)
@@ -404,7 +404,7 @@ ApplicationWindow {
 
     component ActionButton: Button {
         id: actionControl
-        property color textColor: checked ? "#a3e6ca" : "#dfe5ed"
+        property color textColor: checked ? "#91bff0" : "#dfe5ed"
         flat: true
         font.pixelSize: 13
         leftPadding: text === "" ? 8 : 12
@@ -422,10 +422,10 @@ ApplicationWindow {
         palette.buttonText: enabled ? textColor : "#8f99a8"
         background: Rectangle {
             radius: 7
-            color: parent.checked ? "#303b3a" : parent.down ? "#394149"
+            color: parent.checked ? "#283b50" : parent.down ? "#394149"
                 : parent.hovered ? "#2a2e35" : "transparent"
             border.width: parent.checked ? 1 : 0
-            border.color: "#82988f"
+            border.color: "#6994bf"
         }
     }
 
@@ -533,7 +533,7 @@ ApplicationWindow {
                     spacing: 12
                     Label {
                         text: "Arrange"
-                        color: canvas.arranging ? "#a3e6ca" : "#9ba5b5"
+                        color: canvas.arranging ? "#91bff0" : "#9ba5b5"
                         font.pixelSize: 18
                         font.weight: canvas.arranging ? Font.Bold : Font.Normal
                         Accessible.name: canvas.arranging ? "Arrange, current phase" : "Arrange, completed phase"
@@ -541,7 +541,7 @@ ApplicationWindow {
                     Label { text: "→"; color: "#9ba5b5" }
                     Label {
                         text: "Annotate (optional)"
-                        color: !canvas.arranging ? "#a3e6ca" : "#9ba5b5"
+                        color: !canvas.arranging ? "#91bff0" : "#9ba5b5"
                         font.pixelSize: 18
                         font.weight: !canvas.arranging ? Font.Bold : Font.Normal
                         Accessible.name: !canvas.arranging ? "Annotate, current phase, optional" : "Annotate, optional next phase"
@@ -690,7 +690,7 @@ ApplicationWindow {
                 font.pixelSize: Math.max(1, Math.round(canvas.textSize * canvas.imageScale))
                 font.weight: Font.DemiBold
                 color: canvas.ink
-                selectionColor: "#42655b"
+                selectionColor: "#32547b"
                 wrapMode: TextEdit.WordWrap
                 selectByMouse: true
                 Accessible.name: "Annotation text"
@@ -761,7 +761,7 @@ ApplicationWindow {
                     text: win.notice !== "" ? win.notice
                         : canvas.arranging ? "Drag to reorder · +/− changes columns · Enter to annotate · C to copy or S to save"
                         : canvas.hasImage ? win.hint : "Select a region · M for multiple regions · V for recording · Esc closes"
-                    color: win.notice !== "" ? "#a3e6ca" : "#8f99a8"
+                    color: win.notice !== "" ? "#91bff0" : "#8f99a8"
                     font.pixelSize: 12
                     elide: Text.ElideRight
                     Layout.fillWidth: true

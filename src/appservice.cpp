@@ -49,7 +49,7 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
 #ifdef Q_OS_MACOS
     p.setPen(QPen(Qt::black, 3));
 #else
-    p.setPen(QPen(QColor("#a3e6ca"), 3));
+    p.setPen(QPen(QColor("#91bff0"), 3));
 #endif
     p.drawRoundedRect(QRectF(3, 7, 26, 20), 4, 4);
     p.drawEllipse(QPointF(16, 17), 5, 5);

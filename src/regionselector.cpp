@@ -15,7 +15,7 @@ QIcon toolbarIcon(const QString &name) {
     QSvgRenderer svg(QStringLiteral(":/icons/") + name + QStringLiteral(".svg"));
     QIcon icon;
     for (const auto &state : {QPair<QColor, QIcon::State>{QColor("#e9edf3"), QIcon::Off},
-                              {QColor("#142820"), QIcon::On}}) {
+                              {QColor("#15283d"), QIcon::On}}) {
         QPixmap pixmap(96, 96);
         pixmap.fill(Qt::transparent);
         QPainter painter(&pixmap);
@@ -53,7 +53,8 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
         "QLabel { color: #b9c1cd; background: transparent; }"
         "QPushButton { color: #e9edf3; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 6px 10px; }"
         "QPushButton:hover { background: #323842; }"
-        "QPushButton:checked, QPushButton#arrangeCaptureButton { color: #142820; background: #a3e6ca; }"
+        "QPushButton:checked { color: #15283d; background: #91bff0; }"
+        "QPushButton#arrangeCaptureButton { color: #142820; background: #a3e6ca; }"
         "QPushButton:disabled { color: #727a86; background: transparent; }"
         "QPushButton#arrangeCaptureButton:disabled { background: #2b3238; }");
     auto *layout = new QVBoxLayout(m_toolbar);
@@ -210,7 +211,7 @@ void RegionSelector::setSelections(bool multiple, const QList<QPair<int, QRectF>
         remove->setIconSize(QSize(20, 20));
         remove->setFocusPolicy(Qt::NoFocus);
         remove->setCursor(Qt::PointingHandCursor);
-        remove->setStyleSheet("QToolButton { color: white; background: #1b1e23; border: 1px solid #a3e6ca; border-radius: 5px; font-size: 20px; } QToolButton:hover { background: #594047; }");
+        remove->setStyleSheet("QToolButton { color: white; background: #1b1e23; border: 1px solid #91bff0; border-radius: 5px; font-size: 20px; } QToolButton:hover { background: #394149; }");
         connect(remove, &QToolButton::clicked, this, [this, remove] { emit regionRemoved(remove->property("regionIndex").toInt()); });
         m_removeButtons.append(remove);
     }
@@ -243,11 +244,11 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.setClipRect(entry.second);
         p.drawImage(rect(), m_image);
         p.restore();
-        p.setPen(QPen(QColor("#a3e6ca"), 2));
+        p.setPen(QPen(QColor("#91bff0"), 2));
         p.drawRect(entry.second);
         const QRectF badge(entry.second.topLeft(), QSizeF(28, 28));
-        p.fillRect(badge, QColor("#a3e6ca"));
-        p.setPen(QColor("#142820"));
+        p.fillRect(badge, QColor("#91bff0"));
+        p.setPen(QColor("#15283d"));
         QFont numberFont = p.font(); numberFont.setPixelSize(16); numberFont.setBold(true); p.setFont(numberFont);
         p.drawText(badge, Qt::AlignCenter, QString::number(entry.first + 1));
     }
@@ -257,7 +258,7 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.setClipRect(area);
         p.drawImage(rect(), m_image);
         p.restore();
-        p.setPen(QPen(QColor("#a3e6ca"), 2));
+        p.setPen(QPen(QColor("#91bff0"), 2));
         p.drawRect(area);
     }
     if (m_dragging) {

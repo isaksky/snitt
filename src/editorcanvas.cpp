@@ -85,7 +85,7 @@ void EditorCanvas::paint(QPainter *p) {
             const QRectF area = m_regionRects[i];
             const bool selected = i == m_selectedRegion;
             const bool target = m_dragging && i == m_dropRegion;
-            p->setPen(QPen(QColor(target ? "#00633f" : selected ? "#1261a0" : "#596575"),
+            p->setPen(QPen(QColor(target ? "#0d83b8" : selected ? "#1261a0" : "#596575"),
                           (selected || target ? 3 : 1) / imageScale(), target ? Qt::DashLine : Qt::SolidLine));
             p->setBrush(Qt::NoBrush);
             p->drawRect(area);
