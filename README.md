@@ -9,7 +9,7 @@ and Material controls.
 xshot lives in the menu bar on macOS or the system tray on Windows. It starts at
 login and stays running after you finish editing. **Ctrl+Print Screen** starts
 region selection from any app. **C** copies the screenshot and finishes the session
-when you are not typing an annotation. Videos copy their saved file path.
+when you are not typing an annotation. Saving a video reveals it in Finder or Explorer.
 Choose **Quit xshot** from its icon menu to stop it until the next launch/login.
 Only one instance runs per user desktop session; launching it again requests a
 capture from the existing instance.
@@ -151,9 +151,9 @@ Enter adds a line.
 Start a capture with **Ctrl+Print Screen**, press **V**, then drag one region to
 start recording. **Record video (V)** in the editor also opens this picker.
 Video mode selects one rectangle on one monitor; **M** is unavailable in this mode.
-The recording controls show elapsed time. Choose **Stop and copy path**, or press
-**Command/Ctrl+C** while those controls are active, to stop and save the clip.
-The clipboard receives the full file path as text, not the video contents.
+The recording controls show elapsed time. Choose **Stop recording**, or press
+**Command/Ctrl+C** while those controls are active, to save the clip and reveal it
+selected in Finder or Explorer. The clipboard keeps its previous contents.
 **Escape** cancels the recording and removes that clip.
 Use **Hide** to move the controls out of the way; **Ctrl+Print Screen** brings
 them back while recording. Windows excludes the controls from captured video.

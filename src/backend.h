@@ -41,6 +41,8 @@ signals:
     void regionsCaptured(const QVariantList &images);
     void captureFinished(bool captured);
     void recordingChanged();
+    void recordingProcessStarted();
+    void recordingReady();
     void recordingElapsedChanged();
     void recordingSaved(const QString &path);
     void recordingCanceled();

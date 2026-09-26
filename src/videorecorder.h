@@ -16,6 +16,7 @@ struct Source {
 };
 QString toolPath(const QString &tool);
 QStringList arguments(const Source &source, const QString &output);
+bool revealSavedFile(const QString &path);
 }
 
 class VideoRecorder : public QObject {
@@ -33,6 +34,8 @@ public:
     void cancel();
 signals:
     void changed();
+    void processStarted();
+    void ready();
     void elapsedChanged();
     void saved(const QString &path);
     void canceled();

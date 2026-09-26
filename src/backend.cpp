@@ -7,7 +7,6 @@
 #include <QScreen>
 #include <QCursor>
 #include <QPixmap>
-#include <QClipboard>
 #include <QDir>
 #include <QWindow>
 #include "regionselector.h"
@@ -21,13 +20,16 @@
 
 Backend::Backend(QObject *parent) : QObject(parent) {
     connect(&m_recorder, &VideoRecorder::changed, this, &Backend::recordingChanged);
+    connect(&m_recorder, &VideoRecorder::processStarted, this, &Backend::recordingProcessStarted);
+    connect(&m_recorder, &VideoRecorder::ready, this, &Backend::recordingReady);
     connect(&m_recorder, &VideoRecorder::elapsedChanged, this, &Backend::recordingElapsedChanged);
     connect(&m_recorder, &VideoRecorder::canceled, this, &Backend::recordingCanceled);
     connect(&m_recorder, &VideoRecorder::error, this, &Backend::error);
     connect(&m_recorder, &VideoRecorder::saved, this, [this](const QString &path) {
         const QString nativePath = QDir::toNativeSeparators(path);
-        QGuiApplication::clipboard()->setText(nativePath);
         emit recordingSaved(nativePath);
+        if (!recording::revealSavedFile(path))
+            emit error(QStringLiteral("Recording saved at %1, but could not reveal it in the file manager.").arg(nativePath));
     });
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus state) {
         if (!m_capturing) return;

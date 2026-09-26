@@ -8,4 +8,4 @@ INCLUDEPATH += ../src
 HEADERS += ../src/backend.h ../src/regionselector.h ../src/videorecorder.h
 SOURCES += recording_tests.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/videorecorder.cpp
 macx: LIBS += -framework CoreGraphics
-win32: LIBS += -luser32 -ldwmapi
+win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32

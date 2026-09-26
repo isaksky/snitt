@@ -7,6 +7,10 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QUuid>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <shlobj.h>
+#endif
 
 QString recording::toolPath(const QString &tool) {
     const QString found = QStandardPaths::findExecutable(tool);
@@ -25,19 +29,46 @@ QString recording::toolPath(const QString &tool) {
     return QStandardPaths::findExecutable(tool, paths);
 }
 
+bool recording::revealSavedFile(const QString &path) {
+    if (!QFileInfo(path).isFile()) return false;
+#ifdef Q_OS_MACOS
+    return QProcess::startDetached(QStringLiteral("/usr/bin/open"), {QStringLiteral("-R"), path});
+#elif defined(Q_OS_WIN)
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    PIDLIST_ABSOLUTE file = nullptr;
+    const HRESULT parsed = SHParseDisplayName(reinterpret_cast<LPCWSTR>(path.utf16()), nullptr, &file, 0, nullptr);
+    bool revealed = false;
+    if (SUCCEEDED(parsed) && file) {
+        PIDLIST_ABSOLUTE folder = ILCloneFull(file);
+        if (folder && ILRemoveLastID(folder)) {
+            LPCITEMIDLIST child = ILFindLastID(file);
+            revealed = SUCCEEDED(SHOpenFolderAndSelectItems(folder, 1, &child, 0));
+        }
+        ILFree(folder);
+    }
+    ILFree(file);
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    return revealed;
+#else
+    return false;
+#endif
+}
+
 QStringList recording::arguments(const Source &source, const QString &output) {
     QStringList args {"-hide_banner", "-loglevel", "warning", "-n", "-nostats",
-                      "-progress", "pipe:1", "-stats_period", "0.2"};
+                      "-progress", "pipe:1", "-stats_period", "0.05"};
     QString filter;
     if (source.platform == Platform::Windows) {
         args << "-f" << "gdigrab" << "-framerate" << "30" << "-draw_mouse" << "1"
              << "-offset_x" << QString::number(source.pixelRegion.x())
              << "-offset_y" << QString::number(source.pixelRegion.y())
              << "-video_size" << QStringLiteral("%1x%2").arg(source.pixelRegion.width()).arg(source.pixelRegion.height())
+             << "-probesize" << "32" << "-analyzeduration" << "0"
              << "-i" << "desktop";
     } else {
         args << "-f" << "avfoundation" << "-framerate" << "30" << "-capture_cursor" << "1"
              << "-pixel_format" << "bgr0"
+             << "-probesize" << "32" << "-analyzeduration" << "0"
              << "-i" << QStringLiteral("Capture screen %1:none").arg(source.screenIndex);
         const auto number = [](qreal n) { return QString::number(n, 'f', 10); };
         const QRectF r = source.relativeRegion;
@@ -67,6 +98,7 @@ VideoRecorder::VideoRecorder(QObject *parent) : QObject(parent) {
         if (m_stderr.size() > 16384) m_stderr = m_stderr.right(16384);
     });
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &VideoRecorder::consumeProgress);
+    connect(&m_process, &QProcess::started, this, &VideoRecorder::processStarted);
     connect(&m_process, &QProcess::finished, this, &VideoRecorder::complete);
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError reason) {
         if (reason == QProcess::FailedToStart && m_active)
@@ -149,6 +181,7 @@ void VideoRecorder::consumeProgress() {
                 m_firstFrame = true;
                 if (!m_finishing) m_timeout.stop();
                 emit changed();
+                emit ready();
             }
         } else if (line.startsWith("out_time_us=")) {
             const int seconds = qMax<qint64>(0, line.mid(12).toLongLong() / 1000000);

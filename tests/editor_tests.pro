@@ -10,5 +10,5 @@ SOURCES += editor_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../
 HEADERS += ../src/videorecorder.h
 SOURCES += ../src/videorecorder.cpp
 macx: LIBS += -framework Carbon -framework CoreGraphics
-win32: LIBS += -luser32 -ldwmapi
+win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32
 RESOURCES += ../src/resources.qrc

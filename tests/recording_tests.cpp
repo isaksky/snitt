@@ -3,10 +3,12 @@
 #include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QScreen>
+#include <QStandardPaths>
 #include "backend.h"
 #include "regionselector.h"
 #include "videorecorder.h"
@@ -37,6 +39,9 @@ void RecordingTests::recordingArguments() {
     QVERIFY(args.contains("-n"));
     QVERIFY(!args.contains("-y"));
     QVERIFY(!args.contains("-nostdin"));
+    QCOMPARE(value("-probesize"), "32");
+    QCOMPARE(value("-analyzeduration"), "0");
+    QVERIFY(!recording::revealSavedFile("/path/that/does/not/exist.mp4"));
 
     recording::Source mac;
     mac.platform = recording::Platform::Mac;
@@ -89,9 +94,14 @@ void RecordingTests::desktopRecording() {
     QTest::qWait(100);
 
     Backend backend;
+    QElapsedTimer startup;
+    qint64 processMs = -1, readyMs = -1;
+    connect(&backend, &Backend::recordingProcessStarted, this, [&] { processMs = startup.elapsed(); });
+    connect(&backend, &Backend::recordingReady, this, [&] { readyMs = startup.elapsed(); });
     QString error;
     connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
     QSignalSpy saved(&backend, &Backend::recordingSaved);
+    QApplication::clipboard()->setText("keep clipboard on save");
     backend.capture();
     RegionSelector *selector = nullptr;
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
@@ -110,10 +120,12 @@ void RecordingTests::desktopRecording() {
     const QPoint end = start + QPoint(241, 159);
     QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, start);
     QTest::mouseMove(selector, end);
+    startup.start();
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, end);
     QVERIFY2(backend.recording(), qPrintable(error));
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
+    qInfo("recording startup: process=%lld ms, first frame/ready=%lld ms", processMs, readyMs);
     QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1 || !error.isEmpty(), 6000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     backend.finishRecording();
@@ -123,7 +135,8 @@ void RecordingTests::desktopRecording() {
     QVERIFY(!backend.recording());
     const QString file = saved.first().first().toString();
     QVERIFY(QFileInfo(file).size() > 1000);
-    QCOMPARE(QApplication::clipboard()->text(), file);
+    QCOMPARE(QFileInfo(file).absolutePath(), QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)).filePath("xshot"));
+    QCOMPARE(QApplication::clipboard()->text(), "keep clipboard on save");
 
     QProcess probe;
     probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-show_streams", "-show_format", "-of", "json", file});

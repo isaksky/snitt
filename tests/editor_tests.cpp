@@ -737,10 +737,11 @@ void EditorTests::qmlRecordingControls() {
     const QFileInfo clip(path);
     QVERIFY(clip.isAbsolute()); QCOMPARE(clip.suffix(), QString("mp4"));
     QVERIFY(clip.exists() && clip.size() > 0);
-    QCOMPARE(QGuiApplication::clipboard()->text(), path);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("waiting for recording"));
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());
+    QTest::qWait(250); // Let Finder/Explorer select the completed file before cleanup.
     QVERIFY(QFile::remove(path));
 #else
     QSKIP("Screen recording requires macOS or Windows");
