@@ -3,11 +3,13 @@
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QImage>
+#include <QProcess>
 #include <QTimer>
 #include <QUrl>
 #include <QDebug>
 
 #include "trimsession.h"
+#include "videorecorder.h"
 
 // Run once per process to measure a cold thumbnail load, or pass --repeat to
 // observe a warm reopen. Use the same completed MP4 on every implementation.
@@ -20,6 +22,23 @@ int main(int argc, char **argv) {
     }
     const QString path = QFileInfo(args.at(1)).absoluteFilePath();
     const int runs = args.contains("--repeat") ? 2 : 1;
+    qint64 suppliedDurationMs = 0;
+#ifdef Q_OS_WIN
+    // In the product, QML supplies Windows' asynchronous media duration.
+    // Obtain the same value before timing this standalone thumbnail worker.
+    QProcess probe;
+    probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-show_entries",
+        "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path});
+    if (!probe.waitForFinished(15000) || probe.exitCode() != 0) {
+        qCritical() << "Could not probe clip duration:" << probe.readAllStandardError();
+        return 2;
+    }
+    suppliedDurationMs = qRound64(QString::fromUtf8(probe.readAllStandardOutput()).trimmed().toDouble() * 1000);
+    if (suppliedDurationMs <= 0) {
+        qCritical() << "Clip duration was unavailable";
+        return 2;
+    }
+#endif
     for (int run = 0; run < runs; ++run) {
         TrimSession trim;
         QEventLoop loop;
@@ -39,6 +58,7 @@ int main(int argc, char **argv) {
         });
         timer.start();
         trim.open(path);
+        if (trim.duration() == 0 && suppliedDurationMs > 0) trim.setDuration(suppliedDurationMs);
         const qint64 openMs = timer.elapsed();
         if (allMs < 0) { timeout.start(); loop.exec(); }
         qInfo().noquote() << "clip=" + path << "run=" + QString::number(run)
