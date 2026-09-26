@@ -345,6 +345,17 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(clean.blur(QRectF(10, 10, 20, 20)));
     QVERIFY(changed.blur(QRectF(10, 10, 20, 20)));
     QCOMPARE(clean.render(3), changed.render(3)); // Hidden source pixels cannot bleed past the mask.
+
+    QImage cutSecret = white;
+    for (int y = 0; y < cutSecret.height(); ++y)
+        for (int x = 10; x < 20; ++x)
+            cutSecret.setPixelColor(x, y, Qt::black);
+    clean.reset(white); changed.reset(cutSecret);
+    QVERIFY(clean.cut(true, 10, 20));
+    QVERIFY(changed.cut(true, 10, 20));
+    QVERIFY(clean.annotate("arrow", {30, 40}, {60, 40}, Qt::red, 2));
+    QVERIFY(changed.annotate("arrow", {30, 40}, {60, 40}, Qt::red, 2));
+    QCOMPARE(clean.render(1.5), changed.render(1.5));
 }
 
 void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {

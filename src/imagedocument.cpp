@@ -190,12 +190,12 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     result.fill(Qt::transparent);
     {
         QPainter p(&result);
-        // Interpolating source pixels before a later privacy edit would blend
-        // hidden pixels into its boundary. Use exact source pixels in that case.
+        // Interpolating source pixels before a later cut or privacy edit would
+        // blend removed pixels into its boundary. Use exact pixels in that case.
         bool replacesPixels = false;
         for (int i = 0; i < operationCount; ++i) {
             const auto &op = m_operationHistory[m_index][i];
-            if (op.kind == Operation::Blur || op.kind == Operation::Erase) {
+            if (op.kind == Operation::Cut || op.kind == Operation::Blur || op.kind == Operation::Erase) {
                 replacesPixels = true;
                 break;
             }
@@ -203,12 +203,15 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
         p.setRenderHint(QPainter::SmoothPixmapTransform, !replacesPixels);
         p.drawImage(QRect(QPoint(), result.size()), m_source);
     }
+    QSize naturalSize = m_source.size();
     for (int i = 0; i < operationCount; ++i) {
         const auto &op = m_operationHistory[m_index][i];
         if (op.kind == Operation::Cut) {
-            const int start = qBound(0, qRound(op.start * scale), op.vertical ? result.width() : result.height());
-            const int removed = qMax(1, qRound((op.end - op.start) * scale));
-            const int end = qMin(op.vertical ? result.width() : result.height(), start + removed);
+            // Floor/ceil exclude every upscaled pixel touching the removed
+            // source strip, including at fractional preview/export scales.
+            const int length = op.vertical ? result.width() : result.height();
+            const int start = qBound(0, int(std::floor(op.start * scale)), length);
+            const int end = qBound(start, int(std::ceil(op.end * scale)), length);
             QImage next(result.width() - (op.vertical ? end - start : 0),
                         result.height() - (op.vertical ? 0 : end - start), result.format());
             if (next.isNull()) return {};
@@ -223,21 +226,23 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
             }
             p.end();
             result = std::move(next);
+            if (op.vertical) naturalSize.rwidth() -= op.end - op.start;
+            else naturalSize.rheight() -= op.end - op.start;
             continue;
         }
         QColor eraseSample;
         if (op.kind == Operation::Erase) {
-            const int x = qBound(0, qRound(op.samplePosition.x() * scale), result.width() - 1);
-            const int y = qBound(0, qRound(op.samplePosition.y() * scale), result.height() - 1);
+            const int x = qBound(0, qRound((std::floor(op.samplePosition.x()) + 0.5) * scale), result.width() - 1);
+            const int y = qBound(0, qRound((std::floor(op.samplePosition.y()) + 0.5) * scale), result.height() - 1);
             eraseSample = result.pixelColor(x, y);
         }
         QPainter p(&result);
         p.scale(scale, scale);
         if (op.kind == Operation::Blur) {
-            drawPrivacyMask(p, selectedPixels(op.area, QSize(qRound(result.width() / scale), qRound(result.height() / scale))));
+            drawPrivacyMask(p, selectedPixels(op.area, naturalSize));
         } else if (op.kind == Operation::Erase) {
             p.setCompositionMode(QPainter::CompositionMode_Source);
-            p.fillRect(selectedPixels(op.area, QSize(qRound(result.width() / scale), qRound(result.height() / scale))), eraseSample);
+            p.fillRect(selectedPixels(op.area, naturalSize), eraseSample);
         } else if (op.kind == Operation::Annotation) {
             drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
         } else if (op.kind == Operation::Text) drawText(p, op);
