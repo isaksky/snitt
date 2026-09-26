@@ -37,4 +37,6 @@ make -j"$JOBS"
 if [ "$(uname -s)" = Darwin ]; then
     cp "$ROOT/platform/macos/Info.plist" "$ROOT/build/xshot.app/Contents/Info.plist"
     "$ROOT/bin/build-thumbnail-helper-macos"
+    "$ROOT/bin/build-mac-multimedia-runtime"
+    ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$ROOT/build/xshot.app/Contents"
 fi

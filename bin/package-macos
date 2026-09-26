@@ -18,6 +18,11 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 MACHO = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
          b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
+PRIVATE_FFMPEG_LIBRARIES = (
+    "libavformat.61.dylib", "libavcodec.61.dylib", "libswresample.5.dylib",
+    "libswscale.8.dylib", "libavutil.59.dylib",
+)
+PRIVATE_RUNTIME = ROOT / "build/tools/mac-multimedia-runtime/stage/manifest.json"
 
 
 def run(*args):
@@ -40,6 +45,35 @@ def binary_files(directory):
                     yield path
 
 
+def private_runtime_manifest(bundle):
+    if not PRIVATE_RUNTIME.is_file():
+        raise RuntimeError("Private playback runtime manifest is missing; run bin/build")
+    manifest = json.loads(PRIVATE_RUNTIME.read_text())
+    if (manifest.get("qt_version") != "6.11.1"
+            or manifest.get("ffmpeg_version") != "7.1.3"
+            or manifest.get("ffmpeg_license") != "LGPL-2.1-or-later"):
+        raise RuntimeError("Unexpected private playback runtime or license")
+    expected = {"PlugIns/multimedia/libffmpegmediaplugin.dylib"}
+    expected.update("Frameworks/" + library for library in PRIVATE_FFMPEG_LIBRARIES)
+    if set(manifest.get("artifacts", {})) != expected:
+        raise RuntimeError("Private playback runtime manifest has unexpected artifacts")
+    contents = bundle / "Contents"
+    for relative, sha256 in manifest["artifacts"].items():
+        if not (contents / relative).is_file() or digest(contents / relative) != sha256:
+            raise RuntimeError(f"Private playback artifact differs from staged build: {relative}")
+    sources = contents / "Resources/Sources"
+    for name, data in manifest["sources"].items():
+        archive = sources / ("ffmpeg-7.1.3.tar.xz" if name == "ffmpeg" else
+                             "qtmultimedia-everywhere-src-6.11.1.tar.xz")
+        if not archive.is_file() or digest(archive) != data["sha256"]:
+            raise RuntimeError(f"Private playback source archive missing or changed: {name}")
+    for name in ("FFMPEG-CONFIGURE.txt", "QTMULTIMEDIA-BUILD.txt",
+                 "qtmultimedia-6.11.1-sdk26.patch"):
+        if not (sources / name).is_file():
+            raise RuntimeError(f"Private playback build material missing: {name}")
+    return manifest
+
+
 def verify_bundle(bundle):
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
     contents = bundle / "Contents"
@@ -47,12 +81,17 @@ def verify_bundle(bundle):
         raise RuntimeError("Bundled SVG image plugin is missing")
     for relative in ("Resources/qml/QtMultimedia/qmldir",
                      "PlugIns/multimedia/libdarwinmediaplugin.dylib",
+                     "PlugIns/multimedia/libffmpegmediaplugin.dylib",
                      "MacOS/ffmpeg-thumbnails",
                      "Frameworks/QtMultimedia.framework/Versions/A/QtMultimedia",
                      "Frameworks/QtQuickTimeline.framework/Versions/A/QtQuickTimeline",
                      "Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees"):
         if not (contents / relative).is_file():
             raise RuntimeError(f"Bundled multimedia runtime is missing: {relative}")
+    for library in PRIVATE_FFMPEG_LIBRARIES:
+        if not (contents / "Frameworks" / library).is_file():
+            raise RuntimeError(f"Bundled playback codec is missing: {library}")
+    private_runtime_manifest(bundle)
     binaries = list(binary_files(bundle))
     dependencies = {}
     for binary in binaries:
@@ -95,7 +134,10 @@ def uuid(path):
 
 def source_packages(bundle, binaries, cellar):
     frameworks = bundle / "Contents" / "Frameworks"
-    deployed = [p for p in binaries if p.is_relative_to(frameworks)]
+    # These five libraries are built from the separately pinned LGPL source
+    # in bin/build-mac-multimedia-runtime, not installed by Homebrew.
+    deployed = [p for p in binaries if p.is_relative_to(frameworks)
+                and p.name not in PRIVATE_FFMPEG_LIBRARIES]
     names = {p.name for p in deployed}
     candidates = {}
     for path in cellar.rglob("*"):
@@ -194,7 +236,7 @@ def archive_notices(archive, destination):
         raise RuntimeError(f"No license material found in source archive {archive}")
 
 
-def add_notices(payload, packages, cache, dependencies):
+def add_notices(payload, packages, cache, dependencies, private_manifest):
     inventory = []
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
@@ -245,6 +287,29 @@ def add_notices(payload, packages, cache, dependencies):
                       "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
                       "source_sha256": ffmpeg_sha256,
                       "license": "LGPL-2.1-or-later"})
+    private_sources = payload / "xshot.app/Contents/Resources/Sources"
+    private_notices = licenses / "private-playback"
+    private_notices.mkdir(parents=True)
+    copy_file(PRIVATE_RUNTIME, private_notices / "manifest.json")
+    for name, archive_name in (("ffmpeg", "ffmpeg-7.1.3.tar.xz"),
+                               ("qtmultimedia", "qtmultimedia-everywhere-src-6.11.1.tar.xz")):
+        archive_notices(private_sources / archive_name, private_notices / name)
+    for name in ("FFMPEG-CONFIGURE.txt", "QTMULTIMEDIA-BUILD.txt",
+                 "qtmultimedia-6.11.1-sdk26.patch"):
+        copy_file(private_sources / name, private_notices / name)
+    ffmpeg_info = private_manifest["sources"]["ffmpeg"]
+    inventory.append({"package": "ffmpeg-private-playback", "version": "7.1.3",
+                      "binaries": ["Contents/Frameworks/" + name for name in PRIVATE_FFMPEG_LIBRARIES],
+                      "source_url": ffmpeg_info["url"],
+                      "source_sha256": ffmpeg_info["sha256"],
+                      "license": private_manifest["ffmpeg_license"],
+                      "configure": private_manifest["ffmpeg_configure"]})
+    qt_info = private_manifest["sources"]["qtmultimedia"]
+    inventory.append({"package": "qtmultimedia-private-ffmpeg-plugin", "version": "6.11.1",
+                      "binaries": ["Contents/PlugIns/multimedia/libffmpegmediaplugin.dylib"],
+                      "source_url": qt_info["url"],
+                      "source_sha256": qt_info["sha256"],
+                      "sdk_patch": "xshot.app/Contents/Resources/Sources/qtmultimedia-6.11.1-sdk26.patch"})
     (payload / "DEPENDENCIES.json").write_text(json.dumps({"packages": inventory, "linkage": dependencies}, indent=2) + "\n")
     (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and Homebrew runtime libraries.
 Their exact versions, bundled binaries, and link dependencies are listed in
@@ -276,6 +341,12 @@ Its complete corresponding source archive and license are in licenses/ffmpeg-7.1
 It is used only to generate recording-review filmstrip JPEGs; no user-installed
 FFmpeg package is required on macOS. Source: https://ffmpeg.org/
 
+The recording preview uses a private Qt Multimedia FFmpeg plugin and five
+separate LGPL FFmpeg 7.1.3 libraries for software decoding. Their complete
+corresponding source archives, build flags, SDK patch, and manifest are in
+xshot.app/Contents/Resources/Sources/ and licenses/private-playback/.
+No user-installed FFmpeg package is required for preview playback.
+
 The recording trim filmstrip and time formatter are adapted from omacut under
 the MIT license in licenses/omacut/LICENSE. Source: https://github.com/omacom/omacut
 
@@ -305,6 +376,7 @@ def main():
     if info.get("CFBundleShortVersionString") != args.version:
         raise RuntimeError("Bundle version does not match the requested release version")
     binaries, dependencies = verify_bundle(bundle)
+    private_manifest = private_runtime_manifest(bundle)
     cellar = Path(run("brew", "--cellar")).resolve()
     packages = source_packages(bundle, binaries, cellar)
     release = args.release_directory.resolve()
@@ -323,8 +395,8 @@ Move xshot.app into your Applications folder, then open it. xshot remains in the
 menu bar. Use Ctrl+Print Screen (F13 on Mac) to select a region.
 Grant Screen & System Audio Recording permission to xshot when macOS requests it.
 For login startup, add xshot in System Settings > General > Login Items.
-Video recording uses macOS ScreenCaptureKit. A small thumbnail decoder is
-bundled; no separate FFmpeg installation is needed.
+Video recording uses macOS ScreenCaptureKit. Thumbnail and preview decoders
+are bundled; no separate FFmpeg installation is needed.
 xshot's windows are automatically excluded from the recorded video.
 
 This release is signed with a persistent local development certificate. It is
@@ -336,7 +408,7 @@ The application and its bundled libraries are self-contained. Homebrew Qt is
 not required to run the app. ScreenCaptureKit is provided by macOS 15 or later.
 See README.md for tools and shortcuts and THIRD-PARTY-NOTICES.txt for licenses.
 """)
-        add_notices(payload, packages, cache, dependencies)
+        add_notices(payload, packages, cache, dependencies, private_manifest)
         verify_bundle(payload / "xshot.app")
         copy_file(ROOT / "README.md", payload / "README.md")
         archive_name = f"xshot_{args.version}_macos_arm64.zip"

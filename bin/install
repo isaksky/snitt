@@ -32,6 +32,10 @@ for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
         exit 1
     }
 done
+# macdeployqt deploys Homebrew's Darwin-only multimedia plugin. Add the
+# private software playback backend after deployment so its FFmpeg libraries
+# and pinned source material remain exactly as built and signed.
+ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$PACKAGE/xshot.app/Contents"
 "$ROOT/bin/sign-macos" "$PACKAGE/xshot.app"
 DEST="$HOME/Applications/xshot.app"
 AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
