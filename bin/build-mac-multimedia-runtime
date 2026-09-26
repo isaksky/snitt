@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Build a private, relocatable Qt FFmpeg playback plugin for the Mac bundle.
+
+This never installs into Homebrew or the user's Applications directory. The
+result is a Contents subtree that can be copied into a staged xshot.app before
+the bundle is signed.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+
+ROOT = Path(__file__).resolve().parent.parent
+QT_VERSION = "6.11.1"
+FFMPEG_VERSION = "7.1.3"
+SOURCES = {
+    "ffmpeg": (
+        "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
+        "f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe",
+        "ffmpeg-7.1.3",
+    ),
+    "qtmultimedia": (
+        "https://download.qt.io/official_releases/qt/6.11/6.11.1/submodules/"
+        "qtmultimedia-everywhere-src-6.11.1.tar.xz",
+        "390f8e52ddee3aca5c4de7eead900c84c4fa61ff6d1f0ebea9c7543365c09b0a",
+        "qtmultimedia-everywhere-src-6.11.1",
+    ),
+}
+PATCH = ROOT / "platform/macos/qtmultimedia-6.11.1-sdk26.patch"
+FFMPEG_FLAGS = [
+    "--enable-shared", "--disable-static", "--disable-programs", "--disable-doc",
+    "--disable-debug", "--disable-autodetect", "--disable-network",
+    "--disable-gpl", "--disable-nonfree", "--disable-hwaccels",
+    # Qt's Darwin plugin refers to FFmpeg's VideoToolbox format mapping even
+    # when xshot disables hardware decoding at runtime.
+    "--enable-videotoolbox", "--disable-audiotoolbox", "--disable-everything",
+    "--enable-avcodec", "--enable-avformat", "--enable-avutil",
+    "--enable-swresample", "--enable-swscale", "--enable-protocol=file",
+    "--enable-demuxer=mov", "--enable-parser=h264,hevc",
+    "--enable-decoder=h264,hevc,mjpeg,aac",
+    "--enable-bsf=h264_mp4toannexb,hevc_mp4toannexb", "--enable-pic",
+]
+LIBRARIES = ("libavformat.61.dylib", "libavcodec.61.dylib",
+             "libswresample.5.dylib", "libswscale.8.dylib", "libavutil.59.dylib")
+
+
+def run(command, *, cwd=None, log=None):
+    print("+", " ".join(map(str, command)), flush=True)
+    if log is None:
+        subprocess.run(list(map(str, command)), cwd=cwd, check=True)
+        return
+    with log.open("w") as output:
+        result = subprocess.run(list(map(str, command)), cwd=cwd,
+                                stdout=output, stderr=subprocess.STDOUT)
+    if result.returncode:
+        tail = log.read_text(errors="replace").splitlines()[-45:]
+        raise RuntimeError(f"Build failed ({log}):\n" + "\n".join(tail))
+
+
+def capture(*command):
+    return subprocess.check_output(list(map(str, command)), text=True).strip()
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def source_tree(base, name):
+    url, expected, directory = SOURCES[name]
+    archive = base / "sources" / f"{directory}.tar.xz"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    if not archive.exists() or sha256(archive) != expected:
+        pending = archive.with_suffix(".pending")
+        with urllib.request.urlopen(url, timeout=60) as response, pending.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        if sha256(pending) != expected:
+            pending.unlink()
+            raise RuntimeError(f"Source checksum mismatch: {url}")
+        pending.replace(archive)
+    tree = base / "sources" / directory
+    if not (tree / ".xshot-extracted").exists():
+        if tree.exists():
+            shutil.rmtree(tree)
+        run(["tar", "-xf", archive, "-C", archive.parent])
+        (tree / ".xshot-extracted").touch()
+    return archive, tree
+
+
+def dependencies(binary):
+    return [line.strip().split(" (compatibility version", 1)[0]
+            for line in capture("otool", "-L", binary).splitlines()[1:]]
+
+
+def rewrite(binary, changes=(), identity=None):
+    for old, new in changes:
+        run(["install_name_tool", "-change", old, new, binary])
+    if identity:
+        run(["install_name_tool", "-id", identity, binary])
+    lines = capture("otool", "-l", binary).splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == "cmd LC_RPATH":
+            match = re.match(r"\s*path (\S+) \(offset", lines[index + 2])
+            if match and match.group(1).startswith("/"):
+                run(["install_name_tool", "-delete_rpath", match.group(1), binary])
+    run(["codesign", "--force", "--sign", "-", binary])
+
+
+def stage_runtime(base, qt_build, ffmpeg_prefix, archives):
+    contents = base / "stage" / "Contents"
+    frameworks = contents / "Frameworks"
+    plugins = contents / "PlugIns" / "multimedia"
+    resources = contents / "Resources" / "Sources"
+    for directory in (frameworks, plugins, resources):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    known = set(LIBRARIES)
+    for library in LIBRARIES:
+        target = frameworks / library
+        shutil.copy2(ffmpeg_prefix / "lib" / library, target)
+        changes = []
+        for dependency in dependencies(target):
+            name = Path(dependency).name
+            if name in known and dependency != f"@loader_path/{name}":
+                changes.append((dependency, f"@loader_path/{name}"))
+        rewrite(target, changes, f"@rpath/{library}")
+
+    plugin = plugins / "libffmpegmediaplugin.dylib"
+    shutil.copy2(qt_build / "share/qt/plugins/multimedia/libffmpegmediaplugin.dylib", plugin)
+    changes = []
+    for dependency in dependencies(plugin):
+        name = Path(dependency).name
+        if name in known:
+            changes.append((dependency, f"@loader_path/../../Frameworks/{name}"))
+        elif (dependency.startswith("/opt/homebrew/")
+              and "/lib/Qt" in dependency
+              and ".framework/Versions/A/" in dependency):
+            framework = dependency.split("/lib/", 1)[1]
+            changes.append((dependency, f"@rpath/{framework}"))
+    rewrite(plugin, changes)
+
+    binaries = [plugin] + [frameworks / library for library in LIBRARIES]
+    for binary in binaries:
+        for dependency in dependencies(binary):
+            if dependency.startswith("@rpath//"):
+                raise RuntimeError(f"Invalid system framework rewrite in {binary}: {dependency}")
+            if dependency.startswith(("/System/Library/", "/usr/lib/", "@")):
+                continue
+            raise RuntimeError(f"Non-relocatable dependency in {binary}: {dependency}")
+
+    for name, archive in archives.items():
+        shutil.copy2(archive, resources / archive.name)
+    shutil.copy2(PATCH, resources / PATCH.name)
+    (resources / "FFMPEG-CONFIGURE.txt").write_text(
+        f"FFmpeg {FFMPEG_VERSION} source: {SOURCES['ffmpeg'][0]}\n"
+        + "Configure flags:\n" + "\n".join(FFMPEG_FLAGS) + "\n")
+    (resources / "QTMULTIMEDIA-BUILD.txt").write_text(
+        f"Qt Multimedia {QT_VERSION} source: {SOURCES['qtmultimedia'][0]}\n"
+        "Applied qtmultimedia-6.11.1-sdk26.patch before CMake configure.\n"
+        "Linked against LGPL-only FFmpeg 7.1.3 with software decoding selected at runtime.\n")
+    manifest = {
+        "qt_version": QT_VERSION,
+        "ffmpeg_version": FFMPEG_VERSION,
+        "ffmpeg_license": "LGPL-2.1-or-later",
+        "ffmpeg_configure": FFMPEG_FLAGS,
+        "sources": {name: {"url": SOURCES[name][0], "sha256": SOURCES[name][1]}
+                    for name in SOURCES},
+        "artifacts": {str(path.relative_to(contents)): sha256(path) for path in binaries},
+    }
+    (base / "stage" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    print(f"Private multimedia runtime staged at {contents}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--build-dir", type=Path,
+                        default=ROOT / "build/tools/mac-multimedia-runtime")
+    parser.add_argument("--jobs", type=int, default=4)
+    args = parser.parse_args()
+    if sys.platform != "darwin":
+        parser.error("This runtime is built on macOS only")
+    if capture("qmake6", "-query", "QT_VERSION") != QT_VERSION:
+        parser.error(f"The installed Qt SDK must be {QT_VERSION}")
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
+
+    base = args.build_dir.resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    ffmpeg_archive, ffmpeg_source = source_tree(base, "ffmpeg")
+    qt_archive, qt_source = source_tree(base, "qtmultimedia")
+    patch_stamp = qt_source / ".xshot-sdk26-patched"
+    patch_digest = sha256(PATCH)
+    if not patch_stamp.exists() or patch_stamp.read_text() != patch_digest:
+        run(["patch", "-p1", "-i", PATCH], cwd=qt_source)
+        patch_stamp.write_text(patch_digest)
+
+    ffmpeg_build = base / "ffmpeg-build"
+    ffmpeg_prefix = base / "ffmpeg-prefix"
+    ffmpeg_build.mkdir(exist_ok=True)
+    configure = [ffmpeg_source / "configure", f"--prefix={ffmpeg_prefix}"] + FFMPEG_FLAGS
+    fingerprint = "\n".join(map(str, configure))
+    flag_stamp = ffmpeg_build / ".xshot-flags"
+    if not flag_stamp.exists() or flag_stamp.read_text() != fingerprint:
+        run(configure, cwd=ffmpeg_build, log=base / "ffmpeg-configure.log")
+        flag_stamp.write_text(fingerprint)
+    run(["make", f"-j{args.jobs}", "install"], cwd=ffmpeg_build,
+        log=base / "ffmpeg-build.log")
+    if "License: LGPL version 2.1 or later" not in (base / "ffmpeg-configure.log").read_text():
+        raise RuntimeError("FFmpeg configure did not confirm an LGPL-only build")
+
+    # Homebrew adds its own include directory before FFMPEG_DIR. A distinct copy
+    # wins Clang's -I search order and prevents accidental FFmpeg-major ABI mix.
+    priority_headers = base / "ffmpeg-headers-priority"
+    shutil.copytree(ffmpeg_prefix / "include", priority_headers, dirs_exist_ok=True)
+    qt_build = base / "qtmultimedia-build"
+    qt_prefix = capture("qmake6", "-query", "QT_INSTALL_PREFIX")
+    run([
+        "cmake", "-S", qt_source, "-B", qt_build, "-G", "Unix Makefiles",
+        f"-DCMAKE_PREFIX_PATH={qt_prefix}", f"-DCMAKE_INSTALL_PREFIX={qt_prefix}",
+        f"-DCMAKE_STAGING_PREFIX={base / 'qt-prefix'}",
+        "-DQT_FEATURE_ffmpeg=ON", f"-DFFMPEG_DIR={ffmpeg_prefix}",
+        "-DQT_NO_APPLE_SDK_AND_XCODE_CHECK=ON",
+        f"-DCMAKE_CXX_FLAGS=-I{priority_headers}",
+        f"-DCMAKE_OBJCXX_FLAGS=-I{priority_headers}",
+    ], log=base / "qtmultimedia-configure.log")
+    if not re.search(r"ffmpeg\s+\.+ yes", (qt_build / "config.summary").read_text()):
+        raise RuntimeError("Qt configure did not enable its FFmpeg plugin")
+    run(["cmake", "--build", qt_build, "--target", "QFFmpegMediaPlugin",
+         "--parallel", args.jobs], log=base / "qtmultimedia-build.log")
+    deps = list((qt_build / "src/plugins/multimedia/ffmpeg").rglob("*.o.d"))
+    if not any(str(priority_headers / "libavutil/frame.h") in path.read_text(errors="replace")
+               for path in deps):
+        raise RuntimeError("Qt plugin did not compile against the pinned FFmpeg headers")
+    for path in deps:
+        text = path.read_text(errors="replace")
+        if re.search(r"/opt/homebrew/include/libav(?:codec|format|util)/", text):
+            raise RuntimeError(f"Qt plugin mixed Homebrew FFmpeg headers: {path}")
+    stage_runtime(base, qt_build, ffmpeg_prefix,
+                  {"ffmpeg": ffmpeg_archive, "qtmultimedia": qt_archive})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)

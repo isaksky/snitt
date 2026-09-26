@@ -20,6 +20,20 @@ int main(int argc, char *argv[]) {
     app.setOrganizationName("xshot");
     app.setQuitOnLastWindowClosed(false);
 
+#ifdef Q_OS_MACOS
+    // The packaged playback plugin uses an LGPL-only, software FFmpeg decoder.
+    // Select it before QML constructs MediaPlayer; development builds without
+    // the private plugin keep Qt's normal backend.
+    const QString ffmpegPlugin = QDir(QCoreApplication::applicationDirPath())
+        .filePath("../PlugIns/multimedia/libffmpegmediaplugin.dylib");
+    if (QFileInfo::exists(ffmpegPlugin)) {
+        if (!qEnvironmentVariableIsSet("QT_MEDIA_BACKEND"))
+            qputenv("QT_MEDIA_BACKEND", "ffmpeg");
+        if (!qEnvironmentVariableIsSet("QT_FFMPEG_DECODING_HW_DEVICE_TYPES"))
+            qputenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", ",");
+    }
+#endif
+
     QStringList args = app.arguments().mid(1);
     for (QString &arg : args)
         if (!arg.startsWith('-')) arg = QFileInfo(arg).absoluteFilePath();

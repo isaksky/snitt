@@ -1,0 +1,27 @@
+--- a/src/multimedia/video/qvideowindow.cpp
++++ b/src/multimedia/video/qvideowindow.cpp
+@@ -125,7 +125,7 @@
+     }
+ #endif
+ 
+-#if QT_CONFIG(vulkan)
++#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
+     if (m_graphicsApi == QRhi::Vulkan) {
+         QRhiVulkanInitParams params;
+         params.inst = q->vulkanInstance();
+--- a/src/plugins/multimedia/ffmpeg/darwin/qcgwindowcapture.mm
++++ b/src/plugins/multimedia/ffmpeg/darwin/qcgwindowcapture.mm
+@@ -104,9 +104,13 @@
+         if (auto rate = frameRateForWindow(m_wid))
+             setFrameRate(*rate);
+ 
++#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
++        QCFType<CGImageRef> imageRef = nullptr; // Legacy window capture unavailable in this SDK.
++#else
+         QCFType<CGImageRef> imageRef =
+                 CGWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, m_wid,
+                                         kCGWindowImageBoundsIgnoreFraming);
++#endif
+         if (!imageRef) {
+             updateError(QPlatformSurfaceCapture::CaptureFailed,
+                         QLatin1String("Cannot create image by window"));
