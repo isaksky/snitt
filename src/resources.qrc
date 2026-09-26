@@ -1,5 +1,24 @@
 <RCC>
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
+        <file alias="icons/arrow-left.svg">icons/arrow-left.svg</file>
+        <file alias="icons/arrow-right.svg">icons/arrow-right.svg</file>
+        <file alias="icons/check.svg">icons/check.svg</file>
+        <file alias="icons/clipboard.svg">icons/clipboard.svg</file>
+        <file alias="icons/copy.svg">icons/copy.svg</file>
+        <file alias="icons/eraser.svg">icons/eraser.svg</file>
+        <file alias="icons/folder-open.svg">icons/folder-open.svg</file>
+        <file alias="icons/grid-3x3.svg">icons/grid-3x3.svg</file>
+        <file alias="icons/highlighter.svg">icons/highlighter.svg</file>
+        <file alias="icons/move-up-right.svg">icons/move-up-right.svg</file>
+        <file alias="icons/redo-2.svg">icons/redo-2.svg</file>
+        <file alias="icons/scissors.svg">icons/scissors.svg</file>
+        <file alias="icons/square-dashed.svg">icons/square-dashed.svg</file>
+        <file alias="icons/square.svg">icons/square.svg</file>
+        <file alias="icons/trash.svg">icons/trash.svg</file>
+        <file alias="icons/type.svg">icons/type.svg</file>
+        <file alias="icons/undo-2.svg">icons/undo-2.svg</file>
+        <file alias="icons/video.svg">icons/video.svg</file>
+        <file alias="icons/x.svg">icons/x.svg</file>
     </qresource>
 </RCC>

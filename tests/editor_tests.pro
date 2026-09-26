@@ -1,4 +1,4 @@
-QT += core gui widgets network quick quickcontrols2 testlib
+QT += core gui widgets network quick quickcontrols2 svg testlib
 CONFIG += c++17 testcase console
 CONFIG -= app_bundle
 TARGET = editor_tests

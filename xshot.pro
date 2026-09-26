@@ -1,4 +1,4 @@
-QT += core gui widgets network qml quick quickcontrols2
+QT += core gui widgets network qml quick quickcontrols2 svg
 
 CONFIG += c++17 release
 TARGET = xshot

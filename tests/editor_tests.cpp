@@ -326,7 +326,7 @@ void EditorTests::qmlKeyboardCommands() {
     for (const auto &tool : tools) {
         auto *button = visualItem(window->contentItem(), "tool_" + tool.first);
         QVERIFY2(button, qPrintable("Missing tool button: " + tool.first));
-        QVERIFY(button->property("text").toString().endsWith(QStringLiteral("(") + QChar(ushort(tool.second)) + ")"));
+        QCOMPARE(button->property("text").toString(), tool.first == "cut" ? QString("Cut") : QString());
         QTest::keyClick(window, tool.second);
         QTRY_COMPARE(canvas->tool(), tool.first);
         QVERIFY(button->property("checked").toBool());
@@ -357,7 +357,7 @@ void EditorTests::qmlKeyboardCommands() {
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("not submitted"));
     auto *copyButton = visualItem(window->contentItem(), "copyButton");
     QVERIFY(copyButton);
-    QVERIFY(copyButton->property("text").toString().endsWith("(" + window->property("copyKey").toString() + ")"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy & close"));
     QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
     QCoreApplication::processEvents();
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());

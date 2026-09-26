@@ -7,7 +7,28 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QToolButton>
+#include <QSvgRenderer>
 #include <cmath>
+
+namespace {
+QIcon toolbarIcon(const QString &name) {
+    QSvgRenderer svg(QStringLiteral(":/icons/") + name + QStringLiteral(".svg"));
+    QIcon icon;
+    for (const auto &state : {QPair<QColor, QIcon::State>{QColor("#e9edf3"), QIcon::Off},
+                              {QColor("#142820"), QIcon::On}}) {
+        QPixmap pixmap(96, 96);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        svg.render(&painter);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(pixmap.rect(), state.first);
+        painter.end();
+        pixmap.setDevicePixelRatio(4);
+        icon.addPixmap(pixmap, QIcon::Normal, state.second);
+    }
+    return icon;
+}
+}
 
 RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
@@ -49,14 +70,22 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
         return control;
     };
     m_singleButton = button("Region", "singleCaptureButton");
-    m_multipleButton = button("Multiple · M", "multipleCaptureButton");
-    m_videoButton = button("Video · V", "videoCaptureButton");
+    m_multipleButton = button("Multiple", "multipleCaptureButton");
+    m_videoButton = button("Video", "videoCaptureButton");
+    m_singleButton->setIcon(toolbarIcon("square-dashed"));
+    m_multipleButton->setIcon(toolbarIcon("copy"));
+    m_videoButton->setIcon(toolbarIcon("video"));
+    m_singleButton->setToolTip("Select a region");
+    m_multipleButton->setToolTip("Select multiple regions (M)");
+    m_videoButton->setToolTip("Record a region (V)");
     for (auto *control : {m_singleButton, m_multipleButton, m_videoButton}) {
         control->setCheckable(true);
+        control->setIconSize(QSize(22, 22));
         modes->addWidget(control);
     }
     modes->addStretch();
-    auto *cancel = button("Cancel · Esc", "cancelCaptureButton");
+    auto *cancel = button("Cancel", "cancelCaptureButton");
+    cancel->setToolTip("Cancel selection (Esc)");
     modes->addWidget(cancel);
     layout->addLayout(modes);
     auto *actions = new QHBoxLayout;
@@ -69,7 +98,8 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     m_count->setObjectName("captureCount");
     m_count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     actions->addWidget(m_count);
-    m_arrangeButton = button("Arrange →  Enter", "arrangeCaptureButton");
+    m_arrangeButton = button("Arrange →", "arrangeCaptureButton");
+    m_arrangeButton->setToolTip("Continue to Arrange (Enter)");
     auto policy = m_arrangeButton->sizePolicy();
     policy.setRetainSizeWhenHidden(true);
     m_arrangeButton->setSizePolicy(policy);
@@ -174,7 +204,8 @@ void RegionSelector::setSelections(bool multiple, const QList<QPair<int, QRectF>
     }
     while (m_removeButtons.size() < areas.size()) {
         auto *remove = new QToolButton(this);
-        remove->setText("×");
+        remove->setIcon(toolbarIcon("trash"));
+        remove->setIconSize(QSize(20, 20));
         remove->setFocusPolicy(Qt::NoFocus);
         remove->setCursor(Qt::PointingHandCursor);
         remove->setStyleSheet("QToolButton { color: white; background: #1b1e23; border: 1px solid #a3e6ca; border-radius: 5px; font-size: 20px; } QToolButton:hover { background: #594047; }");

@@ -1,4 +1,4 @@
-QT += core gui widgets testlib
+QT += core gui widgets svg testlib
 CONFIG += c++17 testcase console
 CONFIG -= app_bundle
 TARGET = recording_tests

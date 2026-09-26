@@ -38,7 +38,7 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
     auto capture = [this] { QMetaObject::invokeMethod(m_window, "capture"); };
     auto show = [this] { QMetaObject::invokeMethod(m_window, "showEditor"); };
     connect(&m_hotkey, &GlobalHotkey::activated, this, capture);
-    m_menu.addAction(QStringLiteral("New screenshot"), this, capture);
+    m_menu.addAction(QStringLiteral("Capture region"), this, capture);
     m_menu.addAction(QStringLiteral("Open editor"), this, show);
     m_menu.addSeparator();
     m_menu.addAction(m_hotkey.description())->setEnabled(false);
@@ -68,7 +68,7 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
     if (!m_hotkey.registered()) {
         QTimer::singleShot(500, this, [this] {
             m_tray.showMessage(QStringLiteral("xshot shortcut unavailable"),
-                              m_hotkey.description() + QStringLiteral(". Use New screenshot in this menu."), QSystemTrayIcon::Warning);
+                              m_hotkey.description() + QStringLiteral(". Use Capture region in this menu."), QSystemTrayIcon::Warning);
         });
     }
     connect(server, &QLocalServer::newConnection, this, [this, server] {

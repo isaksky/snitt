@@ -15,6 +15,7 @@ New-Item -ItemType Directory -Force $destination | Out-Null
 Copy-Item "$root\build\windows-app\xshot.exe" $destination
 & "$QtBin\windeployqt6.exe" --release --compiler-runtime --no-translations --qmldir "$root\src" --dir $destination --plugindir "$destination\plugins" --qml-deploy-dir "$destination\qml" "$destination\xshot.exe"
 if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
+if (!(Test-Path (Join-Path $destination 'plugins\imageformats\qsvg.dll'))) { throw 'Bundled SVG image plugin is missing.' }
 # MSYS2 Qt also links external libraries. Follow PE imports recursively, rather
 # than shipping all of MSYS2 or relying on the development machine PATH.
 $queue = [Collections.Generic.Queue[string]]::new()
@@ -49,6 +50,8 @@ New-Item -ItemType Directory -Force $licenses | Out-Null
 $qtPrefix = Split-Path $QtBin -Parent
 if (!(Test-Path "$qtPrefix\share\licenses")) { throw 'MSYS2 dependency license directory is missing.' }
 Copy-Item "$qtPrefix\share\licenses\*" $licenses -Recurse
+New-Item -ItemType Directory -Force (Join-Path $licenses 'lucide') | Out-Null
+Copy-Item "$root\src\icons\LICENSE" (Join-Path $licenses 'lucide\LICENSE')
 foreach ($required in 'qt6-base\LGPL-3.0-only.txt', 'qt6-base\GPL-3.0-only.txt', 'qt6-declarative\LGPL-3.0-only.txt', 'gcc\COPYING.RUNTIME') {
     if (!(Test-Path (Join-Path $licenses $required))) { throw "Required runtime license is missing: $required" }
 }
@@ -78,6 +81,9 @@ https://doc.qt.io/qt-6/licenses-used-in-qt.html
 MSYS2 package recipes and patches:
 https://github.com/msys2/MINGW-packages
 https://packages.msys2.org/
+
+Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
+licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
 
 FFmpeg is a separate command-line dependency, installed by Scoop. It is not
 included in this archive. See its installation for its licenses and notices.
