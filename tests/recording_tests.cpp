@@ -214,7 +214,7 @@ void RecordingTests::trimShortClipsAtEof() {
         QTRY_VERIFY_WITH_TIMEOUT(([&] {
             if (trim.thumbnails().size() != 12) return false;
             for (int index = 0; index < 12; ++index) {
-                const QString &url = trim.thumbnails().at(index);
+                const QString url = trim.thumbnails().at(index);
                 if (url.isEmpty()) return false;
                 const QImage image(QUrl(url).toLocalFile());
                 if (image.isNull()) return false;

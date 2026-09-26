@@ -58,8 +58,14 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
         const QString file = m_thumbDir->filePath(QString::number(index) + ".jpg");
         const bool decoded = status == QProcess::NormalExit && code == 0 && QFileInfo(file).size() > 0;
         if (!decoded && m_thumbnailLookbackMs == 0 && status == QProcess::NormalExit
-            && code == 234 && m_thumbProcess.readAllStandardError().contains("before EOF"))
-            m_thumbnailReachedEof = true;
+            && QFileInfo(file).size() == 0) {
+            const QByteArray error = m_thumbProcess.readAllStandardError();
+            // FFmpeg reports this empty-tail condition as 234 on macOS and
+            // -22 on Windows; its diagnostic is the stable distinction from
+            // an unrelated decode or output failure.
+            m_thumbnailReachedEof = error.contains("before EOF")
+                && error.contains("Nothing was written into output file");
+        }
         if (decoded) {
             m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
             if (m_thumbnailReachedEof) {
