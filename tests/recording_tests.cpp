@@ -230,6 +230,34 @@ void RecordingTests::trimShortClipsAtEof() {
         QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
     }
 
+    // MP4 preserves the six-second display duration of this one packet. The
+    // last 100 ms is many retry windows away from its only PTS at zero.
+    const QString heldPath = directory.filePath("held-six.mp4");
+    QProcess heldEncoder;
+    heldEncoder.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+        "-i", "color=c=blue:s=160x90:r=1/6:d=6", "-frames:v", "1", "-c:v", "libx264",
+        "-pix_fmt", "yuv420p", heldPath});
+    QVERIFY(heldEncoder.waitForFinished(15000));
+    QCOMPARE(heldEncoder.exitCode(), 0);
+    TrimSession held;
+    held.open(heldPath);
+    if (held.duration() == 0) held.setDuration(6000);
+    QVERIFY(held.duration() >= 5900);
+    held.setThumbnailWindow(held.duration() - 100, held.duration());
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        if (held.thumbnails().size() != 12) return false;
+        for (const QString &url : held.thumbnails()) {
+            if (url.isEmpty()) return false;
+            const QImage image(QUrl(url).toLocalFile());
+            if (image.isNull()) return false;
+            const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+            if (center.blue() < 90 || center.blue() < center.red() * 2
+                || center.blue() < center.green() * 2) return false;
+        }
+        return true;
+    })(), 15000);
+    QVERIFY2(held.problem().isEmpty(), qPrintable(held.problem()));
+
     // A real variable-frame-rate MP4 with PTS gaps of 0.2 and 1.1 seconds.
     // The blue final sample is held until the container's 1.34-second end.
     for (const auto &color : {QStringLiteral("red"), QStringLiteral("green"), QStringLiteral("blue")}) {
