@@ -54,6 +54,7 @@ public:
     Q_INVOKABLE bool load(const QUrl &url);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
+    Q_INVOKABLE QString save();
     Q_INVOKABLE void clear();
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
@@ -75,6 +76,7 @@ signals:
 protected:
     void geometryChange(const QRectF &next, const QRectF &previous) override;
 private:
+    QImage exportImage() const;
     QPointF imagePoint(qreal x, qreal y) const;
     void changed();
     bool composeRegions();

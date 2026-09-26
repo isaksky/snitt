@@ -1,11 +1,14 @@
 #include <QtTest>
 #include <QBuffer>
 #include <QClipboard>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QTemporaryDir>
 #include "imagedocument.h"
 #include "editorcanvas.h"
+#include "screenshotsave.h"
 
 class ImageToolTests : public QObject {
     Q_OBJECT
@@ -16,6 +19,7 @@ private slots:
     void scaledGesturesAndClipboard();
     void highlightsPreviewAndHistory();
     void annotationSizingAndPreview();
+    void savePngUsesUniqueNamesAndKeepsSource();
 };
 
 static QImage sourceImage() {
@@ -248,6 +252,32 @@ void ImageToolTests::annotationSizingAndPreview() {
     QCOMPARE(canvas.strokeWidth(), 7);
     canvas.setTool("text"); canvas.adjustToolSize(120 * 100);
     QCOMPARE(canvas.textSize(), 20);
+}
+
+void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {
+    QTemporaryDir pictures;
+    QVERIFY(pictures.isValid());
+    const QImage original = sourceImage();
+    QString error;
+    const QString first = screenshots::savePng(original, pictures.path(), &error);
+    QVERIFY2(!first.isEmpty(), qPrintable(error));
+    const QString second = screenshots::savePng(original, pictures.path(), &error);
+    QVERIFY2(!second.isEmpty(), qPrintable(error));
+    QVERIFY(first != second);
+    QVERIFY(first.endsWith(".png") && second.endsWith(".png"));
+    QCOMPARE(QFileInfo(first).absolutePath(), pictures.filePath("xshot"));
+    QCOMPARE(QImage(first).convertToFormat(original.format()), original);
+    QCOMPARE(QImage(second).convertToFormat(original.format()), original);
+    QVERIFY(QFileInfo(first).size() > 0);
+
+    const QString blocked = pictures.filePath("blocked");
+    QFile obstruction(blocked);
+    QVERIFY(obstruction.open(QIODevice::WriteOnly));
+    obstruction.close();
+    error.clear();
+    QVERIFY(screenshots::savePng(original, blocked, &error).isEmpty());
+    QVERIFY(error.contains("Could not create the screenshots folder"));
+    QCOMPARE(QImage(first).convertToFormat(original.format()), original);
 }
 
 QTEST_MAIN(ImageToolTests)

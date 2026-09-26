@@ -68,6 +68,19 @@ ApplicationWindow {
         canvas.cancel()
         if (canvas.copy()) { win.hide(); canvas.clear() }
     }
+    function saveAndClose() {
+        commitText()
+        canvas.cancel()
+        const path = canvas.save()
+        if (path === "") return
+        win.hide()
+        canvas.clear()
+        if (!backend.revealFile(path)) {
+            captureErrorDialog.message = "Screenshot saved at " + path + ", but could not reveal it in the file manager."
+            win.showEditor()
+            captureErrorDialog.open()
+        }
+    }
     function dismissEditor() {
         win.editingText = false
         textInput.text = ""
@@ -183,7 +196,7 @@ ApplicationWindow {
         id: captureErrorDialog
         objectName: "captureErrorDialog"
         property string message: ""
-        title: "Capture unavailable"
+        title: message.startsWith("Screenshot saved at ") ? "Could not reveal screenshot" : "Capture unavailable"
         anchors.centerIn: parent
         width: Math.min(560, win.width - 48)
         modal: true
@@ -283,6 +296,10 @@ ApplicationWindow {
         onActivated: win.finish()
     }
     Shortcut {
+        sequence: "S"; enabled: win.shortcutsOn && canvas.hasImage
+        onActivated: win.saveAndClose()
+    }
+    Shortcut {
         sequence: "Escape"; enabled: win.shortcutsOn
         onActivated: if (!canvas.cancel()) win.dismissEditor()
     }
@@ -366,9 +383,19 @@ ApplicationWindow {
                     objectName: "copyArrangementButton"
                     text: "Copy & close"
                     visible: canvas.arranging
+                    enabled: canvas.hasImage
                     onClicked: win.finish()
                     ToolTip.visible: hovered
                     ToolTip.text: "Copy the combined image and close (C)"
+                }
+                ActionButton {
+                    objectName: "saveArrangementButton"
+                    text: "Save & close"
+                    visible: canvas.arranging
+                    enabled: canvas.hasImage
+                    onClicked: win.saveAndClose()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Save a PNG to Pictures/xshot and close (S)"
                 }
                 PrimaryButton {
                     objectName: "continueToAnnotateButton"
@@ -389,6 +416,15 @@ ApplicationWindow {
                     onClicked: win.finish()
                     ToolTip.visible: hovered
                     ToolTip.text: "Copy image to clipboard and close (C)"
+                }
+                ActionButton {
+                    objectName: "saveButton"
+                    text: "Save & close"
+                    visible: !canvas.arranging
+                    enabled: canvas.hasImage
+                    onClicked: win.saveAndClose()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Save a PNG to Pictures/xshot and close (S)"
                 }
             }
             ColumnLayout {

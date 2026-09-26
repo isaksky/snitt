@@ -16,6 +16,8 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QWheelEvent>
+#include <QDir>
+#include <QStandardPaths>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -36,6 +38,7 @@ private slots:
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
     void qmlWheelSizes();
+    void qmlSaveAndClose();
     void qmlKeyboardCommands();
     void qmlDismissal();
     void qmlRecordingControls();
@@ -389,6 +392,92 @@ void EditorTests::qmlWheelSizes() {
     QCOMPARE(canvas->textSize(), 26);
     QCOMPARE(text->property("text").toString(), QString(30, 'A').replace("A", "A\n"));
     QVERIFY(text->property("activeFocus").toBool());
+}
+
+void EditorTests::qmlSaveAndClose() {
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir source;
+    const QString inputPath = source.filePath("input.png");
+    QVERIFY(pattern().save(inputPath));
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(inputPath));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(canvas->hasImage());
+    window->show();
+    QTRY_VERIFY(window->isVisible());
+    auto *saveButton = window->findChild<QObject *>("saveButton");
+    auto *arrangeButton = window->findChild<QObject *>("saveArrangementButton");
+    QVERIFY(saveButton && arrangeButton);
+    QVERIFY(saveButton->property("visible").toBool());
+    QVERIFY(!arrangeButton->property("visible").toBool());
+
+    const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    QVERIFY(!pictures.isEmpty());
+    QDir savedDir(QDir(pictures).filePath("xshot"));
+    QStringList known = savedDir.entryList({"xshot-*.png"}, QDir::Files);
+    const auto newSavedFile = [&]() {
+        for (const QString &name : savedDir.entryList({"xshot-*.png"}, QDir::Files)) {
+            if (!known.contains(name)) { known.append(name); return savedDir.filePath(name); }
+        }
+        return QString();
+    };
+    QStringList created;
+    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    canvas->setTool("text");
+    const QPointF textPoint = canvas->imageRect().topLeft() + QPointF(5, 5) * canvas->imageScale();
+    canvas->begin(textPoint.x(), textPoint.y());
+    QVERIFY(window->property("editingText").toBool());
+    auto *text = window->findChild<QObject *>("annotationText");
+    QVERIFY(text);
+    text->setProperty("text", "A");
+    QTest::keyClick(window, Qt::Key_S);
+    QTRY_VERIFY(text->property("text").toString().contains('s'));
+    QCOMPARE(text->property("text").toString().size(), 2);
+    QVERIFY(canvas->hasImage());
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    const QString fromButton = newSavedFile();
+    QVERIFY(!fromButton.isEmpty()); created.append(fromButton);
+    QCOMPARE(QImage(fromButton).size(), pattern().size());
+    QVERIFY(QImage(fromButton).convertToFormat(pattern().format()) != pattern());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
+
+    QVERIFY(canvas->load(QUrl::fromLocalFile(inputPath)));
+    window->show(); canvas->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_S);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    const QString fromShortcut = newSavedFile();
+    QVERIFY(!fromShortcut.isEmpty()); created.append(fromShortcut);
+    QCOMPARE(QImage(fromShortcut).convertToFormat(pattern().format()), pattern());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
+
+    emit backend.regionsCaptured({pattern(), pattern()});
+    QVERIFY(canvas->arranging());
+    window->show();
+    QVERIFY(arrangeButton->property("visible").toBool());
+    QVERIFY(!saveButton->property("visible").toBool());
+    QVERIFY(canvas->copy());
+    const QImage arranged = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(QMetaObject::invokeMethod(arrangeButton, "clicked"));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    const QString fromArrange = newSavedFile();
+    QVERIFY(!fromArrange.isEmpty()); created.append(fromArrange);
+    QCOMPARE(QImage(fromArrange).convertToFormat(arranged.format()), arranged);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
+    QTest::qWait(250);
+    for (const QString &path : created) QVERIFY(QFile::remove(path));
 }
 
 void EditorTests::qmlKeyboardCommands() {

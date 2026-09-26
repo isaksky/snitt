@@ -2,6 +2,8 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QImageReader>
+#include <QStandardPaths>
+#include "screenshotsave.h"
 #include <QPainter>
 #include <cmath>
 
@@ -160,8 +162,21 @@ bool EditorCanvas::paste() {
 
 bool EditorCanvas::copy() {
     if (!hasImage()) return false;
-    QGuiApplication::clipboard()->setImage(m_document.image());
+    QGuiApplication::clipboard()->setImage(exportImage());
     return true;
+}
+
+QImage EditorCanvas::exportImage() const {
+    return m_document.image();
+}
+
+QString EditorCanvas::save() {
+    if (!hasImage()) return {};
+    const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    QString message;
+    const QString path = screenshots::savePng(exportImage(), pictures, &message);
+    if (path.isEmpty()) emit error(message);
+    return path;
 }
 
 void EditorCanvas::undo() { m_document.undo(); changed(); }

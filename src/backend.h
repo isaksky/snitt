@@ -35,6 +35,7 @@ public:
     Q_INVOKABLE void finishRecording() { m_recorder.finish(); }
     Q_INVOKABLE void cancelRecording() { m_recorder.cancel(); }
     Q_INVOKABLE bool protectRecordingControls(QObject *window);
+    Q_INVOKABLE bool revealFile(const QString &path) const { return recording::revealSavedFile(path); }
 signals:
     void capturingChanged();
     void captured(const QUrl &file);

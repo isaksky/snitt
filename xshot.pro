@@ -13,6 +13,8 @@ HEADERS += src/globalhotkey.h src/appservice.h src/regionselector.h
 SOURCES += src/globalhotkey.cpp src/appservice.cpp src/regionselector.cpp
 HEADERS += src/videorecorder.h
 SOURCES += src/videorecorder.cpp
+HEADERS += src/screenshotsave.h
+SOURCES += src/screenshotsave.cpp
 macx {
     LIBS += -framework Carbon -framework CoreGraphics
     QMAKE_INFO_PLIST = platform/macos/Info.plist
