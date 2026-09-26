@@ -355,10 +355,21 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
     QVERIFY(white.save(path));
     for (const QString &tool : {QStringLiteral("arrow"), QStringLiteral("rect"), QStringLiteral("highlight")}) {
       for (const qreal zoom : {2.5, 3.0}) {
+       for (const bool cutFirst : {false, true}) {
         for (const int displayScale : {1, 2}) {
             EditorCanvas canvas;
             canvas.setWidth(80 * zoom + 32); canvas.setHeight(60 * zoom + 32);
             QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+            if (cutFirst) {
+                canvas.setTool("cut");
+                const auto cut = [&](int from, int to) {
+                    const QPointF origin = canvas.imageRect().topLeft();
+                    const qreal scale = canvas.imageScale();
+                    canvas.begin(origin.x() + from * scale, origin.y() + 20 * scale);
+                    canvas.end(origin.x() + to * scale, origin.y() + 20 * scale);
+                };
+                cut(3, 5); cut(10, 13);
+            }
             canvas.setTool(tool);
             if (tool != "highlight") canvas.adjustToolSize(-120); // Thin 3 px stroke.
             const auto point = [&](QPointF source) {
@@ -378,8 +389,11 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
             const QImage live = snapshot();
             canvas.end(end.x(), end.y());
             const QImage committed = snapshot();
-            QCOMPARE(committed, live);
+            QVERIFY2(committed == live,
+                     qPrintable(QStringLiteral("%1 zoom %2 cut %3 dpr %4")
+                         .arg(tool).arg(zoom).arg(cutFirst).arg(displayScale)));
         }
+       }
       }
     }
 

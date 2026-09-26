@@ -133,9 +133,52 @@ qreal ImageDocument::exportScale() const {
     return qMax(1.0, scale);
 }
 
+void ImageDocument::drawText(QPainter &p, const Operation &op) {
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::TextAntialiasing);
+#ifdef Q_OS_WIN
+    QFont font(QStringLiteral("Segoe UI"));
+#else
+    QFont font(QStringLiteral("Helvetica"));
+#endif
+    font.setPixelSize(op.fontSize);
+    font.setWeight(QFont::DemiBold);
+    p.setFont(font);
+    p.setPen(op.color);
+    p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
+}
+
 QImage ImageDocument::render(qreal scale) const {
+    return renderThrough(scale, m_index < 0 ? 0 : m_operationHistory[m_index].size());
+}
+
+void ImageDocument::paint(QPainter &p, qreal scale) const {
+    if (image().isNull()) return;
+    const auto &ops = m_operationHistory[m_index];
+    int firstTrailing = ops.size();
+    while (firstTrailing > 0 && (ops[firstTrailing - 1].kind == Operation::Annotation
+                                 || ops[firstTrailing - 1].kind == Operation::Text))
+        --firstTrailing;
+    const QImage base = renderThrough(scale, firstTrailing);
+    if (base.isNull()) {
+        p.drawImage(QRectF(QPointF(0, 0), image().size()), image());
+        return;
+    }
+    p.drawImage(QRectF(QPointF(0, 0), image().size()), base);
+    for (int i = firstTrailing; i < ops.size(); ++i) {
+        const auto &op = ops[i];
+        p.save();
+        if (op.kind == Operation::Annotation)
+            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+        else
+            drawText(p, op);
+        p.restore();
+    }
+}
+
+QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     if (image().isNull() || !std::isfinite(scale) || scale <= 0) return {};
-    if (qFuzzyCompare(scale, 1.0)) return image();
+    if (operationCount == m_operationHistory[m_index].size() && qFuzzyCompare(scale, 1.0)) return image();
     if (scale > 1 && (m_source.width() * scale > 16384 || m_source.height() * scale > 16384
                       || double(m_source.width()) * m_source.height() * scale * scale > 32.0 * 1024 * 1024))
         return {};
@@ -150,7 +193,8 @@ QImage ImageDocument::render(qreal scale) const {
         // Interpolating source pixels before a later privacy edit would blend
         // hidden pixels into its boundary. Use exact source pixels in that case.
         bool replacesPixels = false;
-        for (const auto &op : m_operationHistory[m_index]) {
+        for (int i = 0; i < operationCount; ++i) {
+            const auto &op = m_operationHistory[m_index][i];
             if (op.kind == Operation::Blur || op.kind == Operation::Erase) {
                 replacesPixels = true;
                 break;
@@ -159,7 +203,8 @@ QImage ImageDocument::render(qreal scale) const {
         p.setRenderHint(QPainter::SmoothPixmapTransform, !replacesPixels);
         p.drawImage(QRect(QPoint(), result.size()), m_source);
     }
-    for (const auto &op : m_operationHistory[m_index]) {
+    for (int i = 0; i < operationCount; ++i) {
+        const auto &op = m_operationHistory[m_index][i];
         if (op.kind == Operation::Cut) {
             const int start = qBound(0, qRound(op.start * scale), op.vertical ? result.width() : result.height());
             const int removed = qMax(1, qRound((op.end - op.start) * scale));
@@ -195,20 +240,7 @@ QImage ImageDocument::render(qreal scale) const {
             p.fillRect(selectedPixels(op.area, QSize(qRound(result.width() / scale), qRound(result.height() / scale))), eraseSample);
         } else if (op.kind == Operation::Annotation) {
             drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
-        } else if (op.kind == Operation::Text) {
-            p.setRenderHint(QPainter::Antialiasing);
-            p.setRenderHint(QPainter::TextAntialiasing);
-#ifdef Q_OS_WIN
-            QFont font(QStringLiteral("Segoe UI"));
-#else
-            QFont font(QStringLiteral("Helvetica"));
-#endif
-            font.setPixelSize(op.fontSize);
-            font.setWeight(QFont::DemiBold);
-            p.setFont(font);
-            p.setPen(op.color);
-            p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
-        }
+        } else if (op.kind == Operation::Text) drawText(p, op);
     }
     return result;
 }

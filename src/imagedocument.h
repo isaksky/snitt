@@ -14,6 +14,7 @@ class ImageDocument {
 public:
     const QImage &image() const;
     QImage render(qreal scale = 1) const;
+    void paint(QPainter &painter, qreal scale) const;
     bool hasAnnotations() const;
     qreal exportScale() const;
     void reset(QImage image);
@@ -43,6 +44,8 @@ private:
         int fontSize = 0;
     };
     void commit(QImage image, const Operation *operation = nullptr);
+    QImage renderThrough(qreal scale, int operationCount) const;
+    static void drawText(QPainter &painter, const Operation &operation);
     QImage m_source;
     QVector<QImage> m_history;
     QVector<QVector<Operation>> m_operationHistory;

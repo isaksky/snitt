@@ -79,9 +79,7 @@ void EditorCanvas::paint(QPainter *p) {
     // the same raster resolution as the live drag, including enlarged previews.
     const QTransform device = p->deviceTransform();
     const qreal previewScale = std::hypot(device.m11(), device.m12());
-    const QImage preview = m_document.render(previewScale);
-    p->drawImage(QRectF(0, 0, imageWidth(), imageHeight()),
-                 preview.isNull() ? m_document.image() : preview);
+    m_document.paint(*p, previewScale);
     if (m_arranging) {
         for (int i = 0; i < m_regionRects.size(); ++i) {
             const QRectF area = m_regionRects[i];
