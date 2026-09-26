@@ -42,6 +42,12 @@ for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
         echo "Qt deployment did not bundle $framework" >&2
         exit 1
     }
+    # Depending on which pass copied BlendTrees, macdeployqt can retain its
+    # upstream signature after changing the framework resource directory.
+    # Repair only that invalid nested signature before signing the app.
+    if ! codesign --verify "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework" >/dev/null 2>&1; then
+        codesign --force --sign - "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework"
+    fi
 done
 # macdeployqt deploys the selected SDK's Darwin multimedia plugin. Add the
 # private software playback backend after deployment so its FFmpeg libraries
