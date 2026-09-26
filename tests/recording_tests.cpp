@@ -393,6 +393,8 @@ void RecordingTests::desktopRecording() {
         QVERIFY2(qAbs(actual.green() - expected.green()) <= 16, qPrintable(actual.name()));
         QVERIFY2(qAbs(actual.blue() - expected.blue()) <= 16, qPrintable(actual.name()));
     }
+    QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
+    QVERIFY(backend.trim()->property("path").toString().isEmpty());
     QVERIFY(QFile::remove(file));
 
     QSignalSpy canceled(&backend, &Backend::recordingCanceled);
