@@ -471,7 +471,9 @@ void EditorTests::qmlSaveAndClose() {
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
 
     QVERIFY(canvas->load(QUrl::fromLocalFile(inputPath)));
-    window->show(); canvas->forceActiveFocus();
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
     QTest::keyClick(window, Qt::Key_S);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     const QString fromShortcut = newSavedFile();
