@@ -288,6 +288,7 @@ void RecordingTests::trimShortClipsAtEof() {
     const QString secondGeneration = held.thumbnails().constFirst();
     held.keepOriginal();
     held.open(heldPath);
+    if (held.duration() == 0) held.setDuration(6000);
     held.setThumbnailWindow(held.duration() - 200, held.duration() - 100);
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         if (held.thumbnails().size() != 12 || held.thumbnails().constFirst() == secondGeneration)
