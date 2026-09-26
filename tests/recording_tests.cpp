@@ -173,6 +173,15 @@ void RecordingTests::trimThumbnailsFollowWindow() {
             .arg(index).arg(colorAt(index).name())));
     QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
 
+    // A reachable selection zoom ends before the container, but its final
+    // sample at 3.976 seconds is still displayed by the last yellow frame.
+    trim.setThumbnailWindow(3856, 3981);
+    QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
+    for (int index = 0; index < 12; ++index)
+        QVERIFY2(isYellow(colorAt(index)), qPrintable(QStringLiteral("Interior EOF slot %1: %2")
+            .arg(index).arg(colorAt(index).name())));
+    QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+
     trim.setThumbnailWindow(1375, 2625);
     QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
     QVERIFY2(isGreen(colorAt(0)), qPrintable(colorAt(0).name()));
@@ -246,6 +255,43 @@ void RecordingTests::trimShortClipsAtEof() {
     held.setThumbnailWindow(held.duration() - 100, held.duration());
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         if (held.thumbnails().size() != 12) return false;
+        for (const QString &url : held.thumbnails()) {
+            if (url.isEmpty()) return false;
+            const QImage image(QUrl(url).toLocalFile());
+            if (image.isNull()) return false;
+            const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+            if (center.blue() < 90 || center.blue() < center.red() * 2
+                || center.blue() < center.green() * 2) return false;
+        }
+        return true;
+    })(), 15000);
+    QVERIFY2(held.problem().isEmpty(), qPrintable(held.problem()));
+
+    const QString firstGeneration = held.thumbnails().constFirst();
+    // Every point in this interior zoom lies in the sole frame's six-second
+    // display interval, far beyond its PTS at zero.
+    held.setThumbnailWindow(held.duration() - 200, held.duration() - 100);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        if (held.thumbnails().size() != 12 || held.thumbnails().constFirst() == firstGeneration)
+            return false;
+        for (const QString &url : held.thumbnails()) {
+            if (url.isEmpty()) return false;
+            const QImage image(QUrl(url).toLocalFile());
+            if (image.isNull()) return false;
+            const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+            if (center.blue() < 90 || center.blue() < center.red() * 2
+                || center.blue() < center.green() * 2) return false;
+        }
+        return true;
+    })(), 15000);
+    QVERIFY2(held.problem().isEmpty(), qPrintable(held.problem()));
+    const QString secondGeneration = held.thumbnails().constFirst();
+    held.keepOriginal();
+    held.open(heldPath);
+    held.setThumbnailWindow(held.duration() - 200, held.duration() - 100);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        if (held.thumbnails().size() != 12 || held.thumbnails().constFirst() == secondGeneration)
+            return false;
         for (const QString &url : held.thumbnails()) {
             if (url.isEmpty()) return false;
             const QImage image(QUrl(url).toLocalFile());

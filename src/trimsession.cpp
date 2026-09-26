@@ -252,10 +252,10 @@ void TrimSession::startThumbnailAttempt() {
 
 bool TrimSession::retryThumbnailBeforeEof() {
     const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
-    // A missing output before EOF may be a genuine decode failure. Only a
-    // sample in the final displayed interval may use the preceding frame.
-    if (!m_thumbnailReachedEof || windowEnd != m_duration
-        || m_nextThumb < 0 || m_nextThumb >= thumbnailCount)
+    // A verified empty tail means no frame exists at or after this sample.
+    // The preceding frame can cover it even when the zoom ends before the
+    // container duration; the window boundary says nothing about frame PTS.
+    if (!m_thumbnailReachedEof || m_nextThumb < 0 || m_nextThumb >= thumbnailCount)
         return false;
     const qint64 time = m_thumbnailStartMs
         + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
