@@ -395,6 +395,10 @@ void EditorTests::qmlWheelSizes() {
 }
 
 void EditorTests::qmlSaveAndClose() {
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == "offscreen")
+        QSKIP("File-manager reveal requires an interactive Windows desktop");
+#endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
