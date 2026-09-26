@@ -125,8 +125,8 @@ and shows layout controls. Drawing tools are hidden during this phase.
   **Move left / Move right** buttons. **Backspace/Delete** or **Remove** removes it.
 - Original pixels are preserved without resizing or cropping, with 24-pixel
   neutral spacing. Numbers and selection outlines are preview guides only.
-- Choose **Continue to annotate → (Enter)** for Phase 3, or **Copy & close (C)**
-  or **Save & close (S)** to finish directly from Arrange.
+- Choose **Annotate → (Enter)** for Phase 3, or **Save and close (S)**
+  or **Copy and close (C)** to finish directly from Arrange.
 
 ### Phase 3: Annotate — optional
 
@@ -135,9 +135,9 @@ controls. Tile numbers and selection outlines disappear; you now edit one combin
 
 - Use the normal drawing, text, blur, smart erase, and cut tools.
 - Choose **← Back to arrange** to revise the layout. If edits exist, choose
-  **Keep editing** to preserve them or **Discard edits & arrange** to reset
+  **Keep editing** to preserve them or **Discard edits** to reset
   annotations and cuts. The captured regions are kept.
-- Press **C** or **S**, or choose **Copy & close** or **Save & close**, when ready.
+- Press **C** or **S**, or choose **Save and close** or **Copy and close**, when ready.
   While typing an annotation, these shortcuts type text; the buttons place the
   active text before finishing.
 
@@ -146,8 +146,8 @@ Enter adds a line.
 
 ### Phase 4: Finish
 
-- From Arrange or Annotate, **Copy & close (C)** copies the full-resolution
-  combined image to the clipboard. **Save & close (S)** writes a unique PNG to
+- From Arrange or Annotate, **Copy and close (C)** copies the full-resolution
+  combined image to the clipboard. **Save and close (S)** writes a unique PNG to
   your system Pictures folder under `xshot` and reveals it in Finder or Explorer;
   it does not change the clipboard.
 - The editor closes and the session's editing history and original regions are cleared.
@@ -190,8 +190,8 @@ including when started at login.
 | Smart erase | E | Drag a rectangle to fill it with the exact color at the drag's starting point. Works in any drag direction. |
 | Green / good | G | Applies to new rectangles, arrows, and text. |
 | Red / bad | D | Applies to new rectangles, arrows, and text. |
-| Copy & close | C | Copies the full-resolution image, hides the editor, and clears its editing history. Inactive while typing an annotation. |
-| Save & close | S | Saves a PNG in Pictures/xshot, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
+| Copy and close | C | Copies the full-resolution image, hides the editor, and clears its editing history. Inactive while typing an annotation. |
+| Save and close | S | Saves a PNG in Pictures/xshot, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
 | Undo | Command/Ctrl+Z | Reverts the last edit. |
 | Redo | Shift+Command+Z on macOS; Ctrl+Y on Windows | Reapplies the last undone edit. |
 | New capture | Command/Ctrl+N | Starts a new region selection. |

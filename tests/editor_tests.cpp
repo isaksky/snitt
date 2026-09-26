@@ -562,10 +562,17 @@ void EditorTests::qmlSaveAndClose() {
     window->show();
     QTRY_VERIFY(window->isVisible());
     auto *saveButton = window->findChild<QObject *>("saveButton");
+    auto *copyButton = window->findChild<QQuickItem *>("copyButton");
     auto *arrangeButton = window->findChild<QObject *>("saveArrangementButton");
-    QVERIFY(saveButton && arrangeButton);
+    auto *arrangeCopyButton = window->findChild<QQuickItem *>("copyArrangementButton");
+    QVERIFY(saveButton && copyButton && arrangeButton && arrangeCopyButton);
     QVERIFY(saveButton->property("visible").toBool());
     QVERIFY(!arrangeButton->property("visible").toBool());
+    QCOMPARE(saveButton->property("text").toString(), QString("Save and close"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy and close"));
+    QCoreApplication::processEvents();
+    const qreal saveRight = saveButton->property("x").toReal() + saveButton->property("width").toReal();
+    QVERIFY(copyButton->x() >= saveRight && copyButton->x() - saveRight <= 13);
 
     const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     QVERIFY(!pictures.isEmpty());
@@ -627,6 +634,11 @@ void EditorTests::qmlSaveAndClose() {
     window->show();
     QVERIFY(arrangeButton->property("visible").toBool());
     QVERIFY(!saveButton->property("visible").toBool());
+    QCOMPARE(arrangeButton->property("text").toString(), QString("Save and close"));
+    QCOMPARE(arrangeCopyButton->property("text").toString(), QString("Copy and close"));
+    QCoreApplication::processEvents();
+    const qreal arrangeSaveRight = arrangeButton->property("x").toReal() + arrangeButton->property("width").toReal();
+    QVERIFY(arrangeCopyButton->x() >= arrangeSaveRight && arrangeCopyButton->x() - arrangeSaveRight <= 13);
     QVERIFY(canvas->copy());
     const QImage arranged = QGuiApplication::clipboard()->image();
     QGuiApplication::clipboard()->setText("keep screenshot clipboard");
@@ -707,7 +719,7 @@ void EditorTests::qmlKeyboardCommands() {
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("not submitted"));
     auto *copyButton = visualItem(window->contentItem(), "copyButton");
     QVERIFY(copyButton);
-    QCOMPARE(copyButton->property("text").toString(), QString("Copy & close"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy and close"));
     QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
     QCoreApplication::processEvents();
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());

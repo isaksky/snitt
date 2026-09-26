@@ -481,22 +481,22 @@ ApplicationWindow {
                     onClicked: win.arrangeRegions()
                 }
                 ActionButton {
-                    objectName: "copyArrangementButton"
-                    text: "Copy & close"
-                    visible: canvas.arranging
-                    enabled: canvas.hasImage
-                    onClicked: win.finish()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Copy the combined image and close (C)"
-                }
-                ActionButton {
                     objectName: "saveArrangementButton"
-                    text: "Save & close"
+                    text: "Save and close"
                     visible: canvas.arranging
                     enabled: canvas.hasImage
                     onClicked: win.saveAndClose()
                     ToolTip.visible: hovered
                     ToolTip.text: "Save a PNG to Pictures/xshot and close (S)"
+                }
+                ActionButton {
+                    objectName: "copyArrangementButton"
+                    text: "Copy and close"
+                    visible: canvas.arranging
+                    enabled: canvas.hasImage
+                    onClicked: win.finish()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Copy the combined image and close (C)"
                 }
                 PrimaryButton {
                     objectName: "continueToAnnotateButton"
@@ -507,25 +507,25 @@ ApplicationWindow {
                     ToolTip.visible: hovered
                     ToolTip.text: "Continue to annotate (Enter)"
                 }
+                ActionButton {
+                    objectName: "saveButton"
+                    text: "Save and close"
+                    visible: !canvas.arranging
+                    enabled: canvas.hasImage
+                    onClicked: win.saveAndClose()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Save a PNG to Pictures/xshot and close (S)"
+                }
                 PrimaryButton {
                     id: doneButton
                     objectName: "copyButton"
-                    text: "Copy & close"
+                    text: "Copy and close"
                     visible: !canvas.arranging
                     enabled: canvas.hasImage
                     focusPolicy: Qt.NoFocus
                     onClicked: win.finish()
                     ToolTip.visible: hovered
                     ToolTip.text: "Copy image to clipboard and close (C)"
-                }
-                ActionButton {
-                    objectName: "saveButton"
-                    text: "Save & close"
-                    visible: !canvas.arranging
-                    enabled: canvas.hasImage
-                    onClicked: win.saveAndClose()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Save a PNG to Pictures/xshot and close (S)"
                 }
             }
             ColumnLayout {
