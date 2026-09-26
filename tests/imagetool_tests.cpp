@@ -356,6 +356,15 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(clean.annotate("arrow", {30, 40}, {60, 40}, Qt::red, 2));
     QVERIFY(changed.annotate("arrow", {30, 40}, {60, 40}, Qt::red, 2));
     QCOMPARE(clean.render(1.5), changed.render(1.5));
+
+    clean.reset(white); changed.reset(cutSecret);
+    QVERIFY(clean.cut(true, 1, 2));
+    QVERIFY(changed.cut(true, 1, 2));
+    QVERIFY(clean.cut(true, 9, 19));
+    QVERIFY(changed.cut(true, 9, 19));
+    QVERIFY(clean.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
+    QVERIFY(changed.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
+    QCOMPARE(clean.render(1.5), changed.render(1.5));
 }
 
 void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
