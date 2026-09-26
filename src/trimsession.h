@@ -63,7 +63,7 @@ private:
     qint64 m_duration = 0;
     qint64 m_startMs = 0;
     qint64 m_endMs = 0;
-    double m_progress = 0;
+    double m_progress = 0; // -1 while native export has no measured fraction.
     bool m_busy = false;
     bool m_canceling = false;
     int m_nextThumb = 0;

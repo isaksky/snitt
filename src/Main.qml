@@ -487,7 +487,8 @@ ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: backend.trim.problem !== "" ? backend.trim.problem
-                    : backend.trim.busy ? "Exporting trimmed recording… " + Math.round(backend.trim.progress * 100) + "%"
+                    : backend.trim.busy ? "Exporting trimmed recording…"
+                        + (backend.trim.progress < 0 ? "" : " " + Math.round(backend.trim.progress * 100) + "%")
                     : ""
                 visible: text !== ""
                 color: backend.trim.problem !== "" ? "#f0b5b5" : "#aab3c0"

@@ -31,6 +31,7 @@ private slots:
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
 #ifdef Q_OS_MACOS
+    void nativeTrimProgressAndReset();
     void cancellationTimeoutDiscards();
     void interactiveCancellationTimeout();
 #endif
@@ -180,12 +181,72 @@ void RecordingTests::trimReplacementFailurePreservesOriginal() {
     trim.exportRange(1100, 2100);
     QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 60000);
     QVERIFY(!trim.problem().isEmpty());
+    QCOMPARE(trim.progress(), 0.0);
     QVERIFY(finalized.isEmpty());
     QVERIFY(source.open(QIODevice::ReadOnly));
     QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
     source.close();
     QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
 }
+
+#ifdef Q_OS_MACOS
+void RecordingTests::nativeTrimProgressAndReset() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("native-progress.mp4");
+    QProcess fixture;
+    fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=2560x1440:rate=30:duration=6",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path});
+    QVERIFY(fixture.waitForFinished(60000));
+    QCOMPARE(fixture.exitCode(), 0);
+
+    QFile source(path);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256);
+    source.close();
+    TrimSession trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    QVERIFY(trim.duration() >= 5900);
+    const qint64 start = 500, end = trim.duration() - 500;
+
+    trim.exportRange(start, end);
+    QVERIFY(trim.busy());
+    QCOMPARE(trim.progress(), -1.0); // No invented percentage before AVFoundation reports one.
+    trim.cancelExport();
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
+    QCOMPARE(trim.progress(), 0.0);
+    QVERIFY(finalized.isEmpty());
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+    source.close();
+
+    QVector<double> observed;
+    connect(&trim, &TrimSession::changed, &trim, [&] {
+        if (trim.busy()) observed.append(trim.progress());
+    });
+    trim.exportRange(start, end);
+    QVERIFY(trim.busy());
+    QCOMPARE(trim.progress(), -1.0); // A retry starts with unknown progress again.
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 90000);
+    QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(trim.progress(), 0.0);
+    QVERIFY(!observed.isEmpty());
+    bool sawNativeFraction = false;
+    for (const double progress : observed) {
+        QVERIFY2(progress == -1.0 || (progress >= 0.01 && progress <= 0.99),
+                 qPrintable(QStringLiteral("Invalid native progress %1").arg(progress)));
+        sawNativeFraction |= progress > 0;
+    }
+    QVERIFY2(sawNativeFraction, "The long native export did not report a determinate fraction while busy");
+    trim.open(path);
+    QCOMPARE(trim.progress(), 0.0); // The next recording starts without the last export's fraction.
+    trim.keepOriginal();
+}
+#endif
 
 void RecordingTests::indicatorPlacement() {
     const QRect primary(0, 0, 1920, 1080);

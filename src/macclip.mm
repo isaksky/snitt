@@ -70,7 +70,8 @@ MacClipExport::~MacClipExport() {
 }
 
 void MacClipExport::start(const QString &input, const QString &output, qint64 startMs, qint64 endMs,
-                          QObject *receiver, std::function<void(bool, const QString &)> done) {
+                          QObject *receiver, std::function<void(double)> progress,
+                          std::function<void(bool, const QString &)> done) {
     cancel();
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:input.toNSString()] options:nil];
     AVAssetExportSession *session = [[AVAssetExportSession alloc] initWithAsset:asset
@@ -87,10 +88,17 @@ void MacClipExport::start(const QString &input, const QString &output, qint64 st
     QPointer<QObject> guard(receiver);
     m_poll = new QTimer(receiver);
     m_poll->setInterval(100);
-    QObject::connect(m_poll, &QTimer::timeout, receiver, [this, session, guard, done] {
+    QObject::connect(m_poll, &QTimer::timeout, receiver, [this, session, guard, progress, done] {
         const auto status = session.status;
         if (status != AVAssetExportSessionStatusCompleted && status != AVAssetExportSessionStatusFailed
-            && status != AVAssetExportSessionStatusCancelled) return;
+            && status != AVAssetExportSessionStatusCancelled) {
+            // AVFoundation's native fraction is the only determinate value we
+            // report. Its initial zero is not evidence of actual progress.
+            const double fraction = session.progress;
+            if (guard && std::isfinite(fraction) && fraction >= 0.01 && fraction < 1.0)
+                progress(fraction);
+            return;
+        }
         m_poll->stop();
         if (guard) done(status == AVAssetExportSessionStatusCompleted,
                         session.error ? QString::fromNSString(session.error.localizedDescription) : QString());

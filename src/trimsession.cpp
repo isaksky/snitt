@@ -70,6 +70,7 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
         if (m_canceling) {
             removeTemporaryOutput();
             m_busy = m_canceling = false;
+            m_progress = 0;
             emit changed();
             return;
         }
@@ -207,7 +208,11 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
     m_startMs = startMs;
     m_endMs = endMs;
     m_problem.clear();
+#ifdef Q_OS_MACOS
+    m_progress = -1; // Native progress is unknown until AVFoundation reports a positive fraction.
+#else
     m_progress = 0;
+#endif
     m_canceling = false;
     m_busy = true;
     m_tempOutput = QFileInfo(m_path).dir().filePath(
@@ -217,12 +222,20 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
     m_macExport = std::make_unique<MacClipExport>();
     const quint64 generation = m_generation;
     m_macExport->start(m_path, m_tempOutput, startMs, endMs, this,
+        [this, generation](double fraction) {
+            if (generation != m_generation || !m_busy || m_canceling) return;
+            const double bounded = qBound(0.01, fraction, 0.99);
+            if (bounded <= m_progress) return;
+            m_progress = bounded;
+            emit changed();
+        },
         [this, generation](bool success, const QString &detail) {
             if (generation != m_generation || !m_busy) return;
             if (m_canceling) {
                 removeTemporaryOutput();
                 m_macExport.reset();
                 m_busy = m_canceling = false;
+                m_progress = 0;
                 emit changed();
                 return;
             }
@@ -257,10 +270,12 @@ void TrimSession::cancelExport() {
         m_probeProcess.waitForFinished(3000);
         removeTemporaryOutput();
         m_busy = m_canceling = false;
+        m_progress = 0;
     }
     else {
         removeTemporaryOutput();
         m_busy = m_canceling = false;
+        m_progress = 0;
     }
 #endif
     emit changed();
@@ -346,6 +361,7 @@ bool TrimSession::replaceFile(const QString &temporary, const QString &original,
 void TrimSession::fail(const QString &message) {
     removeTemporaryOutput();
     m_busy = m_canceling = false;
+    m_progress = 0;
     m_problem = message;
     emit changed();
 }
