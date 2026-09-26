@@ -16,7 +16,10 @@ SOURCES += src/videorecorder.cpp
 HEADERS += src/screenshotsave.h
 SOURCES += src/screenshotsave.cpp
 macx {
-    LIBS += -framework Carbon -framework CoreGraphics
+    HEADERS += src/macrecorder.h
+    SOURCES += src/macrecorder.mm
+    QMAKE_CXXFLAGS += -fobjc-arc
+    LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }
 win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32

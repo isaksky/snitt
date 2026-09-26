@@ -17,9 +17,28 @@ class RecordingTests : public QObject {
     Q_OBJECT
 private slots:
     void recordingArguments();
+    void indicatorPlacement();
     void videoSelectorIsSingleRegion();
     void desktopRecording();
 };
+
+void RecordingTests::indicatorPlacement() {
+    const QRect primary(0, 0, 1920, 1080);
+    const QRect workArea(0, 24, 1920, 1056);
+    QCOMPARE(Backend::indicatorGeometry(QRect(4, 4, 12, 12), primary, workArea),
+             QRect(0, 24, 360, 360));
+    const QRect secondary(-1280, -240, 1280, 800);
+    const QRect secondaryWork(-1280, -240, 1280, 760);
+    const QRect centered = Backend::indicatorGeometry(QRect(-900, 80, 40, 30), secondary, secondaryWork);
+    QCOMPARE(centered.size(), QSize(267, 267));
+    QVERIFY(secondaryWork.contains(centered));
+    QVERIFY(qAbs(centered.center().x() - QRect(-900, 80, 40, 30).center().x()) <= 1);
+    QVERIFY(qAbs(centered.center().y() - QRect(-900, 80, 40, 30).center().y()) <= 1);
+    // The input is already in logical coordinates; a Retina backing scale
+    // must not double the visual diameter or move it to pixel coordinates.
+    QCOMPARE(Backend::indicatorGeometry(QRect(800, 500, 20, 20), QRect(0, 0, 1728, 1117),
+                                        QRect(0, 25, 1728, 1092)).size(), QSize(372, 372));
+}
 
 void RecordingTests::recordingArguments() {
     recording::Source windows;
@@ -89,8 +108,25 @@ void RecordingTests::desktopRecording() {
     marker.setStyleSheet("background: #123456;");
     const QRect display = QApplication::primaryScreen()->geometry();
     marker.setGeometry(display.x() + 140, display.y() + 180, 360, 260);
+#ifdef Q_OS_MACOS
+    QProcess markerProcess;
+    const auto markerCleanup = qScopeGuard([&markerProcess] {
+        if (markerProcess.state() != QProcess::NotRunning) {
+            markerProcess.kill();
+            markerProcess.waitForFinished(5000);
+        }
+    });
+    const QString markerTool = QDir(QCoreApplication::applicationDirPath())
+        .filePath("../recording_marker/recording_marker");
+    QVERIFY2(QFileInfo::exists(markerTool), "Run bin/test to build the external recording marker");
+    markerProcess.start(markerTool, {QString::number(marker.x()), QString::number(marker.y()),
+                                     QString::number(marker.width()), QString::number(marker.height())});
+    QVERIFY(markerProcess.waitForReadyRead(5000));
+    QVERIFY(markerProcess.readAllStandardOutput().contains("ready"));
+#else
     marker.show(); marker.raise();
     QVERIFY(QTest::qWaitForWindowExposed(&marker));
+#endif
     QTest::qWait(100);
 
     Backend backend;
@@ -154,19 +190,25 @@ void RecordingTests::desktopRecording() {
     QVERIFY(metadata.value("format").toObject().value("duration").toString().toDouble() >= 1.0);
 
     QProcess frame;
-    frame.start(recording::toolPath("ffmpeg"), {"-v", "error", "-ss", "0.4", "-i", file,
-                                               "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"});
+    frame.start(recording::toolPath("ffmpeg"), {"-v", "error", "-i", file,
+                                               "-frames:v", "5", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
     QVERIFY(frame.waitForFinished(5000));
     QCOMPARE(frame.exitCode(), 0);
-    QImage image = QImage::fromData(frame.readAllStandardOutput(), "PNG");
-    QVERIFY(!image.isNull());
-    const QColor actual = image.pixelColor(image.width() / 2, image.height() / 2);
+    const QByteArray pixels = frame.readAllStandardOutput();
+    const int width = stream.value("width").toInt(), height = stream.value("height").toInt();
+    const qsizetype bytesPerFrame = qsizetype(width) * height * 3;
+    QVERIFY(bytesPerFrame > 0);
+    QVERIFY2(pixels.size() >= bytesPerFrame, "No decoded first frame");
     const QColor expected("#123456");
     // Screen color conversion and lossy 4:2:0 video encoding can change RGB
-    // values. Verify the source region without requiring pixel identity.
-    QVERIFY2(qAbs(actual.red() - expected.red()) <= 16, qPrintable(actual.name()));
-    QVERIFY2(qAbs(actual.green() - expected.green()) <= 16, qPrintable(actual.name()));
-    QVERIFY2(qAbs(actual.blue() - expected.blue()) <= 16, qPrintable(actual.name()));
+    // values. Inspect the first frame and all early frames that were decoded.
+    for (qsizetype offset = 0; offset + bytesPerFrame <= pixels.size(); offset += bytesPerFrame) {
+        const qsizetype center = offset + (qsizetype(height / 2) * width + width / 2) * 3;
+        const QColor actual{uchar(pixels[center]), uchar(pixels[center + 1]), uchar(pixels[center + 2])};
+        QVERIFY2(qAbs(actual.red() - expected.red()) <= 16, qPrintable(actual.name()));
+        QVERIFY2(qAbs(actual.green() - expected.green()) <= 16, qPrintable(actual.name()));
+        QVERIFY2(qAbs(actual.blue() - expected.blue()) <= 16, qPrintable(actual.name()));
+    }
     QVERIFY(QFile::remove(file));
 
     QSignalSpy canceled(&backend, &Backend::recordingCanceled);

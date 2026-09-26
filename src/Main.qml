@@ -118,7 +118,92 @@ ApplicationWindow {
         }
         function onRecordingSaved(path) { win.hide(); canvas.clear() }
         function onRecordingCanceled() { if (win.restoreAfterCapture) win.showEditor() }
-        function onRecordingChanged() { if (!backend.recording) recordingWindow.controlsHidden = false }
+        function onRecordingChanged() {
+            if (!backend.recording) {
+                recordingWindow.controlsHidden = false
+                startupIndicator.completing = false
+            }
+        }
+        function onRecordingReady() {
+            startupIndicator.complete()
+        }
+    }
+
+    Window {
+        id: startupIndicator
+        objectName: "recordingStartupIndicator"
+        property bool completing: false
+        property int diameter: 0
+        function complete() { completing = true; completionTimer.restart() }
+        title: "xshot — Preparing recording"
+        transientParent: null
+        width: diameter; height: diameter
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput
+        color: "transparent"
+        visible: backend.startingRecording || completing
+        onVisibleChanged: if (visible) {
+            const area = backend.recordingRegion
+            let selectedScreen = screen
+            for (const candidate of Qt.application.screens) {
+                if (area.x >= candidate.virtualX && area.x < candidate.virtualX + candidate.width
+                        && area.y >= candidate.virtualY && area.y < candidate.virtualY + candidate.height) {
+                    selectedScreen = candidate
+                    break
+                }
+            }
+            screen = selectedScreen
+            const placement = backend.recordingIndicatorGeometry
+            diameter = placement.width
+            x = placement.x
+            y = placement.y
+            raise()
+            Qt.callLater(() => backend.protectRecordingControls(startupIndicator))
+        }
+        Timer {
+            id: completionTimer
+            interval: 180
+            onTriggered: startupIndicator.completing = false
+        }
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: "#d91b1e23"
+            border.color: "#6687ac9b"
+            border.width: 2
+        }
+        Canvas {
+            id: circularWipe
+            anchors.centerIn: parent
+            width: parent.width * 0.72
+            height: width
+            onPaint: {
+                const context = getContext("2d")
+                context.reset()
+                context.lineWidth = Math.max(7, width * 0.06)
+                context.lineCap = "round"
+                context.strokeStyle = "#a3e6ca"
+                context.beginPath()
+                context.arc(width / 2, height / 2, width * 0.42,
+                            -Math.PI / 2, startupIndicator.completing ? 3 * Math.PI / 2 : Math.PI)
+                context.stroke()
+            }
+            RotationAnimator on rotation {
+                from: 0; to: 360; duration: 1050
+                loops: Animation.Infinite
+                running: startupIndicator.visible && !startupIndicator.completing
+            }
+            Connections {
+                target: startupIndicator
+                function onCompletingChanged() { circularWipe.requestPaint() }
+            }
+        }
+        Text {
+            anchors.centerIn: parent
+            text: startupIndicator.completing ? "Ready" : "Preparing"
+            color: "#f0f3f7"
+            font.pixelSize: Math.max(14, startupIndicator.diameter * 0.075)
+            font.weight: Font.DemiBold
+        }
     }
 
     Window {

@@ -13,6 +13,7 @@ struct Source {
     QRect pixelRegion;
     QRectF relativeRegion;
     int screenIndex = 0;
+    quint32 displayId = 0;
 };
 QString toolPath(const QString &tool);
 QStringList arguments(const Source &source, const QString &output);

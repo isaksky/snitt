@@ -10,6 +10,12 @@
 #include <QRect>
 #include <QVariantList>
 #include "videorecorder.h"
+#ifdef Q_OS_MACOS
+#include "macrecorder.h"
+using Recorder = MacRecorder;
+#else
+using Recorder = VideoRecorder;
+#endif
 class RegionSelector;
 
 class Backend : public QObject {
@@ -21,6 +27,7 @@ class Backend : public QObject {
     Q_PROPERTY(int recordingElapsed READ recordingElapsed NOTIFY recordingElapsedChanged)
     Q_PROPERTY(QString recordingPath READ recordingPath NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingRegion READ recordingRegion NOTIFY recordingChanged)
+    Q_PROPERTY(QRect recordingIndicatorGeometry READ recordingIndicatorGeometry NOTIFY recordingChanged)
 public:
     explicit Backend(QObject *parent = nullptr);
     ~Backend() override;
@@ -31,6 +38,8 @@ public:
     int recordingElapsed() const { return m_recorder.elapsed(); }
     QString recordingPath() const { return m_recorder.path(); }
     QRect recordingRegion() const { return m_recordingRegion; }
+    QRect recordingIndicatorGeometry() const { return m_recordingIndicatorGeometry; }
+    static QRect indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available);
     Q_INVOKABLE void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void finishRecording() { m_recorder.finish(); }
     Q_INVOKABLE void cancelRecording() { m_recorder.cancel(); }
@@ -62,8 +71,9 @@ private:
     int m_screenIndex = 0;
     bool m_multiple = false;
     bool m_video = false;
-    VideoRecorder m_recorder;
+    Recorder m_recorder;
     QRect m_recordingRegion;
+    QRect m_recordingIndicatorGeometry;
     QTemporaryDir m_temp;
     QProcess m_process;
     bool m_capturing = false;

@@ -787,7 +787,9 @@ void EditorTests::qmlRecordingControls() {
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     QVERIFY(window);
     auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
+    auto *indicator = window->findChild<QQuickWindow *>("recordingStartupIndicator");
     QVERIFY(controls);
+    QVERIFY(indicator);
     QVERIFY(!window->isVisible()); QVERIFY(!controls->isVisible());
 
     QWidget marker;
@@ -796,8 +798,25 @@ void EditorTests::qmlRecordingControls() {
     marker.setGeometry(screen.x() + 80, screen.y() + 80, 420, 320);
     marker.setAutoFillBackground(true);
     QPalette palette; palette.setColor(QPalette::Window, QColor("#123456")); marker.setPalette(palette);
+#ifdef Q_OS_MACOS
+    QProcess markerProcess;
+    const auto markerCleanup = qScopeGuard([&markerProcess] {
+        if (markerProcess.state() != QProcess::NotRunning) {
+            markerProcess.kill();
+            markerProcess.waitForFinished(5000);
+        }
+    });
+    const QString markerTool = QDir(QCoreApplication::applicationDirPath())
+        .filePath("recording_marker/recording_marker");
+    QVERIFY2(QFileInfo::exists(markerTool), "Run bin/test to build the external recording marker");
+    markerProcess.start(markerTool, {QString::number(marker.x()), QString::number(marker.y()),
+                                     QString::number(marker.width()), QString::number(marker.height())});
+    QVERIFY(markerProcess.waitForReadyRead(5000));
+    QVERIFY(markerProcess.readAllStandardOutput().contains("ready"));
+#else
     marker.show(); marker.raise(); marker.activateWindow();
     QVERIFY(QTest::qWaitForWindowExposed(&marker));
+#endif
     QTest::qWait(100);
     backend.capture(false, true);
     RegionSelector *selector = nullptr;
@@ -817,12 +836,24 @@ void EditorTests::qmlRecordingControls() {
     QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, start);
     QTest::mouseMove(selector, end);
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, end);
+    QTRY_VERIFY_WITH_TIMEOUT(indicator->isVisible() || !backend.startingRecording(), 1000);
+    if (indicator->isVisible()) {
+        const QRect bounds = QGuiApplication::primaryScreen()->geometry();
+        const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+        const QRect selected = backend.recordingRegion();
+        const QRect expected = Backend::indicatorGeometry(selected, bounds, available);
+        QCOMPARE(indicator->size(), expected.size());
+        QVERIFY(bounds.contains(indicator->geometry()));
+        QVERIFY(qAbs(indicator->x() - expected.x()) <= 1);
+        QVERIFY(qAbs(indicator->y() - expected.y()) <= 1);
+    }
     QTRY_VERIFY_WITH_TIMEOUT(controls->isVisible() || !error.isEmpty(), 10000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QVERIFY(backend.recording());
     QVERIFY(!window->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
+    QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1 || !error.isEmpty(), 6000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QImage preview;
@@ -840,6 +871,29 @@ void EditorTests::qmlRecordingControls() {
     QVERIFY(clip.isAbsolute()); QCOMPARE(clip.suffix(), QString("mp4"));
     QVERIFY(clip.exists() && clip.size() > 0);
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("waiting for recording"));
+    QProcess probe;
+    probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path});
+    QVERIFY(probe.waitForFinished(5000));
+    QCOMPARE(probe.exitCode(), 0);
+    const auto dimensions = QString::fromUtf8(probe.readAllStandardOutput()).trimmed().split('x');
+    QCOMPARE(dimensions.size(), 2);
+    const int width = dimensions[0].toInt(), height = dimensions[1].toInt();
+    QProcess decoder;
+    decoder.start(recording::toolPath("ffmpeg"), {"-v", "error", "-i", path, "-frames:v", "5",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
+    QVERIFY(decoder.waitForFinished(5000));
+    QCOMPARE(decoder.exitCode(), 0);
+    const QByteArray pixels = decoder.readAllStandardOutput();
+    const qsizetype stride = qsizetype(width) * height * 3;
+    QVERIFY(pixels.size() >= stride && stride > 0);
+    for (qsizetype offset = 0; offset + stride <= pixels.size(); offset += stride) {
+        const qsizetype center = offset + (qsizetype(height / 2) * width + width / 2) * 3;
+        const QColor actual{uchar(pixels[center]), uchar(pixels[center + 1]), uchar(pixels[center + 2])};
+        QVERIFY2(qAbs(actual.red() - 0x12) <= 16, qPrintable(actual.name()));
+        QVERIFY2(qAbs(actual.green() - 0x34) <= 16, qPrintable(actual.name()));
+        QVERIFY2(qAbs(actual.blue() - 0x56) <= 16, qPrintable(actual.name()));
+    }
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());

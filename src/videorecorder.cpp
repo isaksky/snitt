@@ -36,7 +36,10 @@ bool recording::revealSavedFile(const QString &path) {
 #elif defined(Q_OS_WIN)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     PIDLIST_ABSOLUTE file = nullptr;
-    const HRESULT parsed = SHParseDisplayName(reinterpret_cast<LPCWSTR>(path.utf16()), nullptr, &file, 0, nullptr);
+    // QStandardPaths returns forward slashes on Windows; the shell parser
+    // requires a native path for SHParseDisplayName.
+    const QString nativePath = QDir::toNativeSeparators(path);
+    const HRESULT parsed = SHParseDisplayName(reinterpret_cast<LPCWSTR>(nativePath.utf16()), nullptr, &file, 0, nullptr);
     bool revealed = false;
     if (SUCCEEDED(parsed) && file) {
         PIDLIST_ABSOLUTE folder = ILCloneFull(file);

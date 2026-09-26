@@ -19,13 +19,13 @@
 #endif
 
 Backend::Backend(QObject *parent) : QObject(parent) {
-    connect(&m_recorder, &VideoRecorder::changed, this, &Backend::recordingChanged);
-    connect(&m_recorder, &VideoRecorder::processStarted, this, &Backend::recordingProcessStarted);
-    connect(&m_recorder, &VideoRecorder::ready, this, &Backend::recordingReady);
-    connect(&m_recorder, &VideoRecorder::elapsedChanged, this, &Backend::recordingElapsedChanged);
-    connect(&m_recorder, &VideoRecorder::canceled, this, &Backend::recordingCanceled);
-    connect(&m_recorder, &VideoRecorder::error, this, &Backend::error);
-    connect(&m_recorder, &VideoRecorder::saved, this, [this](const QString &path) {
+    connect(&m_recorder, &Recorder::changed, this, &Backend::recordingChanged);
+    connect(&m_recorder, &Recorder::processStarted, this, &Backend::recordingProcessStarted);
+    connect(&m_recorder, &Recorder::ready, this, &Backend::recordingReady);
+    connect(&m_recorder, &Recorder::elapsedChanged, this, &Backend::recordingElapsedChanged);
+    connect(&m_recorder, &Recorder::canceled, this, &Backend::recordingCanceled);
+    connect(&m_recorder, &Recorder::error, this, &Backend::error);
+    connect(&m_recorder, &Recorder::saved, this, [this](const QString &path) {
         const QString nativePath = QDir::toNativeSeparators(path);
         emit recordingSaved(nativePath);
         if (!recording::revealSavedFile(path))
@@ -72,6 +72,16 @@ bool Backend::protectRecordingControls(QObject *object) {
     Q_UNUSED(object);
     return false;
 #endif
+}
+
+QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available) {
+    const int nominal = qRound(qMin(screen.width(), screen.height()) / 3.0);
+    const int diameter = qMax(1, qMin(nominal, qMin(available.width(), available.height())));
+    const int x = qBound(available.left(), qRound(region.center().x() - diameter / 2.0),
+                         available.right() - diameter + 1);
+    const int y = qBound(available.top(), qRound(region.center().y() - diameter / 2.0),
+                         available.bottom() - diameter + 1);
+    return {x, y, diameter, diameter};
 }
 
 void Backend::capture(bool multiple, bool video) {
@@ -212,12 +222,17 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     if (!m_capturing || !m_video) return;
     recording::Source source;
     m_recordingRegion = area.toAlignedRect().translated(selector->geometry().topLeft());
+    if (auto *screen = QGuiApplication::screenAt(m_recordingRegion.center()))
+        m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, screen->geometry(),
+                                                          screen->availableGeometry());
+    else m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, selector->geometry(),
+                                                           selector->geometry());
 #ifdef Q_OS_MACOS
     source.platform = recording::Platform::Mac;
     source.relativeRegion = QRectF(area.x() / selector->width(), area.y() / selector->height(),
                                   area.width() / selector->width(), area.height() / selector->height());
-    // AVFoundation's Capture screen N follows CGGetActiveDisplayList order,
-    // which need not match Qt's screen list order.
+    // Match the native display ID, rather than assuming Qt and the capture
+    // framework enumerate secondary displays in the same order.
     uint32_t count = 0;
     CGGetActiveDisplayList(0, nullptr, &count);
     QList<CGDirectDisplayID> displays(count);
@@ -227,7 +242,11 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
         const CGRect bounds = CGDisplayBounds(displays[i]);
         const QRect geometry(qRound(bounds.origin.x), qRound(bounds.origin.y),
                              qRound(bounds.size.width), qRound(bounds.size.height));
-        if (geometry == selector->geometry()) { source.screenIndex = int(i); break; }
+        if (geometry == selector->geometry()) {
+            source.screenIndex = int(i);
+            source.displayId = displays[i];
+            break;
+        }
     }
     if (source.screenIndex < 0) {
         emit error(QStringLiteral("The selected display changed. Select the region again."));
@@ -251,7 +270,8 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     finish();
     return;
 #endif
-    // Hide all frozen overlays before FFmpeg starts sampling the live desktop.
+    // The native macOS recorder excludes every xshot window. The selector is
+    // also hidden promptly so the live desktop is visible to the user.
     for (auto overlay : m_selectors) if (overlay) overlay->hide();
 #ifdef Q_OS_WIN
     DwmFlush();

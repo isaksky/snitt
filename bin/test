@@ -9,6 +9,13 @@ else
     echo "Qt 6 qmake is required." >&2
     exit 1
 fi
+if [ "$(uname -s)" = Darwin ]; then
+    MARKER_DIR="$ROOT/build/tests/recording_marker"
+    mkdir -p "$MARKER_DIR"
+    cd "$MARKER_DIR"
+    "$QMAKE" "$ROOT/tests/recording_marker.pro"
+    make -j4
+fi
 for SUITE in editor_tests imagetool_tests recording_tests; do
     TEST_DIR="$ROOT/build/tests"
     [ "$SUITE" = editor_tests ] || TEST_DIR="$TEST_DIR/$SUITE"
