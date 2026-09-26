@@ -30,6 +30,7 @@ public:
     void nativeRecordingFinished(quint64 generation);
     void nativeStopped(quint64 generation, const QString &error);
     void nativeFailed(quint64 generation, const QString &error);
+    void nativeUserStopped(quint64 generation);
 signals:
     void changed();
     void processStarted(); // Native stream start requested (no process on macOS).
@@ -39,9 +40,11 @@ signals:
     void canceled();
     void error(const QString &message);
 private:
+    friend class RecordingTests;
     void maybeReady();
     void maybeComplete();
     void fail(const QString &message);
+    bool discardOutput(const QString &path);
     void reset();
     bool current(quint64 generation) const { return m_active && generation == m_generation; }
     recording::Source m_source;

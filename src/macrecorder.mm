@@ -4,6 +4,7 @@
 #import <CoreMedia/CoreMedia.h>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -20,8 +21,10 @@
 @property(nonatomic, strong) SCRecordingOutput *recordingOutput;
 @property(nonatomic, assign) BOOL stopping;
 @property(nonatomic, assign) BOOL frameReported;
+@property(nonatomic, copy) NSString *discardPath;
 - (instancetype)initWithOwner:(MacRecorder *)owner generation:(quint64)generation;
 - (void)requestStop;
+- (void)discardFile;
 @end
 
 @implementation XShotCaptureSession
@@ -45,10 +48,22 @@
         return;
     }
     [_stream stopCaptureWithCompletionHandler:^(NSError *error) {
+        [self discardFile];
         const QString detail = error ? QString::fromUtf8(error.localizedDescription.UTF8String) : QString();
         [self post:^(MacRecorder *owner) { owner->nativeStopped(self.generation, detail); }];
     }];
 }
+
+- (void)discardFile {
+    if (!_discardPath) return;
+    NSError *error = nil;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:_discardPath]
+        && ![[NSFileManager defaultManager] removeItemAtPath:_discardPath error:&error])
+        qWarning() << "Could not discard canceled recording at" << QString::fromNSString(_discardPath)
+                   << QString::fromUtf8(error.localizedDescription.UTF8String);
+}
+
+- (void)dealloc { [self discardFile]; }
 
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         ofType:(SCStreamOutputType)type {
@@ -70,11 +85,13 @@
 
 - (void)recordingOutputDidFinishRecording:(SCRecordingOutput *)output {
     Q_UNUSED(output);
+    [self discardFile];
     [self post:^(MacRecorder *owner) { owner->nativeRecordingFinished(self.generation); }];
 }
 
 - (void)recordingOutput:(SCRecordingOutput *)output didFailWithError:(NSError *)error {
     Q_UNUSED(output);
+    [self discardFile];
     const QString detail = QString::fromUtf8(error.localizedDescription.UTF8String);
     [self post:^(MacRecorder *owner) { owner->nativeFailed(self.generation, detail); }];
 }
@@ -82,9 +99,11 @@
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
     Q_UNUSED(stream);
     if ([error.domain isEqualToString:SCStreamErrorDomain] && error.code == SCStreamErrorUserStopped) {
-        [self post:^(MacRecorder *owner) { owner->cancel(); }];
+        [self discardFile];
+        [self post:^(MacRecorder *owner) { owner->nativeUserStopped(self.generation); }];
         return;
     }
+    [self discardFile];
     const QString detail = QString::fromUtf8(error.localizedDescription.UTF8String);
     [self post:^(MacRecorder *owner) { owner->nativeFailed(self.generation, detail); }];
 }
@@ -249,6 +268,7 @@ void MacRecorder::cancel() {
     emit changed();
     m_timeout.start(3000);
     XShotCaptureSession *session = sessionFor(m_session);
+    session.discardPath = m_output.toNSString();
     if (session.stream) [session requestStop];
     else { m_stopped = true; maybeComplete(); }
 }
@@ -275,13 +295,22 @@ void MacRecorder::nativeFailed(quint64 generation, const QString &problem) {
     fail(QStringLiteral("Screen recording failed: %1").arg(problem));
 }
 
+void MacRecorder::nativeUserStopped(quint64 generation) {
+    if (current(generation)) cancel();
+}
+
+bool MacRecorder::discardOutput(const QString &path) {
+    return !QFileInfo::exists(path) || QFile::remove(path);
+}
+
 void MacRecorder::maybeComplete() {
     if (!m_finishing || !m_stopped || !m_recordingFinished) return;
     if (m_canceling) {
         const QString path = m_output;
         reset();
-        QFile::remove(path);
-        emit canceled();
+        if (discardOutput(path)) emit canceled();
+        else emit error(QStringLiteral("Could not discard canceled recording at %1")
+                            .arg(QDir::toNativeSeparators(path)));
     } else if (m_firstFrame && QFileInfo(m_output).size() > 0) {
         const QString path = m_output;
         reset();
@@ -292,11 +321,17 @@ void MacRecorder::maybeComplete() {
 void MacRecorder::fail(const QString &message) {
     if (!m_active) return;
     const QString path = m_output;
-    const bool keepPartial = m_firstFrame && QFileInfo(path).size() > 0;
+    const bool wasCanceling = m_canceling;
+    const bool keepPartial = !wasCanceling && m_firstFrame && QFileInfo(path).size() > 0;
     XShotCaptureSession *session = sessionFor(m_session);
-    if (session.stream) [session requestStop];
+    if (session && session.stream) [session requestStop];
     reset();
-    if (!keepPartial) QFile::remove(path);
+    if (!keepPartial && !discardOutput(path)) {
+        emit error(QStringLiteral("Could not discard recording at %1. %2")
+                       .arg(QDir::toNativeSeparators(path), message));
+        return;
+    }
+    if (wasCanceling) { emit canceled(); return; }
     emit error(keepPartial ? message + QStringLiteral("\n\nThe partial recording was kept at %1")
                                     .arg(QDir::toNativeSeparators(path)) : message);
 }

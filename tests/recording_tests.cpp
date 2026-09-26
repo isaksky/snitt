@@ -9,9 +9,13 @@
 #include <QJsonObject>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include "backend.h"
 #include "regionselector.h"
 #include "videorecorder.h"
+#ifdef Q_OS_MACOS
+#include <CoreGraphics/CoreGraphics.h>
+#endif
 
 class RecordingTests : public QObject {
     Q_OBJECT
@@ -20,6 +24,10 @@ private slots:
     void indicatorPlacement();
     void videoSelectorIsSingleRegion();
     void desktopRecording();
+#ifdef Q_OS_MACOS
+    void cancellationTimeoutDiscards();
+    void interactiveCancellationTimeout();
+#endif
 };
 
 void RecordingTests::indicatorPlacement() {
@@ -239,6 +247,121 @@ void RecordingTests::desktopRecording() {
     QCOMPARE(saved.size(), 1);
     QCOMPARE(QApplication::clipboard()->text(), "keep clipboard on cancel");
 }
+
+#ifdef Q_OS_MACOS
+void RecordingTests::cancellationTimeoutDiscards() {
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    MacRecorder recorder;
+    QSignalSpy canceled(&recorder, &MacRecorder::canceled);
+    QSignalSpy saved(&recorder, &MacRecorder::saved);
+    QSignalSpy error(&recorder, &MacRecorder::error);
+    QApplication::clipboard()->setText("keep clipboard on cancel");
+
+    // Cancel while shareable content is still being prepared. Its late callback
+    // must have no owner to restart the old capture.
+    recording::Source source;
+    source.platform = recording::Platform::Mac;
+    source.displayId = 0;
+    source.relativeRegion = QRectF(0, 0, 0.25, 0.25);
+    recorder.start(source);
+    QVERIFY(recorder.starting());
+    recorder.cancel();
+    QCOMPARE(canceled.size(), 1);
+    QVERIFY(!recorder.active());
+    QTest::qWait(100);
+    QCOMPARE(canceled.size(), 1);
+    QCOMPARE(saved.size(), 0);
+    QCOMPARE(error.size(), 0);
+
+    // Inject the same timeout branch reached when native stop completion is
+    // delayed or absent, both before and after the first recorded frame.
+    for (const bool firstFrame : {false, true}) {
+        const QString path = temporary.filePath(firstFrame ? "after-frame.mp4" : "before-ready.mp4");
+        QFile partial(path);
+        QVERIFY(partial.open(QIODevice::WriteOnly));
+        QVERIFY(partial.write("partial video") > 0);
+        partial.close();
+        recorder.m_output = path;
+        recorder.m_active = true;
+        recorder.m_ready = firstFrame;
+        recorder.m_firstFrame = firstFrame;
+        recorder.m_finishing = true;
+        recorder.m_canceling = true;
+        recorder.m_recordingFinished = true;
+        recorder.m_stopped = false;
+        ++recorder.m_generation;
+        recorder.fail("injected stop timeout");
+        QVERIFY(!recorder.active());
+        QVERIFY(!recorder.finishing());
+        QVERIFY(!QFileInfo::exists(path));
+        QCOMPARE(canceled.size(), firstFrame ? 3 : 2);
+        QCOMPARE(saved.size(), 0);
+        QCOMPARE(error.size(), 0);
+        QCOMPARE(QApplication::clipboard()->text(), "keep clipboard on cancel");
+    }
+
+    const quint64 oldGeneration = recorder.m_generation;
+    recorder.m_active = true;
+    recorder.m_generation = oldGeneration + 1;
+    recorder.m_output = temporary.filePath("new-attempt.mp4");
+    recorder.nativeStopped(oldGeneration, {});
+    recorder.nativeRecordingFinished(oldGeneration);
+    recorder.nativeFailed(oldGeneration, "late failure");
+    recorder.nativeUserStopped(oldGeneration);
+    QVERIFY(recorder.active());
+    QCOMPARE(canceled.size(), 3);
+    QCOMPARE(saved.size(), 0);
+    QCOMPARE(error.size(), 0);
+    recorder.reset();
+}
+
+void RecordingTests::interactiveCancellationTimeout() {
+    if (!qEnvironmentVariableIsSet("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Requires an interactive desktop and ScreenCaptureKit permission");
+    QWidget marker;
+    marker.setGeometry(QRect(QApplication::primaryScreen()->geometry().topLeft() + QPoint(80, 80),
+                             QSize(160, 120)));
+    marker.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&marker));
+    MacRecorder recorder;
+    QSignalSpy canceled(&recorder, &MacRecorder::canceled);
+    QSignalSpy saved(&recorder, &MacRecorder::saved);
+    QSignalSpy error(&recorder, &MacRecorder::error);
+    QApplication::clipboard()->setText("keep clipboard on timeout");
+    recording::Source source;
+    source.platform = recording::Platform::Mac;
+    source.displayId = CGMainDisplayID();
+    source.relativeRegion = QRectF(0.1, 0.1, 0.2, 0.2);
+    recorder.start(source);
+    QTRY_VERIFY_WITH_TIMEOUT(recorder.m_ready || !error.isEmpty(), 15000);
+    QVERIFY2(error.isEmpty(), qPrintable(error.isEmpty() ? QString() : error.first().first().toString()));
+    QTest::qWait(500);
+    const QString canceledPath = recorder.path();
+    recorder.cancel();
+    recorder.fail("injected stop timeout");
+    QCOMPARE(canceled.size(), 1);
+    QCOMPARE(saved.size(), 0);
+    QCOMPARE(error.size(), 0);
+    QVERIFY(!recorder.active());
+    QVERIFY(!QFileInfo::exists(canceledPath));
+
+    // A late native stop or recording-finished callback belongs to the old
+    // session and must neither recreate its file nor cancel this new attempt.
+    recorder.start(source);
+    QTRY_VERIFY_WITH_TIMEOUT(recorder.m_ready || !error.isEmpty(), 15000);
+    QVERIFY2(error.isEmpty(), qPrintable(error.isEmpty() ? QString() : error.first().first().toString()));
+    QVERIFY(recorder.active());
+    QTest::qWait(1000);
+    QVERIFY(!QFileInfo::exists(canceledPath));
+    QVERIFY(recorder.active());
+    recorder.cancel();
+    QTRY_COMPARE_WITH_TIMEOUT(canceled.size(), 2, 5000);
+    QCOMPARE(saved.size(), 0);
+    QCOMPARE(error.size(), 0);
+    QCOMPARE(QApplication::clipboard()->text(), "keep clipboard on timeout");
+}
+#endif
 
 QTEST_MAIN(RecordingTests)
 #include "recording_tests.moc"
