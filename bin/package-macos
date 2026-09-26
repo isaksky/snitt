@@ -274,7 +274,7 @@ def main():
         (payload / "MACOS-INSTALL.txt").write_text("""xshot for macOS 15 or later, Apple silicon (arm64)
 
 Move xshot.app into your Applications folder, then open it. xshot remains in the
-menu bar. Use Ctrl+Print Screen (F13 on Mac), or Ctrl+Shift+X, to select a region.
+menu bar. Use Ctrl+Print Screen (F13 on Mac) to select a region.
 Grant Screen & System Audio Recording permission to xshot when macOS requests it.
 For login startup, add xshot in System Settings > General > Login Items.
 Install FFmpeg separately with `brew install ffmpeg` to enable video recording.

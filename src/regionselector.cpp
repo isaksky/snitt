@@ -2,7 +2,6 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QKeySequence>
 #include <cmath>
 
 RegionSelector::RegionSelector(QImage image, const QRect &geometry)
@@ -80,20 +79,21 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.drawRect(area);
     }
     const QRect pixels = pixelRect(area, size(), m_image.size());
-    const QString copyKey = QKeySequence(QKeySequence::Copy).toString(QKeySequence::NativeText);
     const QString hint = !m_notice.isEmpty() ? m_notice
         : m_dragging ? QStringLiteral("%1 × %2 px · Release to %3 · Esc to cancel")
                                          .arg(pixels.width()).arg(pixels.height())
                                          .arg(m_video ? "start recording" : m_multiple ? "add region" : "capture")
         : m_video ? QStringLiteral("Drag to record one region · Screenshot (V) · Cancel (Esc)")
-        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click to remove · Arrange (%2) · Video (V) · Cancel (Esc)").arg(m_total).arg(copyKey)
+        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click to remove · Finish selecting → Arrange (Enter) · Video (V) · Cancel (Esc)").arg(m_total)
         : QStringLiteral("Drag to select a region · Multiple (M) · Video (V) · Cancel (Esc)");
     QFont font = p.font(); font.setPixelSize(16); font.setBold(false); p.setFont(font);
     const int boxWidth = qMin(width() - 24, p.fontMetrics().horizontalAdvance(hint) + 32);
-    const QRect box((width() - boxWidth) / 2, 24, boxWidth, 42);
+    const int textFlags = Qt::AlignCenter | Qt::TextWordWrap;
+    const QRect textBounds = p.fontMetrics().boundingRect(QRect(0, 0, qMax(1, boxWidth - 32), height()), textFlags, hint);
+    const QRect box((width() - boxWidth) / 2, 24, boxWidth, textBounds.height() + 20);
     p.fillRect(box, QColor("#1b1e23"));
     p.setPen(Qt::white);
-    p.drawText(box, Qt::AlignCenter, hint);
+    p.drawText(box.adjusted(16, 10, -16, -10), textFlags, hint);
 }
 
 void RegionSelector::mousePressEvent(QMouseEvent *event) {
@@ -132,7 +132,8 @@ void RegionSelector::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Escape) emit canceled();
     else if (event->key() == Qt::Key_V) emit videoRequested();
     else if (event->key() == Qt::Key_M && !m_video) emit multipleRequested();
-    else if (m_multiple && event->matches(QKeySequence::Copy)) emit accepted();
+    else if (m_multiple && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+             && event->modifiers() == Qt::NoModifier) emit accepted();
     else if (m_multiple && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)) emit removeLastRequested();
     else QWidget::keyPressEvent(event);
 }

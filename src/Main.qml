@@ -23,7 +23,7 @@ ApplicationWindow {
     property string notice: ""
     property bool restoreAfterCapture: false
     readonly property string commandKey: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
-    readonly property string copyKey: commandKey + "C"
+    readonly property string copyKey: "C"
     readonly property string redoKey: Qt.platform.os === "osx" ? "⇧⌘Z" : "Ctrl+Y"
     readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
@@ -157,7 +157,7 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 ActionButton { text: "Cancel (Esc)"; enabled: !backend.finishingRecording; onClicked: backend.cancelRecording() }
                 PrimaryButton {
-                    text: "Stop and copy path (" + win.copyKey + ")"
+                    text: "Stop and copy path (" + win.commandKey + "C)"
                     enabled: !backend.startingRecording && !backend.finishingRecording
                     onClicked: backend.finishRecording()
                 }
@@ -198,12 +198,44 @@ ApplicationWindow {
 
     Dialog {
         id: rearrangeDialog
-        title: "Rearrange regions?"
+        objectName: "rearrangeDialog"
+        title: "Back to Arrange?"
         anchors.centerIn: parent
+        width: Math.min(560, win.width - 48)
         modal: true
-        standardButtons: Dialog.Cancel | Dialog.Ok
-        Label { text: "This resets annotations and cuts. Your original regions are kept."; color: "#dfe5ed" }
-        onAccepted: canvas.arrange()
+        background: Rectangle { color: "#242930"; radius: 12; border.color: "#454d59" }
+        Overlay.modal: Rectangle { color: "#99000000" }
+        header: Label {
+            text: rearrangeDialog.title
+            color: "#f0f3f7"
+            font.pixelSize: 20
+            font.weight: Font.DemiBold
+            leftPadding: 24; rightPadding: 24; topPadding: 24; bottomPadding: 8
+        }
+        contentItem: ColumnLayout {
+            spacing: 20
+            Label {
+                text: "Returning to Arrange will discard your annotations and cuts. Your captured regions will be kept."
+                color: "#dfe5ed"
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                ActionButton {
+                    objectName: "keepEditingButton"
+                    text: "Keep editing"
+                    onClicked: rearrangeDialog.reject()
+                }
+                PrimaryButton {
+                    objectName: "discardEditsButton"
+                    text: "Discard edits & arrange"
+                    onClicked: rearrangeDialog.accept()
+                }
+            }
+        }
+        onAccepted: { canvas.arrange(); canvas.forceActiveFocus() }
+        onRejected: canvas.forceActiveFocus()
     }
     FileDialog {
         id: openDialog
@@ -234,7 +266,7 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.New]; enabled: win.shortcutsOn; onActivated: win.capture() }
     Shortcut { sequences: [StandardKey.Paste]; enabled: win.shortcutsOn; onActivated: canvas.paste() }
     Shortcut {
-        sequences: [StandardKey.Copy]; enabled: win.shortcutsOn && canvas.hasImage
+        sequence: "C"; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.finish()
     }
     Shortcut {
@@ -295,34 +327,45 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: 112
+        height: editorHeader.implicitHeight + 24
         color: "#1b1e23"
         ColumnLayout {
+            id: editorHeader
             anchors.fill: parent
+            anchors.margins: 12
             anchors.leftMargin: 16; anchors.rightMargin: 16
-            spacing: 0
+            spacing: 12
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: 12
                 Label { text: "xshot"; font.pixelSize: 20; font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
-                Repeater {
-                    model: [ {label: "Good", ink: "#22c55e", labelColor: "#57dc8b", key: "G"},
-                             {label: "Bad", ink: "#ef4444", labelColor: "#ff9999", key: "D"} ]
-                    ActionButton {
-                        required property var modelData
-                        objectName: "ink_" + modelData.key
-                        text: "●  " + modelData.label + " (" + modelData.key + ")"
-                        textColor: modelData.labelColor
-                        checked: canvas.ink.toString() === modelData.ink
-                        enabled: canvas.hasImage && !canvas.arranging
-                        onClicked: { win.commitText(); canvas.ink = modelData.ink }
-                    }
+                ActionButton {
+                    objectName: "backToArrangeButton"
+                    text: "← Back to arrange"
+                    visible: canvas.regionCount > 0 && !canvas.arranging
+                    onClicked: win.arrangeRegions()
+                }
+                ActionButton {
+                    objectName: "copyArrangementButton"
+                    text: "Copy & finish (" + win.copyKey + ")"
+                    visible: canvas.arranging
+                    onClicked: win.finish()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Copy the combined image without annotations and finish"
+                }
+                PrimaryButton {
+                    objectName: "continueToAnnotateButton"
+                    text: "Continue to annotate → (Enter)"
+                    visible: canvas.arranging
+                    focusPolicy: Qt.NoFocus
+                    onClicked: { canvas.annotate(); canvas.forceActiveFocus() }
                 }
                 PrimaryButton {
                     id: doneButton
                     objectName: "copyButton"
-                    text: "Copy (" + win.copyKey + ")"
+                    text: "Copy & finish (" + win.copyKey + ")"
+                    visible: !canvas.arranging
                     enabled: canvas.hasImage
                     focusPolicy: Qt.NoFocus
                     onClicked: win.finish()
@@ -330,7 +373,54 @@ ApplicationWindow {
                     ToolTip.text: "Copy image to clipboard and finish"
                 }
             }
-            RowLayout {
+            ColumnLayout {
+                visible: canvas.regionCount > 0
+                Layout.fillWidth: true
+                spacing: 6
+                RowLayout {
+                    spacing: 12
+                    Label {
+                        text: "Arrange"
+                        color: canvas.arranging ? "#a3e6ca" : "#9ba5b5"
+                        font.pixelSize: 18
+                        font.weight: canvas.arranging ? Font.Bold : Font.Normal
+                        Accessible.name: canvas.arranging ? "Arrange, current phase" : "Arrange, completed phase"
+                    }
+                    Label { text: "→"; color: "#9ba5b5" }
+                    Label {
+                        text: "Annotate (optional)"
+                        color: !canvas.arranging ? "#a3e6ca" : "#9ba5b5"
+                        font.pixelSize: 18
+                        font.weight: !canvas.arranging ? Font.Bold : Font.Normal
+                        Accessible.name: !canvas.arranging ? "Annotate, current phase, optional" : "Annotate, optional next phase"
+                    }
+                }
+                Label {
+                    text: canvas.arranging
+                        ? "Put your captures in order and choose a layout."
+                        : "Add marks or remove content from the combined image."
+                    color: "#b8c1ce"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+            }
+            Flow {
+                objectName: "arrangementToolbar"
+                visible: canvas.arranging
+                Layout.fillWidth: true
+                spacing: 4
+                Label { text: canvas.regionCount + " regions"; height: 40; verticalAlignment: Text.AlignVCenter; rightPadding: 12; color: "#dfe5ed"; font.weight: Font.DemiBold }
+                Label { text: "Columns"; height: 40; verticalAlignment: Text.AlignVCenter; color: "#9ba5b5" }
+                ActionButton { objectName: "fewerColumnsButton"; text: "Fewer (−)"; Accessible.name: "Fewer columns (−)"; enabled: canvas.columns > 1; onClicked: canvas.columns-- }
+                Label { text: canvas.columns; height: 40; verticalAlignment: Text.AlignVCenter; color: "#dfe5ed" }
+                ActionButton { objectName: "moreColumnsButton"; text: "More (+)"; Accessible.name: "More columns (+)"; enabled: canvas.columns < Math.min(6, canvas.regionCount); onClicked: canvas.columns++ }
+                ActionButton { text: "Move left (←)"; enabled: canvas.selectedRegion > 0; onClicked: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
+                ActionButton { text: "Move right (→)"; enabled: canvas.selectedRegion >= 0 && canvas.selectedRegion < canvas.regionCount - 1; onClicked: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
+                ActionButton { text: "Remove (Delete)"; enabled: canvas.selectedRegion >= 0; onClicked: canvas.removeRegion(canvas.selectedRegion) }
+            }
+            Flow {
+                objectName: "annotationToolbar"
+                visible: !canvas.arranging
                 Layout.fillWidth: true
                 spacing: 4
                 Repeater {
@@ -349,42 +439,19 @@ ApplicationWindow {
                         onClicked: win.chooseTool(modelData.tool)
                     }
                 }
-                Item { Layout.fillWidth: true }
-            }
-        }
-    }
-
-    Rectangle {
-        id: arrangementBar
-        anchors.top: parent.top
-        width: parent.width
-        height: visible ? (canvas.arranging ? 104 : 52) : 0
-        visible: canvas.regionCount > 0
-        color: "#1b1e23"
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 16; anchors.rightMargin: 16
-            spacing: 0
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                Label { text: canvas.regionCount + " regions"; color: "#dfe5ed"; font.weight: Font.DemiBold }
-                Label { text: "Columns"; color: "#9ba5b5"; visible: canvas.arranging; Layout.leftMargin: 12 }
-                ActionButton { objectName: "fewerColumnsButton"; text: "Fewer (−)"; Accessible.name: "Fewer columns (−)"; visible: canvas.arranging; enabled: canvas.columns > 1; onClicked: canvas.columns-- }
-                Label { text: canvas.columns; color: "#dfe5ed"; visible: canvas.arranging }
-                ActionButton { objectName: "moreColumnsButton"; text: "More (+)"; Accessible.name: "More columns (+)"; visible: canvas.arranging; enabled: canvas.columns < Math.min(6, canvas.regionCount); onClicked: canvas.columns++ }
-                Item { Layout.fillWidth: true }
-                PrimaryButton { text: "Annotate (Enter)"; visible: canvas.arranging; onClicked: { canvas.annotate(); canvas.forceActiveFocus() } }
-                ActionButton { text: "Arrange regions"; visible: !canvas.arranging; onClicked: win.arrangeRegions() }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: canvas.arranging
-                spacing: 8
-                ActionButton { text: "Move left (←)"; enabled: canvas.selectedRegion > 0; onClicked: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
-                ActionButton { text: "Move right (→)"; enabled: canvas.selectedRegion >= 0 && canvas.selectedRegion < canvas.regionCount - 1; onClicked: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
-                ActionButton { text: "Remove (Delete)"; enabled: canvas.selectedRegion >= 0; onClicked: canvas.removeRegion(canvas.selectedRegion) }
-                Item { Layout.fillWidth: true }
+                Repeater {
+                    model: [ {label: "Good", ink: "#22c55e", labelColor: "#57dc8b", key: "G"},
+                             {label: "Bad", ink: "#ef4444", labelColor: "#ff9999", key: "D"} ]
+                    ActionButton {
+                        required property var modelData
+                        objectName: "ink_" + modelData.key
+                        text: "●  " + modelData.label + " (" + modelData.key + ")"
+                        textColor: modelData.labelColor
+                        checked: canvas.ink.toString() === modelData.ink
+                        enabled: canvas.hasImage
+                        onClicked: { win.commitText(); canvas.ink = modelData.ink }
+                    }
+                }
             }
         }
     }
@@ -393,7 +460,6 @@ ApplicationWindow {
         id: canvas
         objectName: "canvas"
         anchors.fill: parent
-        anchors.topMargin: arrangementBar.height
         focus: true
         onError: message => win.showError(message)
         onTextRequested: (x, y) => {
@@ -461,7 +527,7 @@ ApplicationWindow {
         Label { text: "No screenshot open"; font.pixelSize: 26; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
         Label {
             text: Qt.platform.os === "osx"
-                ? "Press Ctrl+Print Screen (F13), or Ctrl+Shift+X, to select a screen region."
+                ? "Press Ctrl+Print Screen (F13) to select a screen region."
                 : "Press Ctrl+Print Screen to select a screen region, or open or paste an image."
             color: "#9ba5b5"
             font.pixelSize: 14
@@ -493,8 +559,8 @@ ApplicationWindow {
                 ActionButton { text: "Multiple (M)"; onClicked: win.captureMultiple() }
                 ActionButton { text: "Record (V)"; onClicked: win.captureVideo() }
                 ActionButton { text: "Open (" + win.commandKey + "O)"; onClicked: openDialog.open() }
-                ActionButton { text: "Undo (" + win.commandKey + "Z)"; enabled: canvas.canUndo && !win.editingText && !canvas.arranging; onClicked: canvas.undo() }
-                ActionButton { text: "Redo (" + win.redoKey + ")"; enabled: canvas.canRedo && !win.editingText && !canvas.arranging; onClicked: canvas.redo() }
+                ActionButton { text: "Undo (" + win.commandKey + "Z)"; visible: !canvas.arranging; enabled: canvas.canUndo && !win.editingText; onClicked: canvas.undo() }
+                ActionButton { text: "Redo (" + win.redoKey + ")"; visible: !canvas.arranging; enabled: canvas.canRedo && !win.editingText; onClicked: canvas.redo() }
             }
             Label {
                 text: win.notice !== "" ? win.notice

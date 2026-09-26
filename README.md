@@ -8,8 +8,8 @@ and Material controls.
 
 xshot lives in the menu bar on macOS or the system tray on Windows. It starts at
 login and stays running after you finish editing. **Ctrl+Print Screen** starts
-region selection from any app. **Command+C** on macOS or **Ctrl+C** on Windows
-copies the result and finishes the session. Videos copy their saved file path.
+region selection from any app. **C** copies the screenshot and finishes the session
+when you are not typing an annotation. Videos copy their saved file path.
 Choose **Quit xshot** from its icon menu to stop it until the next launch/login.
 Only one instance runs per user desktop session; launching it again requests a
 capture from the existing instance.
@@ -31,8 +31,8 @@ Re-run the same command to update; use `./bin/uninstall` to remove the app and l
 entry. Screenshot capture and editing do not need FFmpeg.
 
 On a PC keyboard, Print Screen usually arrives as **F13** on macOS, so the binding
-is **Control+F13**. **Control+Shift+X** also works for keyboards without that key.
-These use the actual Control key, not Command. macOS may request Screen & System
+is **Control+F13**. This uses the actual Control key, not Command.
+macOS may request Screen & System
 Audio Recording permission for xshot or the terminal launching a development build.
 If capture opens an error dialog, enable the installed `~/Applications/xshot.app`
 in System Settings → Privacy & Security → Screen & System Audio Recording, then
@@ -90,18 +90,20 @@ scaling. A region currently stays within one monitor.
 Start a capture and press **M**, or choose **Multiple regions** in the editor.
 Drag each rectangle in the order you want it to appear. Numbered selections stay
 on the frozen screen; click one to remove it, or use Backspace to remove the last.
-**Command/Ctrl+C** opens the arrangement preview; Escape cancels the capture.
+**Enter** finishes selecting and opens the arrangement preview; Escape cancels the capture.
 
-The preview defaults to two columns. Press **+** or **−** to change the column
+The editor shows **Arrange → Annotate (optional)** with the current phase highlighted
+and a toolbar specific to that phase. Arrange defaults to two columns. Press **+** or **−** to change the column
 count (one to six, limited by the number of regions), or use the **Columns** buttons.
 Drag tiles to reorder them, or select a tile and use **Move left**, **Move right**,
 or **Remove**.
 Original pixels are kept without resizing or cropping, with 24-pixel neutral
 spacing. Numbers and selection outlines appear only in the preview.
-Choose **Annotate (Enter)** to use the drawing tools, or **Copy (Command/Ctrl+C)**
-to finish directly. Enter only switches from arranging to annotating; it does not
+Choose **Continue to annotate → (Enter)** to use the drawing tools, or **Copy & finish (C)**
+to finish directly. Enter advances from selection to arrangement, then to annotation; it does not
 copy or finish an edited screenshot.
-Rearranging after annotation asks before resetting annotations and cuts; the
+Choose **← Back to arrange** to revise the layout. After editing, this asks you to
+**Keep editing** or **Discard edits & arrange** before resetting annotations and cuts; the
 original regions are retained until the session is finished. Captures are limited
 to 24 regions and 256 MiB, and each rectangle stays within one monitor.
 
@@ -138,7 +140,7 @@ started at login.
 | Smart erase | E | Drag a rectangle to fill it with the exact color at the drag's starting point. Works in any drag direction. |
 | Green / good | G | Applies to new rectangles, arrows, and text. |
 | Red / bad | D | Applies to new rectangles, arrows, and text. |
-| Copy and finish | Command/Ctrl+C | Copies the full-resolution image, hides the editor, and clears its editing history. |
+| Copy and finish | C | Copies the full-resolution image, hides the editor, and clears its editing history. Inactive while typing an annotation. |
 | Undo | Command/Ctrl+Z | Reverts the last edit. |
 | Redo | Shift+Command+Z on macOS; Ctrl+Y on Windows | Reapplies the last undone edit. |
 | New capture | Command/Ctrl+N | Starts a new region selection. |

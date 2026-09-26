@@ -198,6 +198,23 @@ void EditorTests::makePreviewFixture() {
     QImage preview;
     QTRY_VERIFY(!(preview = window->grabWindow()).isNull());
     QVERIFY(preview.save("arrangement-preview.png"));
+    canvas->annotate();
+    QTest::qWait(100);
+    QVERIFY(window->grabWindow().save("annotation-preview.png"));
+    window->resize(860, 560);
+    QTest::qWait(100);
+    QVERIFY(window->grabWindow().save("annotation-preview-small.png"));
+    canvas->arrange();
+    QTest::qWait(100);
+    QVERIFY(window->grabWindow().save("arrangement-preview-small.png"));
+    canvas->annotate();
+    canvas->addText(30, 30, 300, 60, "Example annotation");
+    QVERIFY(QMetaObject::invokeMethod(window, "arrangeRegions"));
+    QTest::qWait(250);
+    QVERIFY(window->grabWindow().save("rearrange-dialog-preview.png"));
+    RegionSelector selector(image, QRect(0, 0, 860, 560));
+    selector.setSelections(true, {{0, QRectF(34, 140, 320, 60)}}, 1);
+    QVERIFY(selector.grab().save("selection-preview-small.png"));
 }
 
 void EditorTests::qmlLoadsAndPlacesText() {
@@ -337,6 +354,9 @@ void EditorTests::qmlKeyboardCommands() {
     QVERIFY(copyButton);
     QVERIFY(copyButton->property("text").toString().endsWith("(" + window->property("copyKey").toString() + ")"));
     QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QCoreApplication::processEvents();
+    QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
+    QTest::keyClick(window, Qt::Key_C);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->image(), expectedImage);
 
@@ -365,18 +385,58 @@ void EditorTests::qmlKeyboardCommands() {
     QTest::keyClick(window, Qt::Key_Return);
     QTRY_VERIFY(!canvas->arranging());
     QVERIFY(canvas->hasImage()); QVERIFY(window->isVisible());
+    canvas->setTool("text");
+    const QPointF textPoint = canvas->imageRect().center();
+    canvas->begin(textPoint.x(), textPoint.y());
+    QVERIFY(window->property("editingText").toBool());
+    QTest::keyClick(window, Qt::Key_C);
+    auto *annotationText = window->findChild<QObject *>("annotationText");
+    QVERIFY(annotationText);
+    QTRY_COMPARE(annotationText->property("text").toString(), QString("c"));
+    QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->property("editingText").toBool());
     QTest::keyClick(window, Qt::Key_Plus);
     QCoreApplication::processEvents();
     QCOMPARE(canvas->columns(), 2);
     QTest::keyClick(window, Qt::Key_Minus);
     QCoreApplication::processEvents();
     QCOMPARE(canvas->columns(), 2); // Layout keys do not change an annotated image.
-    canvas->arrange();
+
+    // Returning to the layout must preserve edits until discard is explicitly chosen.
+    canvas->addText(30, 30, 160, 40, "Keep this note");
+    QVERIFY(canvas->canUndo());
+    QVERIFY(canvas->copy());
+    const QImage annotatedGrid = QGuiApplication::clipboard()->image();
+    auto *backButton = visualItem(window->contentItem(), "backToArrangeButton");
+    QVERIFY(backButton);
+    QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
+    auto *dialog = window->findChild<QObject *>("rearrangeDialog");
+    QVERIFY(dialog);
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    QVERIFY(!canvas->arranging());
+    auto *keepButton = visualItem(window->contentItem(), "keepEditingButton");
+    QVERIFY(keepButton);
+    QVERIFY(QMetaObject::invokeMethod(keepButton, "clicked"));
+    QTRY_VERIFY(!dialog->property("visible").toBool());
+    QVERIFY(!canvas->arranging());
+    QVERIFY(canvas->canUndo());
+    QVERIFY(canvas->copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), annotatedGrid);
+    QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    auto *discardButton = visualItem(window->contentItem(), "discardEditsButton");
+    QVERIFY(discardButton);
+    QVERIFY(QMetaObject::invokeMethod(discardButton, "clicked"));
+    QTRY_VERIFY(canvas->arranging());
+    QTRY_VERIFY(!dialog->property("visible").toBool());
+    QVERIFY(!canvas->canUndo());
+    QCOMPARE(canvas->regionCount(), 7);
     QVERIFY(canvas->copy());
     const QImage expectedGrid = QGuiApplication::clipboard()->image();
     QGuiApplication::clipboard()->setText("not submitted");
     canvas->forceActiveFocus();
-    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QTest::keyClick(window, Qt::Key_C);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(canvas->regionCount(), 0);
     QCOMPARE(QGuiApplication::clipboard()->image(), expectedGrid);
@@ -502,10 +562,13 @@ void EditorTests::multipleRegionSelection() {
     QCOMPARE(removed.size(), 1);
     QCOMPARE(removed.first().first().toInt(), 2); // Global order across monitors.
     QCOMPARE(added.size(), 1);
-    QTest::keyClick(&selector, Qt::Key_Return);
-    QCOMPARE(accepted.size(), 0);
+    QTest::keyClick(&selector, Qt::Key_C);
     QTest::keySequence(&selector, QKeySequence(QKeySequence::Copy));
+    QCOMPARE(accepted.size(), 0);
+    QTest::keyClick(&selector, Qt::Key_Return);
     QCOMPARE(accepted.size(), 1);
+    QTest::keyClick(&selector, Qt::Key_Enter);
+    QCOMPARE(accepted.size(), 2);
     QTest::keyClick(&selector, Qt::Key_Escape);
     QCOMPARE(canceled.size(), 1);
 }
@@ -633,9 +696,9 @@ void EditorTests::desktopMultipleCapture() {
     QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(20, 20));
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(80, 60));
     QCOMPARE(batch.size(), 0);
-    QTest::keyClick(selector, Qt::Key_Return);
-    QCOMPARE(batch.size(), 0);
     QTest::keySequence(selector, QKeySequence(QKeySequence::Copy));
+    QCOMPARE(batch.size(), 0);
+    QTest::keyClick(selector, Qt::Key_Return);
     QTRY_COMPARE(batch.size(), 1);
     QCOMPARE(finished.size(), 1);
     QVERIFY(finished.first().first().toBool());
@@ -650,7 +713,7 @@ void EditorTests::desktopMultipleCapture() {
     backend.capture(true);
     selector = nullptr;
     QTRY_VERIFY_WITH_TIMEOUT(findSelector(), 10000);
-    QTest::keySequence(selector, QKeySequence(QKeySequence::Copy)); // Empty multi-selection stays open.
+    QTest::keyClick(selector, Qt::Key_Return); // Empty multi-selection stays open.
     QVERIFY(backend.capturing());
     QTest::keyClick(selector, Qt::Key_Escape);
     QCOMPARE(finished.size(), 2);
