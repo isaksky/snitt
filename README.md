@@ -20,15 +20,15 @@ From this checkout:
 
 ```sh
 brew install qtdeclarative  # development dependency, if needed
-brew install ffmpeg         # required for video recording
 ./bin/install
 ```
 
 This builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
 LaunchAgent at `~/Library/LaunchAgents/local.xshot.plist`, and starts xshot in the
-background. Qt is bundled; recording uses a separately installed FFmpeg executable.
+background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit and
+does not need FFmpeg at runtime.
 Re-run the same command to update; use `./bin/uninstall` to remove the app and login
-entry. Screenshot capture and editing do not need FFmpeg.
+entry.
 
 On a PC keyboard, Print Screen usually arrives as **F13** on macOS, so the binding
 is **Control+F13**. This uses the actual Control key, not Command.
@@ -166,15 +166,16 @@ selected in Finder or Explorer. The clipboard keeps its previous contents.
 **Escape** cancels the recording and removes that clip.
 Use **Hide** to move the controls out of the way; **Ctrl+Print Screen** brings
 them back while recording. Windows excludes the controls from captured video.
-On macOS, keep them outside the selected region or hide them.
+On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
+the startup indicator and controls; they can remain over the selected region.
 
 Recordings are silent MP4 files saved under `~/Movies/xshot` on macOS or your
-Windows **Videos\xshot** folder. FFmpeg runs as a separate process, captures the
-selected screen region and pointer at 30 fps, and encodes H.264. Recordings are
-kept after the session; xshot does not upload them or delete completed clips.
-Install FFmpeg with `brew install ffmpeg` on macOS or `scoop install ffmpeg` on
-Windows. xshot checks PATH and the usual Homebrew/Scoop locations, including when
-started at login.
+Windows **Videos\xshot** folder. Both platforms capture the selected region and
+pointer at 30 fps and encode H.264. macOS 15+ uses native ScreenCaptureKit;
+Windows runs FFmpeg as a separate process. Recordings are kept after the session;
+xshot does not upload them or delete completed clips. On Windows, install FFmpeg
+with `scoop install ffmpeg`; xshot checks PATH and the usual Scoop locations,
+including when started at login.
 
 ## Editing
 
@@ -235,7 +236,8 @@ when you copy and finish. Smart erase samples the starting pixel, including its
 alpha, and is intended for extending a matching background.
 
 Screenshots use macOS's built-in screenshot tool or Qt screen capture on Windows,
-followed by xshot's frozen selection overlay. Only video recording needs FFmpeg.
+followed by xshot's frozen selection overlay. FFmpeg is a Windows video runtime
+dependency; macOS recording uses ScreenCaptureKit.
 Nothing is uploaded.
 
 ## Development
@@ -277,7 +279,9 @@ erase sampling, source-resolution clipboard output, keyboard commands, grid
 arrangement, recording lifecycle, scaled region selection, and Windows hotkey
 registration. Offscreen tests use a private Qt clipboard and cannot prove physical
 keyboard input or capture from a real unlocked desktop. Interactive capture and
-recording tests run separately on an unlocked desktop.
+recording tests run separately on an unlocked desktop. The recording tests and
+startup comparison benchmark use FFmpeg and FFprobe to decode or compare clips;
+those developer tools are not macOS application runtime dependencies.
 
 ## Code
 
@@ -285,7 +289,8 @@ recording tests run separately on an unlocked desktop.
 - `src/appservice.cpp`: tray menu and single-instance local IPC.
 - `src/globalhotkey.cpp`: native Windows/macOS global hotkey registration.
 - `src/backend.cpp`: platform capture lifecycle.
-- `src/videorecorder.cpp`: external FFmpeg discovery, recording, and saved-file lifecycle.
+- `src/macrecorder.mm`: native macOS ScreenCaptureKit recording and saved-file lifecycle.
+- `src/videorecorder.cpp`: Windows FFmpeg discovery, recording, and saved-file lifecycle.
 - `src/regionselector.cpp`: single- and multiple-region selection overlay.
 - `src/editorcanvas.cpp`: image display, gesture mapping, and clipboard access.
 - `src/imagedocument.cpp`: full-resolution image edits and bounded undo history.

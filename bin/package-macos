@@ -242,8 +242,8 @@ licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
 Portions of this software are copyright The FreeType Project
 (https://freetype.org/). All rights reserved.
 
-FFmpeg is a separate command-line dependency. It is not included in this archive.
-Its own installation supplies its licenses and source information.
+macOS recording uses ScreenCaptureKit; FFmpeg is not an application runtime
+dependency or part of this archive.
 """)
 
 
@@ -283,7 +283,8 @@ Move xshot.app into your Applications folder, then open it. xshot remains in the
 menu bar. Use Ctrl+Print Screen (F13 on Mac) to select a region.
 Grant Screen & System Audio Recording permission to xshot when macOS requests it.
 For login startup, add xshot in System Settings > General > Login Items.
-Install FFmpeg separately with `brew install ffmpeg` to enable video recording.
+Video recording uses macOS ScreenCaptureKit and needs no FFmpeg installation.
+xshot's windows are automatically excluded from the recorded video.
 
 This release is signed with a persistent local development certificate. It is
 not signed with an Apple Developer ID and is not notarized. macOS Gatekeeper
@@ -291,7 +292,7 @@ may require approval in System Settings > Privacy & Security > Open Anyway.
 The archive contains no private signing key, certificate export, or keychain.
 
 The application and its bundled libraries are self-contained. Homebrew Qt is
-not required to run the app. FFmpeg remains a separate optional video dependency.
+not required to run the app. ScreenCaptureKit is provided by macOS 15 or later.
 See README.md for tools and shortcuts and THIRD-PARTY-NOTICES.txt for licenses.
 """)
         add_notices(payload, packages, cache, dependencies)
