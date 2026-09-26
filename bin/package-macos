@@ -23,6 +23,15 @@ PRIVATE_FFMPEG_LIBRARIES = (
     "libswscale.8.dylib", "libavutil.59.dylib",
 )
 PRIVATE_RUNTIME = ROOT / "build/tools/mac-multimedia-runtime/stage/manifest.json"
+SUPPORTED_QT = {"6.11.1", "6.11.2"}
+OFFICIAL_QT_SOURCES_6112 = {
+    "qtbase": "5b2e00eccaf5a4d8c14134ffa0ea8dfd0a35ae1ffc7f8d87fa4305a1ed23cf22",
+    "qtdeclarative": "215b7b70517e380123eabc6b92243f3c47b6f016a91d126057dbe53551c6b430",
+    "qtsvg": "d594337feca84c26fb67fe87b85e6a5c12fda404b611d905f9d138210c311876",
+    "qtmultimedia": "967b5e02ec6b793cdb360622cd6e703132836af983208d678dae4b50f109cd9f",
+    "qtquicktimeline": "250af10500a0c4045dde74e107448a69a44d58af8b7e9a91704a808d5f881d17",
+    "qtshadertools": "805046b8b7757665586890b375940047e874ae3ab00adb6d3f2b38fc6b200b1c",
+}
 
 
 def run(*args):
@@ -49,7 +58,8 @@ def private_runtime_manifest(bundle):
     if not PRIVATE_RUNTIME.is_file():
         raise RuntimeError("Private playback runtime manifest is missing; run bin/build")
     manifest = json.loads(PRIVATE_RUNTIME.read_text())
-    if (manifest.get("qt_version") != "6.11.1"
+    qt_version = manifest.get("qt_version")
+    if (qt_version not in SUPPORTED_QT
             or manifest.get("ffmpeg_version") != "7.1.3"
             or manifest.get("ffmpeg_license") != "LGPL-2.1-or-later"):
         raise RuntimeError("Unexpected private playback runtime or license")
@@ -64,11 +74,11 @@ def private_runtime_manifest(bundle):
     sources = contents / "Resources/Sources"
     for name, data in manifest["sources"].items():
         archive = sources / ("ffmpeg-7.1.3.tar.xz" if name == "ffmpeg" else
-                             "qtmultimedia-everywhere-src-6.11.1.tar.xz")
+                             f"qtmultimedia-everywhere-src-{qt_version}.tar.xz")
         if not archive.is_file() or digest(archive) != data["sha256"]:
             raise RuntimeError(f"Private playback source archive missing or changed: {name}")
     for name in ("FFMPEG-CONFIGURE.txt", "QTMULTIMEDIA-BUILD.txt",
-                 "qtmultimedia-6.11.1-sdk26.patch"):
+                 "qtmultimedia-6.11-sdk26.patch"):
         if not (sources / name).is_file():
             raise RuntimeError(f"Private playback build material missing: {name}")
     return manifest
@@ -91,22 +101,25 @@ def verify_bundle(bundle):
     for library in PRIVATE_FFMPEG_LIBRARIES:
         if not (contents / "Frameworks" / library).is_file():
             raise RuntimeError(f"Bundled playback codec is missing: {library}")
-    private_runtime_manifest(bundle)
+    qt_version = private_runtime_manifest(bundle)["qt_version"]
     binaries = list(binary_files(bundle))
     dependencies = {}
     for binary in binaries:
         archs = run("lipo", "-archs", binary).split()
-        if archs != ["arm64"]:
-            raise RuntimeError(f"Expected arm64 binary, found {archs}: {binary}")
-        identity_lines = run("otool", "-D", binary).splitlines()[1:]
+        if "arm64" not in archs or not set(archs) <= {"arm64", "x86_64"}:
+            raise RuntimeError(f"Expected arm64 or universal binary, found {archs}: {binary}")
+        identity_lines = run("otool", "-arch", "arm64", "-D", binary).splitlines()[1:]
         identity = identity_lines[0].strip() if identity_lines else ""
         linked = []
-        for line in run("otool", "-L", binary).splitlines()[1:]:
+        for line in run("otool", "-arch", "arm64", "-L", binary).splitlines()[1:]:
             name = line.strip().split(" (compatibility version", 1)[0]
             # otool -L includes a dylib's own install-name as its first entry.
             # It is metadata, not a dependency loaded from that original path.
             if name == identity:
                 continue
+            if "/Qt" in name and ".framework/Versions/A/" in name \
+                    and f"current version {qt_version})" not in line:
+                raise RuntimeError(f"Mixed Qt framework version in {binary}: {line.strip()}")
             linked.append(name)
             if name.startswith(("/System/Library/", "/usr/lib/")):
                 continue
@@ -161,6 +174,18 @@ def source_packages(bundle, binaries, cellar):
     return packages
 
 
+def official_qt_binaries(bundle, binaries, sdk):
+    frameworks = bundle / "Contents/Frameworks"
+    selected = [p for p in binaries if p.is_relative_to(frameworks)
+                and p.name not in PRIVATE_FFMPEG_LIBRARIES]
+    for binary in selected:
+        relative = binary.relative_to(frameworks)
+        original = sdk / "lib" / relative
+        if not original.is_file() or uuid(binary) != uuid(original):
+            raise RuntimeError(f"Bundled Qt binary does not match selected SDK: {binary}")
+    return [str(p.relative_to(bundle)) for p in selected]
+
+
 def notice_file(path):
     name = path.name.lower()
     return name.startswith(("license", "licence", "copying", "copyright", "notice")) \
@@ -192,6 +217,26 @@ def download_source(package, cache):
             raise RuntimeError(f"Source checksum mismatch: {source.group(1)}")
         partial.replace(archive)
     return archive, source.group(1), expected
+
+
+def official_source(module, version, cache):
+    if version != "6.11.2":
+        raise RuntimeError(f"No pinned official Qt source set for {version}")
+    expected = OFFICIAL_QT_SOURCES_6112[module]
+    name = f"{module}-everywhere-src-{version}.tar.xz"
+    url = f"https://download.qt.io/official_releases/qt/6.11/{version}/submodules/{name}"
+    archive = cache / name
+    if not archive.is_file() or digest(archive) != expected:
+        print(f"Fetching Qt source notices for {module} {version}", flush=True)
+        partial = cache / (name + ".download")
+        request = urllib.request.Request(url, headers={"User-Agent": "xshot-release-packager"})
+        with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        if digest(partial) != expected:
+            partial.unlink()
+            raise RuntimeError(f"Official Qt source checksum mismatch: {url}")
+        partial.replace(archive)
+    return archive, url, expected
 
 
 def archive_notices(archive, destination):
@@ -236,7 +281,8 @@ def archive_notices(archive, destination):
         raise RuntimeError(f"No license material found in source archive {archive}")
 
 
-def add_notices(payload, packages, cache, dependencies, private_manifest):
+def add_notices(payload, packages, cache, dependencies, private_manifest,
+                official_sdk=None, official_files=None):
     inventory = []
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
@@ -282,6 +328,22 @@ def add_notices(payload, packages, cache, dependencies, private_manifest):
             archive_notices(archive, destination / "upstream")
             record.update({"source_url": url, "source_sha256": sha256})
         inventory.append(record)
+    if official_sdk is not None:
+        version = private_manifest["qt_version"]
+        for module in OFFICIAL_QT_SOURCES_6112:
+            archive, url, sha256 = official_source(module, version, cache)
+            destination = licenses / f"qt-official-{version}" / module
+            archive_notices(archive, destination / "upstream")
+            for sbom in (official_sdk / "sbom").glob(f"{module}-{version}*.spdx"):
+                copy_file(sbom, destination / sbom.name)
+            inventory.append({"package": module, "version": version,
+                              "binaries": [],
+                              "source_url": url, "source_sha256": sha256,
+                              "distribution": "official Qt SDK"})
+        inventory.append({"package": "qt-official-sdk", "version": version,
+                          "binaries": official_files,
+                          "distribution": "official Qt SDK",
+                          "source_packages": sorted(OFFICIAL_QT_SOURCES_6112)})
     inventory.append({"package": "ffmpeg-thumbnail-helper", "version": "7.1.3",
                       "binaries": ["Contents/MacOS/ffmpeg-thumbnails"],
                       "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
@@ -292,10 +354,10 @@ def add_notices(payload, packages, cache, dependencies, private_manifest):
     private_notices.mkdir(parents=True)
     copy_file(PRIVATE_RUNTIME, private_notices / "manifest.json")
     for name, archive_name in (("ffmpeg", "ffmpeg-7.1.3.tar.xz"),
-                               ("qtmultimedia", "qtmultimedia-everywhere-src-6.11.1.tar.xz")):
+                               ("qtmultimedia", f"qtmultimedia-everywhere-src-{private_manifest['qt_version']}.tar.xz")):
         archive_notices(private_sources / archive_name, private_notices / name)
     for name in ("FFMPEG-CONFIGURE.txt", "QTMULTIMEDIA-BUILD.txt",
-                 "qtmultimedia-6.11.1-sdk26.patch"):
+                 "qtmultimedia-6.11-sdk26.patch"):
         copy_file(private_sources / name, private_notices / name)
     ffmpeg_info = private_manifest["sources"]["ffmpeg"]
     inventory.append({"package": "ffmpeg-private-playback", "version": "7.1.3",
@@ -305,16 +367,16 @@ def add_notices(payload, packages, cache, dependencies, private_manifest):
                       "license": private_manifest["ffmpeg_license"],
                       "configure": private_manifest["ffmpeg_configure"]})
     qt_info = private_manifest["sources"]["qtmultimedia"]
-    inventory.append({"package": "qtmultimedia-private-ffmpeg-plugin", "version": "6.11.1",
+    inventory.append({"package": "qtmultimedia-private-ffmpeg-plugin", "version": private_manifest["qt_version"],
                       "binaries": ["Contents/PlugIns/multimedia/libffmpegmediaplugin.dylib"],
                       "source_url": qt_info["url"],
                       "source_sha256": qt_info["sha256"],
-                      "sdk_patch": "xshot.app/Contents/Resources/Sources/qtmultimedia-6.11.1-sdk26.patch"})
+                      "sdk_patch": "xshot.app/Contents/Resources/Sources/qtmultimedia-6.11-sdk26.patch"})
     (payload / "DEPENDENCIES.json").write_text(json.dumps({"packages": inventory, "linkage": dependencies}, indent=2) + "\n")
-    (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and Homebrew runtime libraries.
+    (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and may include Homebrew runtime libraries.
 Their exact versions, bundled binaries, and link dependencies are listed in
 DEPENDENCIES.json. License texts, copyright notices, Qt component attributions,
-Qt SBOMs, and the installed Homebrew source recipes are under licenses/.
+Qt SBOMs, and source package information are under licenses/.
 The Qt source material includes notices for its complete modules, including
 components that may not be part of this application. These notices apply to
 the named third-party components, not to xshot itself.
@@ -327,10 +389,10 @@ Modified signing identities may require renewing macOS screen-capture permission
 
 Qt is copyright The Qt Company Ltd. and other contributors, distributed under
 the LGPLv3 option for the included Qt runtime modules. Qt licenses and applicable
-third-party terms are included in licenses/qt*/upstream/.
+third-party terms are included below licenses/qt*/.
 Qt source and build recipes: https://code.qt.io/cgit/qt/
-Homebrew source recipes and patches: https://github.com/Homebrew/homebrew-core
-The included recipe files identify exact upstream source URLs and checksums.
+Homebrew source recipes and patches, when present: https://github.com/Homebrew/homebrew-core
+DEPENDENCIES.json identifies exact upstream source URLs and checksums.
 Qt's installed SBOMs identify additional component source locations.
 
 Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
@@ -377,8 +439,23 @@ def main():
         raise RuntimeError("Bundle version does not match the requested release version")
     binaries, dependencies = verify_bundle(bundle)
     private_manifest = private_runtime_manifest(bundle)
+    qmake_file = ROOT / "build/.xshot-qmake"
+    if not qmake_file.is_file():
+        raise RuntimeError("Selected Qt SDK is unknown; run bin/build first")
+    qmake = Path(qmake_file.read_text().strip())
+    selected_version = run(qmake, "-query", "QT_VERSION")
+    if selected_version != private_manifest["qt_version"]:
+        raise RuntimeError("Selected Qt SDK differs from private playback runtime")
+    sdk = Path(run(qmake, "-query", "QT_INSTALL_PREFIX")).resolve()
     cellar = Path(run("brew", "--cellar")).resolve()
-    packages = source_packages(bundle, binaries, cellar)
+    official_sdk = None
+    official_files = None
+    if sdk.is_relative_to(cellar):
+        packages = source_packages(bundle, binaries, cellar)
+    else:
+        official_sdk = sdk
+        official_files = official_qt_binaries(bundle, binaries, sdk)
+        packages = {}
     release = args.release_directory.resolve()
     release.mkdir(parents=True, exist_ok=True)
     cache = ROOT / "build/package/license-sources"
@@ -408,7 +485,8 @@ The application and its bundled libraries are self-contained. Homebrew Qt is
 not required to run the app. ScreenCaptureKit is provided by macOS 15 or later.
 See README.md for tools and shortcuts and THIRD-PARTY-NOTICES.txt for licenses.
 """)
-        add_notices(payload, packages, cache, dependencies, private_manifest)
+        add_notices(payload, packages, cache, dependencies, private_manifest,
+                    official_sdk, official_files)
         verify_bundle(payload / "xshot.app")
         copy_file(ROOT / "README.md", payload / "README.md")
         archive_name = f"xshot_{args.version}_macos_arm64.zip"

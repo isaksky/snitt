@@ -19,11 +19,19 @@ capture from the existing instance.
 From this checkout:
 
 ```sh
-brew install qtdeclarative qtmultimedia cmake pkgconf  # development dependencies, if needed
-./bin/install
+brew install cmake pkgconf python  # build tools; Xcode command-line tools are also required
+./bin/setup-macos-qt             # private, pinned Qt 6.11.2 SDK in build/tools
+XSHOT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6" ./bin/install
 ```
 
-This builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
+The setup command downloads the official Qt 6.11.2 SDK into this checkout; it
+does not replace a Homebrew Qt installation. Use the same `XSHOT_QMAKE` setting
+for `./bin/build` or `./bin/stage-macos` when testing without installing.
+The build checks that the selected Qt frameworks and the private playback plugin
+match before compiling. Qt 6.11.1 is also supported when an existing SDK is
+selected explicitly; a newer unpinned Qt release is rejected with setup guidance.
+
+The install command builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
 LaunchAgent at `~/Library/LaunchAgents/local.xshot.plist`, and starts xshot in the
 background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit.
 The first build also fetches and compiles a small LGPL FFmpeg thumbnail helper

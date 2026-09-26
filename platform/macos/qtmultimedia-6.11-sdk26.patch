@@ -25,3 +25,19 @@
          if (!imageRef) {
              updateError(QPlatformSurfaceCapture::CaptureFailed,
                          QLatin1String("Cannot create image by window"));
+--- a/src/multimedia/CMakeLists.txt
++++ b/src/multimedia/CMakeLists.txt
+@@ -163,4 +163,6 @@
+ qt_internal_add_simd_part(Multimedia SIMD sse2
+     SOURCES
+         video/qvideoframeconversionhelper_sse2.cpp
++    EXCLUDE_OSX_ARCHITECTURES
++        arm64
+ )
+@@ -168,4 +170,6 @@
+ qt_internal_add_simd_part(Multimedia SIMD ssse3
+     SOURCES
+         video/qvideoframeconversionhelper_ssse3.cpp
++    EXCLUDE_OSX_ARCHITECTURES
++        arm64
+ )

@@ -20,7 +20,6 @@ import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent.parent
-QT_VERSION = "6.11.1"
 FFMPEG_VERSION = "7.1.3"
 SOURCES = {
     "ffmpeg": (
@@ -28,14 +27,21 @@ SOURCES = {
         "f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe",
         "ffmpeg-7.1.3",
     ),
-    "qtmultimedia": (
+    "qtmultimedia-6.11.1": (
         "https://download.qt.io/official_releases/qt/6.11/6.11.1/submodules/"
         "qtmultimedia-everywhere-src-6.11.1.tar.xz",
         "390f8e52ddee3aca5c4de7eead900c84c4fa61ff6d1f0ebea9c7543365c09b0a",
         "qtmultimedia-everywhere-src-6.11.1",
     ),
+    "qtmultimedia-6.11.2": (
+        "https://download.qt.io/official_releases/qt/6.11/6.11.2/submodules/"
+        "qtmultimedia-everywhere-src-6.11.2.tar.xz",
+        "967b5e02ec6b793cdb360622cd6e703132836af983208d678dae4b50f109cd9f",
+        "qtmultimedia-everywhere-src-6.11.2",
+    ),
 }
-PATCH = ROOT / "platform/macos/qtmultimedia-6.11.1-sdk26.patch"
+SUPPORTED_QT = ("6.11.1", "6.11.2")
+PATCH = ROOT / "platform/macos/qtmultimedia-6.11-sdk26.patch"
 FFMPEG_FLAGS = [
     "--enable-shared", "--disable-static", "--disable-programs", "--disable-doc",
     "--disable-debug", "--disable-autodetect", "--disable-network",
@@ -118,7 +124,11 @@ def rewrite(binary, changes=(), identity=None):
     run(["codesign", "--force", "--sign", "-", binary])
 
 
-def stage_runtime(base, qt_build, ffmpeg_prefix, archives):
+def stage_runtime(base, qt_build, ffmpeg_prefix, archives, qt_version):
+    # A different selected SDK must not leave the previous module's source or
+    # manifest in the distributable Contents tree.
+    if (base / "stage").exists():
+        shutil.rmtree(base / "stage")
     contents = base / "stage" / "Contents"
     frameworks = contents / "Frameworks"
     plugins = contents / "PlugIns" / "multimedia"
@@ -138,7 +148,12 @@ def stage_runtime(base, qt_build, ffmpeg_prefix, archives):
         rewrite(target, changes, f"@rpath/{library}")
 
     plugin = plugins / "libffmpegmediaplugin.dylib"
-    shutil.copy2(qt_build / "share/qt/plugins/multimedia/libffmpegmediaplugin.dylib", plugin)
+    candidates = (qt_build / "share/qt/plugins/multimedia/libffmpegmediaplugin.dylib",
+                  qt_build / "plugins/multimedia/libffmpegmediaplugin.dylib")
+    plugin_source = next((path for path in candidates if path.is_file()), None)
+    if plugin_source is None:
+        raise RuntimeError("Qt build did not produce its FFmpeg multimedia plugin")
+    shutil.copy2(plugin_source, plugin)
     changes = []
     for dependency in dependencies(plugin):
         name = Path(dependency).name
@@ -167,20 +182,44 @@ def stage_runtime(base, qt_build, ffmpeg_prefix, archives):
         f"FFmpeg {FFMPEG_VERSION} source: {SOURCES['ffmpeg'][0]}\n"
         + "Configure flags:\n" + "\n".join(FFMPEG_FLAGS) + "\n")
     (resources / "QTMULTIMEDIA-BUILD.txt").write_text(
-        f"Qt Multimedia {QT_VERSION} source: {SOURCES['qtmultimedia'][0]}\n"
-        "Applied qtmultimedia-6.11.1-sdk26.patch before CMake configure.\n"
+        f"Qt Multimedia {qt_version} source: {SOURCES['qtmultimedia-' + qt_version][0]}\n"
+        f"Applied {PATCH.name} before CMake configure.\n"
         "Linked against LGPL-only FFmpeg 7.1.3 with software decoding selected at runtime.\n")
     manifest = {
-        "qt_version": QT_VERSION,
+        "qt_version": qt_version,
         "ffmpeg_version": FFMPEG_VERSION,
         "ffmpeg_license": "LGPL-2.1-or-later",
         "ffmpeg_configure": FFMPEG_FLAGS,
-        "sources": {name: {"url": SOURCES[name][0], "sha256": SOURCES[name][1]}
-                    for name in SOURCES},
+        "sources": {name: {"url": SOURCES[key][0], "sha256": SOURCES[key][1]}
+                    for name, key in (("ffmpeg", "ffmpeg"),
+                                      ("qtmultimedia", "qtmultimedia-" + qt_version))},
         "artifacts": {str(path.relative_to(contents)): sha256(path) for path in binaries},
     }
     (base / "stage" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Private multimedia runtime staged at {contents}")
+
+
+def sdk_version(qmake):
+    if not qmake or not Path(qmake).is_file():
+        raise RuntimeError("Qt qmake6 was not found; set XSHOT_QMAKE to a supported SDK's bin/qmake6")
+    version = capture(qmake, "-query", "QT_VERSION")
+    if version not in SUPPORTED_QT:
+        raise RuntimeError(
+            f"Qt SDK {version} is unsupported; select matching Qt {', '.join(SUPPORTED_QT)} "
+            "with XSHOT_QMAKE before building")
+    libs = Path(capture(qmake, "-query", "QT_INSTALL_LIBS"))
+    for module in ("QtCore", "QtGui", "QtQuick", "QtMultimedia", "QtQuickTimeline",
+                   "QtQuickTimelineBlendTrees", "QtShaderTools", "QtSvg"):
+        library = libs / f"{module}.framework/Versions/A/{module}"
+        if not library.is_file():
+            raise RuntimeError(f"Selected Qt SDK lacks {module}: {library}")
+        linked = capture("otool", "-arch", "arm64", "-L", library)
+        own = next((line for line in linked.splitlines()
+                    if f"/{module}.framework/Versions/A/{module}" in line
+                    and "current version" in line), "")
+        if f"current version {version})" not in own:
+            raise RuntimeError(f"Selected Qt SDK has a mismatched {module} framework: {library}")
+    return version
 
 
 def main():
@@ -188,21 +227,34 @@ def main():
     parser.add_argument("--build-dir", type=Path,
                         default=ROOT / "build/tools/mac-multimedia-runtime")
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--qmake", default=os.environ.get("XSHOT_QMAKE") or shutil.which("qmake6"))
+    parser.add_argument("--check-sdk", action="store_true",
+                        help="validate the selected Qt SDK before building the app or helper")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("This runtime is built on macOS only")
-    if capture("qmake6", "-query", "QT_VERSION") != QT_VERSION:
-        parser.error(f"The installed Qt SDK must be {QT_VERSION}")
+    qt_version = sdk_version(args.qmake)
+    if args.check_sdk:
+        print(f"Qt SDK {qt_version}: {capture(args.qmake, '-query', 'QT_INSTALL_PREFIX')}")
+        return
     if args.jobs < 1:
         parser.error("--jobs must be positive")
 
     base = args.build_dir.resolve()
     base.mkdir(parents=True, exist_ok=True)
     ffmpeg_archive, ffmpeg_source = source_tree(base, "ffmpeg")
-    qt_archive, qt_source = source_tree(base, "qtmultimedia")
+    qt_archive, qt_source = source_tree(base, "qtmultimedia-" + qt_version)
     patch_stamp = qt_source / ".xshot-sdk26-patched"
     patch_digest = sha256(PATCH)
     if not patch_stamp.exists() or patch_stamp.read_text() != patch_digest:
+        # Re-extract the pinned source when our patch changes. Applying a new
+        # patch over a partially patched tree can silently mix versions.
+        shutil.rmtree(qt_source)
+        run(["tar", "-xf", qt_archive, "-C", qt_archive.parent])
+        (qt_source / ".xshot-extracted").touch()
+        old_build = base / f"qtmultimedia-build-{qt_version}"
+        if old_build.exists():
+            shutil.rmtree(old_build)
         run(["patch", "-p1", "-i", PATCH], cwd=qt_source)
         patch_stamp.write_text(patch_digest)
 
@@ -224,14 +276,15 @@ def main():
     # wins Clang's -I search order and prevents accidental FFmpeg-major ABI mix.
     priority_headers = base / "ffmpeg-headers-priority"
     shutil.copytree(ffmpeg_prefix / "include", priority_headers, dirs_exist_ok=True)
-    qt_build = base / "qtmultimedia-build"
-    qt_prefix = capture("qmake6", "-query", "QT_INSTALL_PREFIX")
+    qt_build = base / f"qtmultimedia-build-{qt_version}"
+    qt_prefix = capture(args.qmake, "-query", "QT_INSTALL_PREFIX")
     run([
         "cmake", "-S", qt_source, "-B", qt_build, "-G", "Unix Makefiles",
         f"-DCMAKE_PREFIX_PATH={qt_prefix}", f"-DCMAKE_INSTALL_PREFIX={qt_prefix}",
         f"-DCMAKE_STAGING_PREFIX={base / 'qt-prefix'}",
         "-DQT_FEATURE_ffmpeg=ON", f"-DFFMPEG_DIR={ffmpeg_prefix}",
         "-DQT_NO_APPLE_SDK_AND_XCODE_CHECK=ON",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
         f"-DCMAKE_CXX_FLAGS=-I{priority_headers}",
         f"-DCMAKE_OBJCXX_FLAGS=-I{priority_headers}",
     ], log=base / "qtmultimedia-configure.log")
@@ -248,7 +301,7 @@ def main():
         if re.search(r"/opt/homebrew/include/libav(?:codec|format|util)/", text):
             raise RuntimeError(f"Qt plugin mixed Homebrew FFmpeg headers: {path}")
     stage_runtime(base, qt_build, ffmpeg_prefix,
-                  {"ffmpeg": ffmpeg_archive, "qtmultimedia": qt_archive})
+                  {"ffmpeg": ffmpeg_archive, "qtmultimedia": qt_archive}, qt_version)
 
 
 if __name__ == "__main__":

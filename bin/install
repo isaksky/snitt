@@ -2,41 +2,8 @@
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 [ "$(uname -s)" = Darwin ] || { echo 'Use the Windows package Install.cmd on Windows.' >&2; exit 1; }
-"$ROOT/bin/build"
-DEPLOY="$(command -v macdeployqt || true)"
-if [ -z "$DEPLOY" ] && command -v brew >/dev/null 2>&1; then
-    DEPLOY="$(brew --prefix)/opt/qtbase/bin/macdeployqt"
-fi
-[ -x "$DEPLOY" ] || { echo 'Qt macdeployqt is required.' >&2; exit 1; }
+"$ROOT/bin/stage-macos"
 PACKAGE="$ROOT/build/package/macos"
-mkdir -p "$PACKAGE"
-# Only the generated staging bundle is replaced here.
-rm -rf "$PACKAGE/xshot.app"
-ditto "$ROOT/build/xshot.app" "$PACKAGE/xshot.app"
-# Homebrew places Qt Quick Timeline in a separate keg. macdeployqt searches
-# one explicit libpath, so expose those frameworks in our existing build rpath.
-mkdir -p "$ROOT/build/lib"
-for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
-    ln -sfn "$(brew --prefix qtquicktimeline)/lib/$framework.framework" \
-        "$ROOT/build/lib/$framework.framework"
-done
-"$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
-# The Quick Timeline blend-trees plugin can be found only after its parent
-# Timeline framework has been copied on the first pass.
-if [ ! -f "$PACKAGE/xshot.app/Contents/Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees" ]; then
-    "$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
-fi
-for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
-    [ -f "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework/Versions/A/$framework" ] || {
-        echo "Qt deployment did not bundle $framework" >&2
-        exit 1
-    }
-done
-# macdeployqt deploys Homebrew's Darwin-only multimedia plugin. Add the
-# private software playback backend after deployment so its FFmpeg libraries
-# and pinned source material remain exactly as built and signed.
-ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$PACKAGE/xshot.app/Contents"
-"$ROOT/bin/sign-macos" "$PACKAGE/xshot.app"
 DEST="$HOME/Applications/xshot.app"
 AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
 DOMAIN="gui/$(id -u)"

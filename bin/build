@@ -3,7 +3,9 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-if command -v qmake6 >/dev/null 2>&1; then
+if [ -n "${XSHOT_QMAKE:-}" ]; then
+    QMAKE="$XSHOT_QMAKE"
+elif command -v qmake6 >/dev/null 2>&1; then
     QMAKE=qmake6
 elif command -v qmake >/dev/null 2>&1; then
     QMAKE=qmake
@@ -15,11 +17,22 @@ else
     echo "Qt 6 qmake is required. See README.md for dependencies." >&2
     exit 1
 fi
+QMAKE="$(command -v "$QMAKE" || true)"
+[ -n "$QMAKE" ] && [ -x "$QMAKE" ] || {
+    echo "Selected Qt qmake6 is unavailable; set XSHOT_QMAKE to a supported SDK's bin/qmake6." >&2
+    exit 1
+}
 
-case "$("$QMAKE" -query QT_VERSION)" in
-    6.*) ;;
-    *) echo "Qt 6 is required." >&2; exit 1 ;;
-esac
+if [ "$(uname -s)" = Darwin ]; then
+    # Fail before an expensive app/helper build if the selected SDK cannot
+    # match a pinned private multimedia plugin source release.
+    "$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE" --check-sdk
+else
+    case "$("$QMAKE" -query QT_VERSION)" in
+        6.*) ;;
+        *) echo "Qt 6 is required." >&2; exit 1 ;;
+    esac
+fi
 
 JOBS=1
 if command -v nproc >/dev/null 2>&1; then
@@ -29,14 +42,28 @@ elif command -v sysctl >/dev/null 2>&1; then
 fi
 
 mkdir -p "$ROOT/build"
-cd "$ROOT/build"
-"$QMAKE" "$ROOT/xshot.pro"
+printf '%s\n' "$QMAKE" > "$ROOT/build/.xshot-qmake"
+if [ "$(uname -s)" = Darwin ]; then
+    QT_VERSION="$("$QMAKE" -query QT_VERSION)"
+    APP_BUILD="$ROOT/build/mac-app-$QT_VERSION"
+else
+    APP_BUILD="$ROOT/build"
+fi
+mkdir -p "$APP_BUILD"
+cd "$APP_BUILD"
+if [ "$(uname -s)" = Darwin ]; then
+    "$QMAKE" "$ROOT/xshot.pro" QMAKE_APPLE_DEVICE_ARCHS=arm64
+else
+    "$QMAKE" "$ROOT/xshot.pro"
+fi
 make -j"$JOBS"
 # qmake's generated plist target has no input dependencies. Refresh our fixed
 # metadata even when an older development bundle already exists.
 if [ "$(uname -s)" = Darwin ]; then
-    cp "$ROOT/platform/macos/Info.plist" "$ROOT/build/xshot.app/Contents/Info.plist"
+    cp "$ROOT/platform/macos/Info.plist" "$APP_BUILD/xshot.app/Contents/Info.plist"
+    "$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE"
+    rm -rf "$ROOT/build/xshot.app"
+    ditto "$APP_BUILD/xshot.app" "$ROOT/build/xshot.app"
     "$ROOT/bin/build-thumbnail-helper-macos"
-    "$ROOT/bin/build-mac-multimedia-runtime"
     ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$ROOT/build/xshot.app/Contents"
 fi

@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+# Acquire a private, version-pinned Qt SDK without replacing Homebrew Qt.
+set -eu
+[ "$(uname -s)" = Darwin ] || { echo 'macOS is required.' >&2; exit 1; }
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SDK="$ROOT/build/tools/qt-sdk"
+VENV="$ROOT/build/tools/qt-sdk-bootstrap/venv"
+QMAKE="$SDK/6.11.2/macos/bin/qmake6"
+if [ ! -x "$QMAKE" ] || [ ! -f "$SDK/6.11.2/macos/lib/QtShaderTools.framework/Versions/A/QtShaderTools" ]; then
+    python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip install --disable-pip-version-check 'aqtinstall==3.3.0'
+    cd "$ROOT/build/tools/qt-sdk-bootstrap"
+    "$VENV/bin/aqt" install-qt mac desktop 6.11.2 clang_64 \
+        -m qtmultimedia qtquicktimeline --archives qtbase qtdeclarative qtsvg \
+        -O "$SDK" --timeout 30
+    "$VENV/bin/aqt" install-qt mac desktop 6.11.2 clang_64 \
+        -m qtshadertools --noarchives -O "$SDK" --timeout 30
+fi
+"$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE" --check-sdk
+echo "Use XSHOT_QMAKE=$QMAKE with bin/stage-macos, bin/install, or bin/build."
