@@ -21,6 +21,9 @@
 #include <QWheelEvent>
 #include <QDir>
 #include <QStandardPaths>
+#include <QMediaPlayer>
+#include <QVideoFrame>
+#include <QVideoSink>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -991,8 +994,28 @@ void EditorTests::qmlRecordingReview() {
     auto *bar = review->findChild<QObject *>("recordingTrimBar");
     auto *player = review->findChild<QObject *>("recordingReviewPlayer");
     QVERIFY(bar && player);
+    auto *videoOutput = qvariant_cast<QObject *>(player->property("videoOutput"));
+    QVERIFY(videoOutput);
+    auto *videoSink = qvariant_cast<QVideoSink *>(videoOutput->property("videoSink"));
+    QVERIFY(videoSink);
+    QSignalSpy firstFrames(videoSink, &QVideoSink::videoFrameChanged);
     QTRY_VERIFY_WITH_TIMEOUT(bar->property("endSec").toDouble() > 2.0, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 2000, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &signal : firstFrames)
+            if (qvariant_cast<QVideoFrame>(signal.first()).isValid()) return true;
+        return false;
+    })(), 45000);
+    QTRY_VERIFY(!player->property("priming").toBool());
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
+    QVERIFY(qAbs(player->property("position").toLongLong()) < 150);
+    QVERIFY(qAbs(bar->property("playheadSec").toDouble()) < 0.15);
+    const QImage primedPreview = review->grabWindow();
+    QVERIFY(!primedPreview.isNull());
+    const QColor previewCenter = primedPreview.pixelColor(primedPreview.width() / 2,
+        primedPreview.height() / 3);
+    QVERIFY2(previewCenter.red() > 40 || previewCenter.green() > 40 || previewCenter.blue() > 40,
+        "The paused preview should show video pixels before Play");
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
     QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 500, 15000);
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
@@ -1065,9 +1088,17 @@ void EditorTests::qmlRecordingReview() {
     QTRY_VERIFY(!review->isVisible());
     QVERIFY(QFileInfo(clip).size() > 0);
     finalized.clear();
+    firstFrames.clear();
     trim->open(clip);
     QTRY_VERIFY(review->isVisible());
     QTRY_VERIFY_WITH_TIMEOUT(trim->duration() > 2000 && review->property("canEdit").toBool(), 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &signal : firstFrames)
+            if (qvariant_cast<QVideoFrame>(signal.first()).isValid()) return true;
+        return false;
+    })(), 45000);
+    QTRY_VERIFY(!player->property("priming").toBool());
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
     bar->setProperty("startSec", 0.5);
     bar->setProperty("endSec", 2.0);
     auto *save = review->findChild<QObject *>("recordingSaveTrimButton");

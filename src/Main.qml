@@ -316,6 +316,7 @@ ApplicationWindow {
 
         function togglePlay() {
             if (!canEdit) return
+            if (reviewPlayer.priming) reviewPlayer.finishPriming()
             if (reviewPlayer.playbackState === MediaPlayer.PlayingState) { reviewPlayer.pause(); return }
             if (reviewPlayer.position / 1000 < trimBar.startSec
                     || reviewPlayer.position / 1000 >= trimBar.endSec - 0.01)
@@ -324,6 +325,7 @@ ApplicationWindow {
         }
         function seek(seconds) {
             if (!canEdit) return
+            if (reviewPlayer.priming) reviewPlayer.finishPriming()
             trimBar.playheadSec = Math.max(trimBar.startSec, Math.min(trimBar.endSec,
                 trimBar.playheadSec + seconds))
             reviewPlayer.position = Math.round(trimBar.playheadSec * 1000)
@@ -394,7 +396,40 @@ ApplicationWindow {
             objectName: "recordingReviewPlayer"
             source: reviewWindow.playbackSource
             videoOutput: reviewVideo
-            audioOutput: AudioOutput {}
+            audioOutput: AudioOutput { muted: reviewPlayer.priming }
+            property bool primed: false
+            property bool priming: false
+            property bool finishingPrime: false
+
+            function startPriming() {
+                if (primed || priming || !reviewWindow.visible || reviewWindow.preparingExport
+                        || source.toString() === "") return
+                primed = true
+                priming = true
+                position = Math.round(trimBar.startSec * 1000)
+                play()
+                primeFallback.restart()
+            }
+            function finishPriming() {
+                if (!priming || finishingPrime) return
+                finishingPrime = true
+                primeFallback.stop()
+                pause()
+                position = Math.round(trimBar.startSec * 1000)
+                trimBar.playheadSec = trimBar.startSec
+                priming = false
+                finishingPrime = false
+            }
+            onSourceChanged: {
+                primeFallback.stop()
+                priming = false
+                primed = false
+                finishingPrime = false
+            }
+            onMediaStatusChanged: {
+                if (mediaStatus === MediaPlayer.LoadedMedia || mediaStatus === MediaPlayer.BufferedMedia)
+                    startPriming()
+            }
             onDurationChanged: duration => {
                 if (duration > 0) {
                     backend.trim.setDuration(duration)
@@ -402,6 +437,7 @@ ApplicationWindow {
                 }
             }
             onPositionChanged: position => {
+                if (priming) return
                 if (playbackState === MediaPlayer.PlayingState
                         && position / 1000 >= trimBar.endSec && trimBar.endSec > 0) {
                     pause()
@@ -413,6 +449,11 @@ ApplicationWindow {
                 if (reviewWindow.visible && !backend.trim.busy)
                     playbackError.text = "Playback unavailable: " + errorString
             }
+        }
+        Timer {
+            id: primeFallback
+            interval: 500
+            onTriggered: reviewPlayer.finishPriming()
         }
         ColumnLayout {
             anchors.fill: parent
@@ -439,6 +480,12 @@ ApplicationWindow {
                     anchors.margins: 4
                     fillMode: VideoOutput.PreserveAspectFit
                 }
+                Connections {
+                    target: reviewVideo.videoSink
+                    function onVideoFrameChanged(frame) {
+                        reviewPlayer.finishPriming()
+                    }
+                }
                 Label {
                     id: playbackError
                     anchors.centerIn: parent
@@ -451,9 +498,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 ActionButton {
                     objectName: "recordingReviewPlayButton"
-                    text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia ? "Loading…"
+                    text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia || reviewPlayer.priming ? "Loading…"
                         : reviewPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
-                    enabled: reviewWindow.canEdit && reviewPlayer.duration > 0
+                    enabled: reviewWindow.canEdit && reviewPlayer.duration > 0 && !reviewPlayer.priming
                     onClicked: reviewWindow.togglePlay()
                 }
                 Label {
@@ -476,7 +523,10 @@ ApplicationWindow {
                 durationSec: backend.trim.duration / 1000
                 thumbCount: 12
                 thumbnails: backend.trim.thumbnails
-                onScrub: seconds => reviewPlayer.position = Math.round(seconds * 1000)
+                onScrub: seconds => {
+                    if (reviewPlayer.priming) reviewPlayer.finishPriming()
+                    reviewPlayer.position = Math.round(seconds * 1000)
+                }
                 onViewChanged: (startSeconds, endSeconds) =>
                     backend.trim.setThumbnailWindow(Math.round(startSeconds * 1000), Math.round(endSeconds * 1000))
             }
