@@ -37,6 +37,7 @@ private slots:
     void scaledGesturesAndClipboard();
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
+    void qmlToolbarPasteReplacesTextDraft();
     void qmlWheelSizes();
     void qmlSaveAndClose();
     void qmlKeyboardCommands();
@@ -322,6 +323,86 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(window->property("visible").toBool());
     QVERIFY(!window->property("shortcutsOn").toBool());
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+}
+
+void EditorTests::qmlToolbarPasteReplacesTextDraft() {
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
+    QGuiApplication::setFont(QFont("Helvetica"));
+#endif
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QImage large(800, 600, QImage::Format_ARGB32_Premultiplied);
+    large.fill(Qt::white);
+    const QString sourcePath = temporary.filePath("large.png");
+    QVERIFY(large.save(sourcePath));
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(sourcePath));
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    auto *text = window->findChild<QObject *>("annotationText");
+    auto *frame = window->findChild<QObject *>("annotationTextFrame");
+    auto *paste = visualItem(window->contentItem(), "pasteImageButton");
+    QVERIFY(canvas); QVERIFY(text); QVERIFY(frame); QVERIFY(paste);
+    QTRY_COMPARE(canvas->imageWidth(), 800);
+    canvas->setTool("text");
+    const QPointF draftPoint = canvas->imageRect().topLeft() + QPointF(400, 400) * canvas->imageScale();
+    canvas->begin(draftPoint.x(), draftPoint.y());
+    QVERIFY(window->property("editingText").toBool());
+    text->setProperty("text", "OLD DRAFT");
+    const qreal oldY = window->property("textY").toReal();
+    QVERIFY(oldY > 80);
+
+    QGuiApplication::clipboard()->setText("no image");
+    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QCOMPARE(canvas->imageWidth(), 800);
+    QVERIFY(window->property("editingText").toBool());
+    QCOMPARE(text->property("text").toString(), QString("OLD DRAFT"));
+    QCOMPARE(window->property("textY").toReal(), oldY);
+    QVERIFY(!canvas->canUndo());
+
+    QImage small(80, 60, QImage::Format_ARGB32_Premultiplied);
+    small.fill(QColor("#51a3ce"));
+    QGuiApplication::clipboard()->setImage(small);
+    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QCOMPARE(canvas->imageWidth(), 80);
+    QCOMPARE(canvas->imageHeight(), 60);
+    QVERIFY(!window->property("editingText").toBool());
+    QCOMPARE(text->property("text").toString(), QString());
+    QCOMPARE(window->property("textX").toReal(), 0.0);
+    QCOMPARE(window->property("textY").toReal(), 0.0);
+    QCOMPARE(window->property("textWidth").toReal(), 0.0);
+    QVERIFY(frame->property("height").toReal() >= 0);
+    QVERIFY(window->property("shortcutsOn").toBool());
+    QVERIFY(canvas->hasActiveFocus());
+    QVERIFY(!canvas->canUndo());
+    QVERIFY(canvas->copy());
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(small.format()), small);
+    const QString savedPath = canvas->saveTo(temporary.path());
+    QVERIFY(!savedPath.isEmpty());
+    QCOMPARE(QImage(savedPath).convertToFormat(small.format()), small);
+
+    QVERIFY(canvas->loadRegions({small, small}));
+    QVERIFY(canvas->arranging());
+    QGuiApplication::clipboard()->setText("still no image");
+    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(canvas->arranging());
+    QCOMPARE(canvas->regionCount(), 2);
+    QGuiApplication::clipboard()->setImage(small);
+    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(!canvas->arranging());
+    QCOMPARE(canvas->regionCount(), 0);
+    QCOMPARE(canvas->imageWidth(), 80);
 }
 
 void EditorTests::qmlWheelSizes() {

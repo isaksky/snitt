@@ -45,6 +45,17 @@ ApplicationWindow {
         canvas.forceActiveFocus()
     }
     function chooseTool(tool) { commitText(); canvas.tool = tool }
+    function pasteImage() {
+        if (!canvas.paste()) return
+        // Pasting replaces the whole document. Discard an unfinished draft only
+        // after a successful paste so an empty clipboard leaves it intact.
+        editingText = false
+        textInput.text = ""
+        textX = 0
+        textY = 0
+        textWidth = 0
+        canvas.forceActiveFocus()
+    }
     function capture() { startCapture(false, false) }
     function captureMultiple() { startCapture(true, false) }
     function captureVideo() { startCapture(false, true) }
@@ -375,7 +386,7 @@ ApplicationWindow {
     Shortcut { sequence: "Right"; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
     Shortcut { sequences: [StandardKey.Open]; enabled: win.shortcutsOn; onActivated: openDialog.open() }
     Shortcut { sequences: [StandardKey.New]; enabled: win.shortcutsOn; onActivated: win.capture() }
-    Shortcut { sequences: [StandardKey.Paste]; enabled: win.shortcutsOn; onActivated: canvas.paste() }
+    Shortcut { sequences: [StandardKey.Paste]; enabled: win.shortcutsOn; onActivated: win.pasteImage() }
     Shortcut {
         sequence: "C"; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.finish()
@@ -716,7 +727,7 @@ ApplicationWindow {
             Layout.alignment: Qt.AlignHCenter
             ActionButton { text: "Open image"; onClicked: openDialog.open(); ToolTip.visible: hovered; ToolTip.text: "Open image (" + win.commandKey + "O)" }
             Label { text: "or"; color: "#9ba5b5" }
-            ActionButton { text: "Paste image"; onClicked: canvas.paste(); ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)" }
+            ActionButton { text: "Paste image"; onClicked: win.pasteImage(); ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)" }
         }
         ActionButton { text: "Multiple regions"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureMultiple(); ToolTip.visible: hovered; ToolTip.text: "Capture multiple regions (M)" }
         ActionButton { text: "Record region"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureVideo(); ToolTip.visible: hovered; ToolTip.text: "Record a region (V)" }
@@ -737,7 +748,7 @@ ApplicationWindow {
                 ActionButton { text: ""; icon.source: "qrc:/icons/copy.svg"; Accessible.name: "Multiple regions"; ToolTip.visible: hovered; ToolTip.text: "Multiple regions (M)"; onClicked: win.captureMultiple() }
                 ActionButton { text: ""; icon.source: "qrc:/icons/video.svg"; Accessible.name: "Record region"; ToolTip.visible: hovered; ToolTip.text: "Record region (V)"; onClicked: win.captureVideo() }
                 ActionButton { text: ""; icon.source: "qrc:/icons/folder-open.svg"; Accessible.name: "Open image"; ToolTip.visible: hovered; ToolTip.text: "Open image (" + win.commandKey + "O)"; onClicked: openDialog.open() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/clipboard.svg"; Accessible.name: "Paste image"; ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)"; onClicked: canvas.paste() }
+                ActionButton { objectName: "pasteImageButton"; text: ""; icon.source: "qrc:/icons/clipboard.svg"; Accessible.name: "Paste image"; ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)"; onClicked: win.pasteImage() }
                 ActionButton { text: ""; icon.source: "qrc:/icons/undo-2.svg"; Accessible.name: "Undo"; ToolTip.visible: hovered; ToolTip.text: "Undo (" + win.commandKey + "Z)"; visible: !canvas.arranging; enabled: canvas.canUndo && !win.editingText; onClicked: canvas.undo() }
                 ActionButton { text: ""; icon.source: "qrc:/icons/redo-2.svg"; Accessible.name: "Redo"; ToolTip.visible: hovered; ToolTip.text: "Redo (" + win.redoKey + ")"; visible: !canvas.arranging; enabled: canvas.canRedo && !win.editingText; onClicked: canvas.redo() }
             }
