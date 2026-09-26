@@ -254,7 +254,7 @@ bool TrimSession::retryThumbnailBeforeEof() {
     const qint64 time = m_thumbnailStartMs
         + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
     if (m_thumbnailLookbackMs > 0 && m_thumbnailLookbackMs >= time) return false;
-    m_thumbnailLookbackMs = m_thumbnailLookbackMs == 0 ? qMin<qint64>(250, qMax<qint64>(1, time))
+    m_thumbnailLookbackMs = m_thumbnailLookbackMs == 0 ? qMin<qint64>(2000, qMax<qint64>(1, time))
         : qMin<qint64>(time, m_thumbnailLookbackMs * 2);
     QFile::remove(m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg"));
     startThumbnailAttempt();
