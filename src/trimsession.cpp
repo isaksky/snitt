@@ -45,7 +45,7 @@ bool validClip(const ClipInfo &info) { return info.duration > 0 && info.width > 
 TrimSession::TrimSession(QObject *parent) : QObject(parent) {
     connect(&m_thumbProcess, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         const int index = m_nextThumb++;
-        if (!m_thumbDir || m_path.isEmpty()) return;
+        if (!m_thumbDir || m_path.isEmpty() || index < 0 || index >= m_thumbnails.size()) return;
         const QString file = m_thumbDir->filePath(QString::number(index) + ".jpg");
         if (status == QProcess::NormalExit && code == 0 && QFileInfo(file).size() > 0)
             m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
@@ -72,6 +72,7 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
             m_busy = m_canceling = false;
             m_progress = 0;
             emit changed();
+            resumeThumbnails();
             return;
         }
         exportFinished(status == QProcess::NormalExit && code == 0,
@@ -182,7 +183,9 @@ void TrimSession::generateThumbnails() {
 
 void TrimSession::nextWindowsThumbnail() {
 #ifdef Q_OS_WIN
-    if (m_path.isEmpty() || m_nextThumb >= thumbnailCount || !m_thumbDir) return;
+    while (m_nextThumb < m_thumbnails.size() && !m_thumbnails.at(m_nextThumb).isEmpty())
+        ++m_nextThumb;
+    if (m_path.isEmpty() || m_busy || m_nextThumb >= thumbnailCount || !m_thumbDir) return;
     const QString ffmpeg = recording::toolPath("ffmpeg");
     if (ffmpeg.isEmpty()) return;
     const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
@@ -206,6 +209,20 @@ bool TrimSession::stopThumbnails() {
         || m_thumbProcess.state() == QProcess::NotRunning;
 #else
     return true;
+#endif
+}
+
+void TrimSession::resumeThumbnails() {
+#ifdef Q_OS_WIN
+    if (m_path.isEmpty() || m_busy || !m_thumbDir || !m_thumbDir->isValid()
+        || m_thumbProcess.state() != QProcess::NotRunning) return;
+    for (int index = 0; index < m_thumbnails.size(); ++index) {
+        if (m_thumbnails.at(index).isEmpty()) {
+            m_nextThumb = index;
+            nextWindowsThumbnail();
+            return;
+        }
+    }
 #endif
 }
 
@@ -305,6 +322,7 @@ void TrimSession::cancelExport() {
     }
 #endif
     emit changed();
+    resumeThumbnails();
 }
 
 void TrimSession::exportFinished(bool success, const QString &detail) {
@@ -390,6 +408,7 @@ void TrimSession::fail(const QString &message) {
     m_progress = 0;
     m_problem = message;
     emit changed();
+    resumeThumbnails();
 }
 
 void TrimSession::removeTemporaryOutput() {

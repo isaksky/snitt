@@ -32,6 +32,9 @@ private slots:
     void trimThumbnailsFollowWindow();
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
+#ifdef Q_OS_WIN
+    void trimWindowsThumbnailsResumeAfterCancelAndFailure();
+#endif
 #ifdef Q_OS_MACOS
     void nativeTrimProgressAndReset();
     void cancellationTimeoutDiscards();
@@ -237,6 +240,86 @@ void RecordingTests::trimReplacementFailurePreservesOriginal() {
     source.close();
     QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
 }
+
+#ifdef Q_OS_WIN
+void RecordingTests::trimWindowsThumbnailsResumeAfterCancelAndFailure() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY(!path.isEmpty());
+    QFile source(path);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256);
+    source.close();
+    const auto allReady = [](const TrimSession &trim) {
+        if (trim.thumbnails().size() != 12) return false;
+        for (const QString &url : trim.thumbnails()) if (url.isEmpty()) return false;
+        return true;
+    };
+    const auto noTemporaryOutput = [&] {
+        return QDir(directory.path()).entryList({".xshot-trim-*.mp4", ".xshot-original-*.mp4"}, QDir::Files).isEmpty();
+    };
+    {
+        TrimSession trim;
+        trim.open(path);
+        trim.setDuration(4000);
+        QVERIFY(!allReady(trim)); // Export starts before the sequential filmstrip finishes.
+        trim.exportRange(500, 2500);
+        QVERIFY(trim.busy());
+        trim.cancelExport();
+        QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(allReady(trim), 45000);
+        QCOMPARE(trim.path(), path);
+        QVERIFY(noTemporaryOutput());
+        QVERIFY(source.open(QIODevice::ReadOnly));
+        QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+        source.close();
+    }
+    class FailOnce : public TrimSession {
+    public:
+        bool failNext = true;
+    protected:
+        bool replaceFile(const QString &temporary, const QString &originalPath, QString *problem) override {
+            if (failNext) {
+                failNext = false;
+                *problem = QStringLiteral("Simulated replacement failure; original preserved.");
+                return false;
+            }
+            return TrimSession::replaceFile(temporary, originalPath, problem);
+        }
+    } trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    trim.setDuration(4000);
+    QVERIFY(!allReady(trim));
+    trim.exportRange(1100, 2100);
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 60000);
+    QVERIFY(!trim.problem().isEmpty());
+    QVERIFY(finalized.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(allReady(trim), 45000);
+    QVERIFY(noTemporaryOutput());
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+    source.close();
+    trim.exportRange(1100, 2100);
+    QTRY_VERIFY_WITH_TIMEOUT(finalized.size() == 1 || !trim.problem().isEmpty(), 60000);
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), path);
+    QVERIFY(trim.path().isEmpty());
+    QVERIFY(noTemporaryOutput());
+    QTemporaryDir nextDirectory;
+    QVERIFY(nextDirectory.isValid());
+    const QString nextPath = makeFourColorClip(nextDirectory.path());
+    QVERIFY(!nextPath.isEmpty());
+    trim.open(nextPath);
+    trim.setDuration(4000);
+    QTRY_VERIFY_WITH_TIMEOUT(allReady(trim), 45000);
+    const QString thumbnailDirectory = QFileInfo(QUrl(trim.thumbnails().first()).toLocalFile()).absolutePath();
+    for (const QString &url : trim.thumbnails())
+        QCOMPARE(QFileInfo(QUrl(url).toLocalFile()).absolutePath(), thumbnailDirectory);
+}
+#endif
 
 #ifdef Q_OS_MACOS
 void RecordingTests::nativeTrimProgressAndReset() {
