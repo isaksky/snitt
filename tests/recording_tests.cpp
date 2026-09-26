@@ -10,6 +10,7 @@
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QWindow>
 #include "backend.h"
 #include "regionselector.h"
 #include "videorecorder.h"
@@ -138,6 +139,18 @@ void RecordingTests::desktopRecording() {
     QTest::qWait(100);
 
     Backend backend;
+#ifdef Q_OS_WIN
+    QWindow startupOverlay, controlsOverlay;
+    startupOverlay.setFlags(Qt::Tool | Qt::FramelessWindowHint);
+    controlsOverlay.setFlags(Qt::Tool | Qt::FramelessWindowHint);
+    startupOverlay.setGeometry(display.x() + 160, display.y() + 190, 120, 120);
+    controlsOverlay.setGeometry(display.x() + 320, display.y() + 190, 120, 120);
+    startupOverlay.setOpacity(0);
+    controlsOverlay.setOpacity(0);
+    startupOverlay.show(); controlsOverlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&startupOverlay));
+    QVERIFY(QTest::qWaitForWindowExposed(&controlsOverlay));
+#endif
     QElapsedTimer startup;
     qint64 processMs = -1, readyMs = -1;
     connect(&backend, &Backend::recordingProcessStarted, this, [&] { processMs = startup.elapsed(); });
@@ -167,6 +180,10 @@ void RecordingTests::desktopRecording() {
     startup.start();
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, end);
     QVERIFY2(backend.recording(), qPrintable(error));
+#ifdef Q_OS_WIN
+    QVERIFY(backend.recordingProtectionPending());
+    QVERIFY2(backend.beginProtectedRecording(&startupOverlay, &controlsOverlay), qPrintable(error));
+#endif
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     qInfo("recording startup: process=%lld ms, first frame/ready=%lld ms", processMs, readyMs);
@@ -237,6 +254,10 @@ void RecordingTests::desktopRecording() {
     QTest::mouseMove(selector, end);
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, end);
     QVERIFY2(backend.recording(), qPrintable(error));
+#ifdef Q_OS_WIN
+    QVERIFY(backend.recordingProtectionPending());
+    QVERIFY2(backend.beginProtectedRecording(&startupOverlay, &controlsOverlay), qPrintable(error));
+#endif
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     const QString canceledFile = backend.recordingPath();

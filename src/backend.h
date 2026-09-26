@@ -28,12 +28,14 @@ class Backend : public QObject {
     Q_PROPERTY(QString recordingPath READ recordingPath NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingRegion READ recordingRegion NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingIndicatorGeometry READ recordingIndicatorGeometry NOTIFY recordingChanged)
+    Q_PROPERTY(bool recordingProtectionPending READ recordingProtectionPending NOTIFY recordingChanged)
 public:
     explicit Backend(QObject *parent = nullptr);
     ~Backend() override;
     bool capturing() const { return m_capturing; }
-    bool recording() const { return m_recorder.active(); }
-    bool startingRecording() const { return m_recorder.starting(); }
+    bool recording() const { return m_pendingRecording || m_recorder.active(); }
+    bool startingRecording() const { return m_pendingRecording || m_recorder.starting(); }
+    bool recordingProtectionPending() const { return m_pendingRecording; }
     bool finishingRecording() const { return m_recorder.finishing(); }
     int recordingElapsed() const { return m_recorder.elapsed(); }
     QString recordingPath() const { return m_recorder.path(); }
@@ -41,8 +43,9 @@ public:
     QRect recordingIndicatorGeometry() const { return m_recordingIndicatorGeometry; }
     static QRect indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available);
     Q_INVOKABLE void capture(bool multiple = false, bool video = false);
-    Q_INVOKABLE void finishRecording() { m_recorder.finish(); }
-    Q_INVOKABLE void cancelRecording() { m_recorder.cancel(); }
+    Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
+    Q_INVOKABLE void cancelRecording();
+    Q_INVOKABLE bool beginProtectedRecording(QObject *indicator, QObject *controls);
     Q_INVOKABLE bool protectRecordingControls(QObject *window);
     Q_INVOKABLE bool revealFile(const QString &path) const { return recording::revealSavedFile(path); }
 signals:
@@ -58,6 +61,8 @@ signals:
     void recordingCanceled();
     void error(const QString &message);
 private:
+    friend class EditorTests;
+    bool windowsExclusionSupported() const;
     void finish(bool captured = false);
     void showSelectors();
     void captureNextScreen();
@@ -72,6 +77,12 @@ private:
     bool m_multiple = false;
     bool m_video = false;
     Recorder m_recorder;
+    bool m_pendingRecording = false;
+    recording::Source m_pendingSource;
+#ifdef Q_OS_WIN
+    enum class ExclusionTestMode { Native, ForceFailure, ForceLegacyVersion };
+    ExclusionTestMode m_exclusionTestMode = ExclusionTestMode::Native;
+#endif
     QRect m_recordingRegion;
     QRect m_recordingIndicatorGeometry;
     QTemporaryDir m_temp;

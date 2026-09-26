@@ -63,15 +63,70 @@ Backend::~Backend() {
 
 bool Backend::protectRecordingControls(QObject *object) {
 #ifdef Q_OS_WIN
+    if (!windowsExclusionSupported() || m_exclusionTestMode == ExclusionTestMode::ForceFailure)
+        return false;
     auto *window = qobject_cast<QWindow *>(object);
     if (!window) return false;
-    // Windows 10 2004+ omits this window from desktop capture. On older
-    // releases the same value falls back to the protected black rectangle.
-    return SetWindowDisplayAffinity(reinterpret_cast<HWND>(window->winId()), 0x00000011) != FALSE;
+    const HWND handle = reinterpret_cast<HWND>(window->winId());
+    constexpr DWORD excludeFromCapture = 0x00000011;
+    DWORD affinity = 0;
+    return SetWindowDisplayAffinity(handle, excludeFromCapture) != FALSE
+        && GetWindowDisplayAffinity(handle, &affinity) != FALSE
+        && affinity == excludeFromCapture;
 #else
     Q_UNUSED(object);
     return false;
 #endif
+}
+
+bool Backend::windowsExclusionSupported() const {
+#ifdef Q_OS_WIN
+    if (m_exclusionTestMode == ExclusionTestMode::ForceLegacyVersion) return false;
+    using VersionFunction = LONG (WINAPI *)(OSVERSIONINFOW *);
+    auto *versionFunction = reinterpret_cast<VersionFunction>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+    if (!versionFunction) return false;
+    OSVERSIONINFOW version = {};
+    version.dwOSVersionInfoSize = sizeof(version);
+    return versionFunction(&version) == 0
+        && (version.dwMajorVersion > 10
+            || (version.dwMajorVersion == 10 && version.dwBuildNumber >= 19041));
+#else
+    return false;
+#endif
+}
+
+bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls) {
+#ifdef Q_OS_WIN
+    if (!m_pendingRecording) return false;
+    QString problem;
+    if (!windowsExclusionSupported())
+        problem = QStringLiteral("Video recording needs Windows 10 version 2004 or later so xshot's controls can be excluded from the captured screen.");
+    else if (!protectRecordingControls(indicator) || !protectRecordingControls(controls))
+        problem = QStringLiteral("Could not exclude xshot's recording controls from the captured screen. Recording was canceled; try again after updating Windows or your display driver.");
+    if (!problem.isEmpty()) {
+        m_pendingRecording = false;
+        emit recordingChanged();
+        emit error(problem);
+        return false;
+    }
+    const recording::Source source = m_pendingSource;
+    m_pendingRecording = false;
+    m_recorder.start(source);
+    emit recordingChanged();
+    return m_recorder.active();
+#else
+    Q_UNUSED(indicator);
+    Q_UNUSED(controls);
+    return false;
+#endif
+}
+
+void Backend::cancelRecording() {
+    if (!m_pendingRecording) { m_recorder.cancel(); return; }
+    m_pendingRecording = false;
+    emit recordingChanged();
+    emit recordingCanceled();
 }
 
 QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available) {
@@ -276,7 +331,15 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
 #ifdef Q_OS_WIN
     DwmFlush();
 #endif
+#ifdef Q_OS_WIN
+    // The indicator and controls must both exist and be excluded before FFmpeg
+    // samples a frame. QML makes their windows transparent until this succeeds.
+    m_pendingSource = source;
+    m_pendingRecording = true;
+    emit recordingChanged();
+#else
     m_recorder.start(source);
+#endif
     finish(false);
 }
 

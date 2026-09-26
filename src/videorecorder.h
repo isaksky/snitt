@@ -45,6 +45,7 @@ private:
     void consumeProgress();
     void complete(int code, QProcess::ExitStatus status);
     void fail(const QString &message);
+    void discardCanceledOutput();
     void reset();
     QProcess m_process;
     QTimer m_timeout;
@@ -55,5 +56,7 @@ private:
     bool m_firstFrame = false;
     bool m_finishing = false;
     bool m_canceling = false;
+    bool m_discarding = false;
+    int m_discardAttempts = 0;
     int m_elapsed = 0;
 };

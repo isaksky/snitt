@@ -152,6 +152,7 @@ ApplicationWindow {
         flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput
         color: "transparent"
         visible: backend.startingRecording || completing
+        opacity: backend.recordingProtectionPending ? 0 : 1
         onVisibleChanged: if (visible) {
             const area = backend.recordingRegion
             let selectedScreen = screen
@@ -168,7 +169,8 @@ ApplicationWindow {
             x = placement.x
             y = placement.y
             raise()
-            Qt.callLater(() => backend.protectRecordingControls(startupIndicator))
+            if (Qt.platform.os === "windows")
+                Qt.callLater(() => backend.beginProtectedRecording(startupIndicator, recordingWindow))
         }
         Timer {
             id: completionTimer
@@ -229,6 +231,7 @@ ApplicationWindow {
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
         color: "#1b1e23"
         visible: backend.recording && !controlsHidden
+        opacity: backend.recordingProtectionPending ? 0 : 1
         onVisibleChanged: if (visible) {
             const area = backend.recordingRegion
             for (const candidate of Qt.application.screens) {
@@ -249,7 +252,6 @@ ApplicationWindow {
             else if (area.x - width - 8 >= desktop.x + 8) x = area.x - width - 8
             raise()
             requestActivate()
-            Qt.callLater(() => backend.protectRecordingControls(recordingWindow))
         }
         onClosing: close => { close.accepted = false; if (!backend.finishingRecording) backend.cancelRecording() }
         ColumnLayout {

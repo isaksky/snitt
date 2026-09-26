@@ -51,6 +51,9 @@ private slots:
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
     void windowsCaptureLatency();
+#ifdef Q_OS_WIN
+    void windowsRecordingOverlayExclusionFailure();
+#endif
     void makePreviewFixture();
 };
 
@@ -404,6 +407,62 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     QCOMPARE(canvas->regionCount(), 0);
     QCOMPARE(canvas->imageWidth(), 80);
 }
+
+#ifdef Q_OS_WIN
+void EditorTests::windowsRecordingOverlayExclusionFailure() {
+    QGuiApplication::setFont(QFont("Segoe UI"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    for (const auto mode : {Backend::ExclusionTestMode::ForceLegacyVersion,
+                            Backend::ExclusionTestMode::ForceFailure}) {
+        Backend backend;
+        backend.m_exclusionTestMode = mode;
+        backend.m_pendingRecording = true;
+        backend.m_recordingRegion = QRect(100, 100, 140, 100);
+        backend.m_recordingIndicatorGeometry = QRect(30, 30, 300, 300);
+        backend.m_pendingSource.platform = recording::Platform::Windows;
+        backend.m_pendingSource.pixelRegion = backend.m_recordingRegion;
+        QSignalSpy errors(&backend, &Backend::error);
+        QSignalSpy started(&backend, &Backend::recordingProcessStarted);
+        QSignalSpy ready(&backend, &Backend::recordingReady);
+        QSignalSpy saved(&backend, &Backend::recordingSaved);
+        QGuiApplication::clipboard()->setText("keep clipboard on exclusion failure");
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &backend);
+        engine.rootContext()->setContextProperty("initialImage", QUrl());
+        engine.rootContext()->setContextProperty("startInBackground", true);
+        engine.rootContext()->setContextProperty("showOnStart", false);
+        engine.load(QUrl("qrc:/Main.qml"));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(window);
+        auto *indicator = window->findChild<QQuickWindow *>("recordingStartupIndicator");
+        auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
+        auto *dialog = window->findChild<QObject *>("captureErrorDialog");
+        QVERIFY(indicator); QVERIFY(controls); QVERIFY(dialog);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 3000);
+        const QString message = errors.first().first().toString();
+        QVERIFY(message.contains(mode == Backend::ExclusionTestMode::ForceLegacyVersion
+                                 ? "version 2004" : "exclude xshot"));
+        QVERIFY(!backend.recording());
+        QVERIFY(!backend.startingRecording());
+        QVERIFY(!backend.recordingProtectionPending());
+        QTRY_VERIFY(!indicator->isVisible() && !controls->isVisible());
+        QTRY_VERIFY(dialog->property("visible").toBool());
+        QCOMPARE(started.size(), 0);
+        QCOMPARE(ready.size(), 0);
+        QCOMPARE(saved.size(), 0);
+        QCOMPARE(QGuiApplication::clipboard()->text(), "keep clipboard on exclusion failure");
+    }
+    Backend canceled;
+    canceled.m_pendingRecording = true;
+    QSignalSpy canceledSignal(&canceled, &Backend::recordingCanceled);
+    canceled.cancelRecording();
+    QCOMPARE(canceledSignal.size(), 1);
+    QVERIFY(!canceled.recording());
+    QVERIFY(!canceled.beginProtectedRecording(nullptr, nullptr));
+}
+#endif
 
 void EditorTests::qmlWheelSizes() {
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));

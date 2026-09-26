@@ -194,13 +194,14 @@ void VideoRecorder::consumeProgress() {
 }
 
 void VideoRecorder::complete(int code, QProcess::ExitStatus status) {
-    if (!m_active) return;
+    if (!m_active || m_discarding) return;
     consumeProgress();
     m_stderr += m_process.readAllStandardError();
     if (m_canceling) {
-        QFile::remove(m_output);
-        reset();
-        emit canceled();
+        m_timeout.stop();
+        m_discarding = true;
+        m_discardAttempts = 0;
+        discardCanceledOutput();
     } else if (status == QProcess::NormalExit && code == 0 && m_firstFrame && QFileInfo(m_output).size() > 0) {
         const QString output = m_output;
         reset();
@@ -214,11 +215,13 @@ void VideoRecorder::complete(int code, QProcess::ExitStatus status) {
 }
 
 void VideoRecorder::fail(const QString &message) {
+    if (m_discarding) return;
     QString report = message;
     if (m_canceling) {
-        QFile::remove(m_output);
-        reset();
-        emit canceled();
+        m_timeout.stop();
+        m_discarding = true;
+        m_discardAttempts = 0;
+        discardCanceledOutput();
         return;
     }
     if (m_firstFrame && QFileInfo(m_output).size() > 0)
@@ -226,6 +229,25 @@ void VideoRecorder::fail(const QString &message) {
     else QFile::remove(m_output);
     reset();
     emit error(report);
+}
+
+void VideoRecorder::discardCanceledOutput() {
+    if (!m_discarding) return;
+    if (!QFileInfo::exists(m_output) || QFile::remove(m_output)) {
+        m_discarding = false;
+        reset();
+        emit canceled();
+    } else if (++m_discardAttempts < 60) {
+        // Windows may still hold FFmpeg's output briefly after QProcess has
+        // reported exit. Do not claim cancellation until the file is gone.
+        QTimer::singleShot(50, this, &VideoRecorder::discardCanceledOutput);
+    } else {
+        const QString path = m_output;
+        m_discarding = false;
+        reset();
+        emit error(QStringLiteral("Could not discard canceled recording at %1")
+                       .arg(QDir::toNativeSeparators(path)));
+    }
 }
 
 void VideoRecorder::reset() {

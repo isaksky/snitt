@@ -46,6 +46,11 @@ an older ad-hoc signed build requires renewing screen-recording permission once.
 
 ### Windows 10/11 x64
 
+Video recording requires Windows 10 version 2004 (build 19041) or later. On
+older Windows 10 versions, xshot stops before recording because the startup
+indicator and controls cannot be excluded from the captured screen. Screenshot
+capture and editing still work.
+
 The releases are currently private. With Scoop and GitHub CLI installed, sign in
 with a GitHub account that can access this repository, then run:
 
