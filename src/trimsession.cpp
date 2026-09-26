@@ -53,13 +53,28 @@ bool validClip(const ClipInfo &info) { return info.duration > 0 && info.width > 
 
 TrimSession::TrimSession(QObject *parent) : QObject(parent) {
     connect(&m_thumbProcess, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
-        const int index = m_nextThumb++;
+        const int index = m_nextThumb;
         if (!m_thumbDir || m_path.isEmpty() || index < 0 || index >= m_thumbnails.size()) return;
         const QString file = m_thumbDir->filePath(QString::number(index) + ".jpg");
-        if (status == QProcess::NormalExit && code == 0 && QFileInfo(file).size() > 0)
+        const bool decoded = status == QProcess::NormalExit && code == 0 && QFileInfo(file).size() > 0;
+        if (!decoded && m_thumbnailLookbackMs == 0 && status == QProcess::NormalExit
+            && code == 234 && m_thumbProcess.readAllStandardError().contains("before EOF"))
+            m_thumbnailReachedEof = true;
+        if (decoded) {
             m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
+            if (m_thumbnailReachedEof) {
+                // A direct seek found no frame from this sample to EOF. The
+                // recovered final frame covers every later sample in this
+                // generation, so publishing its same file is exact and avoids
+                // redundant decode attempts on short recordings.
+                for (int later = index + 1; later < m_thumbnails.size(); ++later)
+                    m_thumbnails[later] = m_thumbnails[index];
+            }
+        } else if (retryThumbnailBeforeEof())
+            return;
         else if (m_problem.isEmpty())
             m_problem = QStringLiteral("Some filmstrip frames could not be decoded.");
+        ++m_nextThumb;
         emit changed();
         nextThumbnail();
     });
@@ -186,6 +201,8 @@ void TrimSession::setThumbnailWindow(qint64 startMs, qint64 endMs) {
 void TrimSession::generateThumbnails() {
     if (!m_thumbDir || !m_thumbDir->isValid() || m_duration <= 0) return;
     m_nextThumb = 0;
+    m_thumbnailLookbackMs = 0;
+    m_thumbnailReachedEof = false;
     nextThumbnail();
 }
 
@@ -199,12 +216,49 @@ void TrimSession::nextThumbnail() {
         emit changed();
         return;
     }
+    m_thumbnailLookbackMs = 0;
+    m_thumbnailReachedEof = false;
+    startThumbnailAttempt();
+}
+
+void TrimSession::startThumbnailAttempt() {
     const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
     const qint64 time = m_thumbnailStartMs
         + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
-    m_thumbProcess.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y",
-        "-ss", timestamp(time), "-i", m_path, "-frames:v", "1", "-vf", "scale=-1:90",
-        "-vcodec", "mjpeg", m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg")});
+    QStringList args {"-hide_banner", "-loglevel", "error", "-y"};
+    if (m_thumbnailLookbackMs > 0) {
+        // Accurate input seeking normally returns the first frame at or after
+        // time. At EOF that can be empty even while the final frame is still
+        // displayed. Decode a bounded preceding interval in reverse to choose
+        // the latest frame at or before time, widening only when necessary for
+        // sparse/VFR clips. The ordinary fast path remains one direct seek.
+        const qint64 start = qMax<qint64>(0, time - m_thumbnailLookbackMs);
+        args << "-ss" << timestamp(start) << "-t" << timestamp(qMax<qint64>(1, time - start));
+    } else {
+        args << "-ss" << timestamp(time);
+    }
+    args << "-i" << m_path << "-frames:v" << "1" << "-vf"
+         << (m_thumbnailLookbackMs > 0 ? "reverse,scale=-1:90" : "scale=-1:90")
+         << "-vcodec" << "mjpeg"
+         << m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg");
+    m_thumbProcess.start(thumbnailToolPath(), args);
+}
+
+bool TrimSession::retryThumbnailBeforeEof() {
+    const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
+    // A missing output before EOF may be a genuine decode failure. Only a
+    // sample in the final displayed interval may use the preceding frame.
+    if (!m_thumbnailReachedEof || windowEnd != m_duration
+        || m_nextThumb < 0 || m_nextThumb >= thumbnailCount)
+        return false;
+    const qint64 time = m_thumbnailStartMs
+        + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
+    if (m_thumbnailLookbackMs > 0 && m_thumbnailLookbackMs >= time) return false;
+    m_thumbnailLookbackMs = m_thumbnailLookbackMs == 0 ? qMin<qint64>(250, qMax<qint64>(1, time))
+        : qMin<qint64>(time, m_thumbnailLookbackMs * 2);
+    QFile::remove(m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg"));
+    startThumbnailAttempt();
+    return true;
 }
 
 bool TrimSession::stopThumbnails() {

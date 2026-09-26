@@ -45,6 +45,8 @@ protected:
 private:
     void generateThumbnails();
     void nextThumbnail();
+    void startThumbnailAttempt();
+    bool retryThumbnailBeforeEof();
     bool stopThumbnails();
     void resumeThumbnails();
     void exportFinished(bool success, const QString &detail);
@@ -69,6 +71,8 @@ private:
     bool m_busy = false;
     bool m_canceling = false;
     int m_nextThumb = 0;
+    qint64 m_thumbnailLookbackMs = 0;
+    bool m_thumbnailReachedEof = false;
     qint64 m_thumbnailStartMs = 0;
     qint64 m_thumbnailEndMs = 0;
     quint64 m_generation = 0;

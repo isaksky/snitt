@@ -30,6 +30,7 @@ private slots:
     void trimKeepsOriginalOnDismissAndInvalidRange();
     void trimHeadAndTailAccurately();
     void trimThumbnailsFollowWindow();
+    void trimShortClipsAtEof();
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
     void trimThumbnailsResumeAfterCancelAndFailure();
@@ -163,6 +164,15 @@ void RecordingTests::trimThumbnailsFollowWindow() {
     QVERIFY2(isRed(colorAt(0)), qPrintable(colorAt(0).name()));
     QVERIFY2(isYellow(colorAt(11)), qPrintable(colorAt(11).name()));
 
+    // The last displayed frame spans the interval from its final PTS to the
+    // container duration. A narrow EOF zoom must fill every slot with yellow.
+    trim.setThumbnailWindow(3900, 4000);
+    QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
+    for (int index = 0; index < 12; ++index)
+        QVERIFY2(isYellow(colorAt(index)), qPrintable(QStringLiteral("EOF slot %1: %2")
+            .arg(index).arg(colorAt(index).name())));
+    QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+
     trim.setThumbnailWindow(1375, 2625);
     QTRY_VERIFY_WITH_TIMEOUT(thumbnailsReady(), 45000);
     QVERIFY2(isGreen(colorAt(0)), qPrintable(colorAt(0).name()));
@@ -178,6 +188,86 @@ void RecordingTests::trimThumbnailsFollowWindow() {
     QVERIFY2(isYellow(colorAt(11)), qPrintable(colorAt(11).name()));
     QVERIFY(source.open(QIODevice::ReadOnly));
     QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+}
+
+void RecordingTests::trimShortClipsAtEof() {
+    const QString ffmpeg = recording::toolPath("ffmpeg");
+    if (ffmpeg.isEmpty()) QSKIP("FFmpeg is needed for the short video fixtures");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    for (const auto &fixture : {qMakePair(QStringLiteral("one-frame"), QStringLiteral("10")),
+                               qMakePair(QStringLiteral("three-frames"), QStringLiteral("30000/1001"))}) {
+        const QString path = directory.filePath(fixture.first + ".mp4");
+        QProcess encoder;
+        QStringList args {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+            "-i", QStringLiteral("color=c=blue:s=160x90:r=%1:d=0.1").arg(fixture.second),
+        };
+        if (fixture.first == "three-frames")
+            args << "-vf" << "drawbox=c=red:t=fill:enable='lt(t,0.06)'";
+        args << "-c:v" << "libx264" << "-pix_fmt" << "yuv420p" << path;
+        encoder.start(ffmpeg, args);
+        QVERIFY(encoder.waitForFinished(15000));
+        QCOMPARE(encoder.exitCode(), 0);
+        TrimSession trim;
+        trim.open(path);
+        if (trim.duration() == 0) trim.setDuration(100);
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            if (trim.thumbnails().size() != 12) return false;
+            for (int index = 0; index < 12; ++index) {
+                const QString &url = trim.thumbnails().at(index);
+                if (url.isEmpty()) return false;
+                const QImage image(QUrl(url).toLocalFile());
+                if (image.isNull()) return false;
+                const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+                const bool expectBlue = fixture.first == "one-frame" || index >= 8;
+                if (expectBlue && (center.blue() < 90 || center.blue() < center.red() * 2
+                    || center.blue() < center.green() * 2)) return false;
+                if (fixture.first == "three-frames" && index == 0
+                    && (center.red() < 90 || center.red() < center.blue() * 2)) return false;
+            }
+            return true;
+        })(), 15000);
+        QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+    }
+
+    // A real variable-frame-rate MP4 with PTS gaps of 0.2 and 1.1 seconds.
+    // The blue final sample is held until the container's 1.34-second end.
+    for (const auto &color : {QStringLiteral("red"), QStringLiteral("green"), QStringLiteral("blue")}) {
+        QImage image(160, 90, QImage::Format_RGB32);
+        image.fill(QColor(color));
+        QVERIFY(image.save(directory.filePath(color + ".png")));
+    }
+    QFile list(directory.filePath("vfr.ffconcat"));
+    QVERIFY(list.open(QIODevice::WriteOnly));
+    list.write("ffconcat version 1.0\nfile red.png\nduration 0.2\n"
+               "file green.png\nduration 1.1\nfile blue.png\nduration 0.04\n");
+    list.close();
+    const QString vfrPath = directory.filePath("vfr.mp4");
+    QProcess vfrEncoder;
+    vfrEncoder.setWorkingDirectory(directory.path());
+    vfrEncoder.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y", "-f", "concat",
+        "-safe", "0", "-i", list.fileName(), "-fps_mode", "vfr", "-c:v", "libx264",
+        "-pix_fmt", "yuv420p", vfrPath});
+    QVERIFY(vfrEncoder.waitForFinished(15000));
+    QCOMPARE(vfrEncoder.exitCode(), 0);
+    TrimSession vfr;
+    vfr.open(vfrPath);
+    if (vfr.duration() == 0) vfr.setDuration(1340);
+    QVERIFY(vfr.duration() >= 1320);
+    vfr.setThumbnailWindow(vfr.duration() - 20, vfr.duration());
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        if (vfr.thumbnails().size() != 12) return false;
+        for (const QString &url : vfr.thumbnails()) {
+            if (url.isEmpty()) return false;
+            const QImage image(QUrl(url).toLocalFile());
+            if (image.isNull()) return false;
+            const QColor center = image.pixelColor(image.width() / 2, image.height() / 2);
+            if (center.blue() < 90 || center.blue() < center.red() * 2
+                || center.blue() < center.green() * 2) return false;
+        }
+        return true;
+    })(), 15000);
+    QVERIFY2(vfr.problem().isEmpty(), qPrintable(vfr.problem()));
 }
 
 void RecordingTests::trimCancellationPreservesOriginal() {

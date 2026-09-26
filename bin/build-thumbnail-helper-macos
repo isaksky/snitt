@@ -10,6 +10,7 @@ TOOL_DIR="$ROOT/build/tools/ffmpeg-thumbnail"
 ARCHIVE="$TOOL_DIR/ffmpeg-$VERSION.tar.xz"
 SOURCE="$TOOL_DIR/ffmpeg-$VERSION"
 HELPER="$TOOL_DIR/ffmpeg-thumbnails"
+STAMP="$TOOL_DIR/.reverse-filter-enabled"
 mkdir -p "$TOOL_DIR"
 if [ ! -f "$ARCHIVE" ]; then
     curl --fail --location --silent --show-error \
@@ -18,7 +19,7 @@ if [ ! -f "$ARCHIVE" ]; then
 fi
 ACTUAL="$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)"
 [ "$ACTUAL" = "$SHA256" ] || { echo 'FFmpeg source checksum mismatch.' >&2; exit 1; }
-if [ ! -x "$HELPER" ]; then
+if [ ! -x "$HELPER" ] || [ ! -f "$STAMP" ]; then
     [ -d "$SOURCE" ] || tar -xf "$ARCHIVE" -C "$TOOL_DIR"
     cd "$SOURCE"
     ./configure \
@@ -29,9 +30,10 @@ if [ ! -x "$HELPER" ]; then
         --enable-protocol=file --enable-demuxer=mov \
         --enable-decoder=h264,hevc --enable-parser=h264,hevc \
         --enable-encoder=mjpeg --enable-muxer=image2 \
-        --enable-filter=scale,format
+        --enable-filter=scale,format,reverse
     make -j"$(sysctl -n hw.ncpu)" ffmpeg
     cp ffmpeg "$HELPER"
+    touch "$STAMP"
 fi
 DEST="$ROOT/build/xshot.app/Contents/MacOS/ffmpeg-thumbnails"
 [ -d "$(dirname "$DEST")" ] || { echo 'Build xshot before copying its thumbnail helper.' >&2; exit 1; }
