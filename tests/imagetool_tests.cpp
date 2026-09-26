@@ -25,6 +25,7 @@ private slots:
     void fractionalCutsKeepPrivacyMasksAligned();
     void eraseReplayKeepsExactSample();
     void annotationPreviewDoesNotSoftenOnRelease();
+    void earlierAnnotationsStaySharpThroughRasterEdits();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
 };
@@ -570,6 +571,90 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
     const QImage fresh = text.render(3);
     const QImage stretched = text.image().scaled(fresh.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     QVERIFY(fresh != stretched); // Export re-renders glyphs, not the flattened bitmap.
+}
+
+void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    const auto addShape = [](ImageDocument &doc, const QString &shape) {
+        if (shape == "text") return doc.text(QRectF(10, 12, 65, 30), "Sharp", Qt::red, 13);
+        return doc.annotate(shape, {10.25, 10.25}, {70.25, 50.25}, Qt::red, 1);
+    };
+    for (const QString &shape : {QStringLiteral("arrow"), QStringLiteral("rect"),
+                                 QStringLiteral("text")}) {
+        for (const qreal scale : {1.25, 1.5, 3.0}) {
+            ImageDocument doc;
+            doc.reset(white);
+            QVERIFY(addShape(doc, shape));
+            const QImage before = doc.render(scale);
+            QVERIFY(doc.blur(QRectF(0, 0, 5, 5)));
+            const QImage blurred = doc.render(scale);
+            const QRect untouched(qRound(8 * scale), qRound(8 * scale),
+                                  qRound(65 * scale), qRound(45 * scale));
+            QCOMPARE(blurred.copy(untouched), before.copy(untouched));
+            doc.undo(); QCOMPARE(doc.render(scale), before);
+            doc.redo(); QCOMPARE(doc.render(scale), blurred);
+            QVERIFY(doc.erase(QRectF(0, 0, 5, 5), {6, 6}));
+            QCOMPARE(doc.render(scale).copy(untouched), before.copy(untouched));
+
+            doc.reset(white);
+            QVERIFY(addShape(doc, shape));
+            const QImage beforeCut = doc.render(scale);
+            QVERIFY(doc.cut(true, 2, 5));
+            const QImage afterCut = doc.render(scale);
+            const int start = qRound(2 * scale), end = qRound(5 * scale);
+            const int suffix = qMin(afterCut.width() - start, beforeCut.width() - end);
+            QCOMPARE(afterCut.copy(QRect(start, 0, suffix, afterCut.height())),
+                     beforeCut.copy(QRect(end, 0, suffix, beforeCut.height())));
+            // Check the resulting edges against an enlarged native frame too.
+            const QImage flattened = doc.image().scaled(afterCut.size(), Qt::IgnoreAspectRatio,
+                                                        Qt::FastTransformation);
+            QVERIFY(afterCut != flattened);
+            QVERIFY(beforeCut != afterCut);
+        }
+    }
+
+    ImageDocument doc;
+    doc.reset(white);
+    QVERIFY(doc.annotate("arrow", {10.25, 20.25}, {70.25, 20.25}, Qt::red, 1));
+    const QImage beforeCut = doc.render(3);
+    QVERIFY(doc.cut(true, 30, 40)); // Remove the middle of the existing arrow.
+    const QImage afterCut = doc.render(3);
+    QCOMPARE(afterCut.copy(QRect(0, 0, 90, 180)), beforeCut.copy(QRect(0, 0, 90, 180)));
+    QCOMPARE(afterCut.copy(QRect(90, 0, 120, 180)), beforeCut.copy(QRect(120, 0, 120, 180)));
+    QVERIFY(doc.blur(QRectF(10, 18, 8, 5)));
+    const QImage masked = doc.render(3);
+    QVERIFY(masked.pixelColor(39, 60).red() < 180);
+    QVERIFY(masked.pixelColor(150, 60).red() > masked.pixelColor(150, 60).green());
+    QVERIFY(doc.annotate("arrow", {10, 20}, {20, 20}, Qt::blue, 1));
+    QVERIFY(doc.render(3) != masked); // Later annotation remains above the mask.
+
+    QImage secret = white;
+    for (int y = 10; y < 30; ++y)
+        for (int x = 10; x < 30; ++x) secret.setPixelColor(x, y, Qt::black);
+    ImageDocument clean, changed;
+    clean.reset(white); changed.reset(secret);
+    for (ImageDocument *document : {&clean, &changed}) {
+        QVERIFY(document->annotate("arrow", {50.25, 35.25}, {70.25, 35.25}, Qt::red, 1));
+        QVERIFY(document->cut(true, 1, 2));
+        QVERIFY(document->blur(QRectF(9, 10, 20, 20)));
+    }
+    for (const qreal scale : {1.25, 1.5, 3.0})
+        QCOMPARE(clean.render(scale), changed.render(scale));
+
+    ImageDocument plainMask, coveredAnnotation;
+    plainMask.reset(white); coveredAnnotation.reset(white);
+    QVERIFY(coveredAnnotation.annotate("rect", {5, 5}, {35, 35}, Qt::red, 2));
+    QVERIFY(plainMask.blur(QRectF(10, 10, 20, 20)));
+    QVERIFY(coveredAnnotation.blur(QRectF(10, 10, 20, 20)));
+    for (const qreal scale : {1.25, 1.5, 3.0}) {
+        const QImage expected = plainMask.render(scale);
+        const QImage actual = coveredAnnotation.render(scale);
+        for (int y = 0; y < expected.height(); ++y)
+            for (int x = 0; x < expected.width(); ++x)
+                if (expected.pixel(x, y) != qRgb(255, 255, 255))
+                    QCOMPARE(actual.pixel(x, y), expected.pixel(x, y));
+    }
 }
 
 void ImageToolTests::failedSavePreservesSession() {

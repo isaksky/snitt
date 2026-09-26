@@ -198,6 +198,84 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
         if (ops[i].kind == Operation::Cut || ops[i].kind == Operation::Blur
             || ops[i].kind == Operation::Erase) lastRasterEdit = i;
 
+    bool annotationBeforeRasterEdit = false;
+    for (int i = 0; i < lastRasterEdit; ++i)
+        if (ops[i].kind == Operation::Annotation || ops[i].kind == Operation::Text)
+            annotationBeforeRasterEdit = true;
+
+    if (annotationBeforeRasterEdit) {
+        // Keep destructive edits at native resolution so fractional cuts cannot
+        // expose source pixels at a rounded boundary. Replay annotations into a
+        // separate full-resolution layer: flattening them with the native frame
+        // here would enlarge their edges after the next blur, erase, or cut.
+        ImageDocument raster;
+        raster.reset(m_source);
+        QImage annotations(scaledSize(m_source.size()), QImage::Format_ARGB32_Premultiplied);
+        if (annotations.isNull()) return {};
+        annotations.fill(Qt::transparent);
+        for (int i = 0; i < operationCount; ++i) {
+            const auto &op = ops[i];
+            switch (op.kind) {
+            case Operation::Annotation:
+            case Operation::Text: {
+                QPainter p(&annotations);
+                p.scale(scale, scale);
+                if (op.kind == Operation::Annotation)
+                    drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+                else drawText(p, op);
+                break;
+            }
+            case Operation::Blur:
+            case Operation::Erase: {
+                const QRect pixels = selectedPixels(op.area, raster.image().size());
+                if (op.kind == Operation::Blur) raster.blur(op.area);
+                else {
+                    QImage frame = raster.image().copy();
+                    fillWithSample(frame, pixels, op.sampledPixel);
+                    raster.commit(std::move(frame), &op);
+                }
+                // The edited rectangle removes annotations already below it;
+                // later annotations must still be allowed on top.
+                QPainter p(&annotations);
+                p.setCompositionMode(QPainter::CompositionMode_Clear);
+                p.fillRect(QRectF(pixels.x() * scale, pixels.y() * scale,
+                                  pixels.width() * scale, pixels.height() * scale), Qt::white);
+                break;
+            }
+            case Operation::Cut: {
+                const QSize oldSize = annotations.size();
+                raster.cut(op.vertical, op.start, op.end);
+                QImage next(scaledSize(raster.image().size()), annotations.format());
+                if (next.isNull()) return {};
+                next.fill(Qt::transparent);
+                QPainter p(&next);
+                const int start = qRound(op.start * scale);
+                const int end = qRound(op.end * scale);
+                if (op.vertical) {
+                    p.drawImage(QPoint(0, 0), annotations, QRect(0, 0, start, oldSize.height()));
+                    p.drawImage(QPoint(start, 0), annotations,
+                                QRect(end, 0, qMin(next.width() - start, oldSize.width() - end),
+                                      oldSize.height()));
+                } else {
+                    p.drawImage(QPoint(0, 0), annotations, QRect(0, 0, oldSize.width(), start));
+                    p.drawImage(QPoint(0, start), annotations,
+                                QRect(0, end, oldSize.width(),
+                                      qMin(next.height() - start, oldSize.height() - end)));
+                }
+                p.end();
+                annotations = std::move(next);
+                break;
+            }
+            }
+        }
+        QImage result = raster.image().scaled(scaledSize(raster.image().size()),
+                                              Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        if (result.isNull()) return {};
+        QPainter p(&result);
+        p.drawImage(0, 0, annotations);
+        return result;
+    }
+
     // Cuts have integer boundaries in the document, but fractional replay scales
     // do not. Cropping an already scaled image rounds away a different number of
     // pixels than the document cut, shifting every later privacy edit. Start
