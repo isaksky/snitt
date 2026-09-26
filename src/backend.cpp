@@ -143,6 +143,12 @@ void Backend::showSelectors() {
             emit captured(QUrl::fromLocalFile(m_output));
             finish(true);
         });
+        connect(selector, &RegionSelector::singleRequested, this, [this] {
+            m_video = false;
+            m_multiple = false;
+            m_selections.clear();
+            updateSelections();
+        });
         connect(selector, &RegionSelector::multipleRequested, this, [this] {
             if (!m_video) { m_multiple = true; updateSelections(); }
         });
@@ -160,7 +166,7 @@ void Backend::showSelectors() {
             for (const auto &selection : m_selections) bytes += selection.image.sizeInBytes();
             const QImage image = selector->crop(area);
             if (m_selections.size() >= 24 || image.isNull() || bytes + image.sizeInBytes() > 256 * 1024 * 1024) {
-                selector->setNotice(QStringLiteral("Selection limit reached. Remove a region, or use Copy to arrange."));
+                selector->setNotice(QStringLiteral("Selection limit reached. Remove a region or continue to Arrange."));
                 return;
             }
             m_selections.append({selector, area, image});

@@ -97,8 +97,13 @@ finished image. You can skip annotation and copy directly from Arrange.
   **M**, or choose **Multiple (M)** in the editor.
 - Drag rectangles on the frozen desktop. Selections remain highlighted and
   numbered in the order you draw them.
-- Click a selection to remove it, or press **Backspace/Delete** to remove the latest.
-- Press **Enter** to finish selecting and open Arrange. **Esc** cancels the capture.
+- The fixed capture toolbar shows **Region**, **Multiple (M)**, and **Video (V)**.
+  Switching to Multiple keeps the controls in place; dimensions appear beside the
+  selection while dragging.
+- Click a selection's **×** control (or the selection itself) to remove it, or press
+  **Backspace/Delete** to remove the latest.
+- Click **Arrange → Enter** or press **Enter** to finish selecting and open Arrange.
+  Arrange is enabled after the first region. **Esc** cancels the capture.
 
 All regions come from the same frozen desktop; this phase does not collect new
 shots after scrolling or changing windows. Captures are limited to 24 regions and

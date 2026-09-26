@@ -3,6 +3,10 @@
 #include <QImage>
 #include <QList>
 
+class QLabel;
+class QPushButton;
+class QToolButton;
+
 // One frozen, full-screen overlay per monitor. Coordinates stay screen-local.
 class RegionSelector : public QWidget {
     Q_OBJECT
@@ -16,6 +20,7 @@ public:
 signals:
     void selected(const QImage &image);
     void canceled();
+    void singleRequested();
     void multipleRequested();
     void videoRequested();
     void videoSelected(const QRectF &area);
@@ -29,8 +34,20 @@ protected:
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
 private:
     QRectF selection() const;
+    void updateToolbar();
+    void layoutControls();
+    QWidget *m_toolbar = nullptr;
+    QLabel *m_instruction = nullptr;
+    QLabel *m_count = nullptr;
+    QLabel *m_noticeLabel = nullptr;
+    QPushButton *m_singleButton = nullptr;
+    QPushButton *m_multipleButton = nullptr;
+    QPushButton *m_videoButton = nullptr;
+    QPushButton *m_arrangeButton = nullptr;
+    QList<QToolButton *> m_removeButtons;
     QImage m_image;
     QPointF m_start, m_end;
     bool m_dragging = false;

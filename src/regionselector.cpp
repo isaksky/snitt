@@ -2,6 +2,11 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QToolButton>
 #include <cmath>
 
 RegionSelector::RegionSelector(QImage image, const QRect &geometry)
@@ -16,6 +21,126 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     setCursor(Qt::CrossCursor);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+
+    m_toolbar = new QWidget(this);
+    m_toolbar->setObjectName("captureToolbar");
+    m_toolbar->setAttribute(Qt::WA_StyledBackground);
+    m_toolbar->setAttribute(Qt::WA_NoMousePropagation);
+    m_toolbar->setCursor(Qt::ArrowCursor);
+    m_toolbar->setStyleSheet(
+        "QWidget#captureToolbar { background: #1b1e23; border: 1px solid #414751; border-radius: 12px; }"
+        "QLabel { color: #b9c1cd; background: transparent; }"
+        "QPushButton { color: #e9edf3; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 6px 10px; }"
+        "QPushButton:hover { background: #323842; }"
+        "QPushButton:checked, QPushButton#arrangeCaptureButton { color: #142820; background: #a3e6ca; }"
+        "QPushButton:disabled { color: #727a86; background: transparent; }"
+        "QPushButton#arrangeCaptureButton:disabled { background: #2b3238; }");
+    auto *layout = new QVBoxLayout(m_toolbar);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+    auto *modes = new QHBoxLayout;
+    modes->setSpacing(4);
+    const auto button = [this](const QString &text, const QString &name) {
+        auto *control = new QPushButton(text, m_toolbar);
+        control->setObjectName(name);
+        control->setFocusPolicy(Qt::NoFocus);
+        control->setCursor(Qt::PointingHandCursor);
+        control->setFixedHeight(36);
+        return control;
+    };
+    m_singleButton = button("Region", "singleCaptureButton");
+    m_multipleButton = button("Multiple · M", "multipleCaptureButton");
+    m_videoButton = button("Video · V", "videoCaptureButton");
+    for (auto *control : {m_singleButton, m_multipleButton, m_videoButton}) {
+        control->setCheckable(true);
+        modes->addWidget(control);
+    }
+    modes->addStretch();
+    auto *cancel = button("Cancel · Esc", "cancelCaptureButton");
+    modes->addWidget(cancel);
+    layout->addLayout(modes);
+    auto *actions = new QHBoxLayout;
+    actions->setSpacing(8);
+    m_instruction = new QLabel(m_toolbar);
+    m_instruction->setObjectName("captureInstruction");
+    m_instruction->setMinimumWidth(0);
+    actions->addWidget(m_instruction, 1);
+    m_count = new QLabel(m_toolbar);
+    m_count->setObjectName("captureCount");
+    m_count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    actions->addWidget(m_count);
+    m_arrangeButton = button("Arrange →  Enter", "arrangeCaptureButton");
+    auto policy = m_arrangeButton->sizePolicy();
+    policy.setRetainSizeWhenHidden(true);
+    m_arrangeButton->setSizePolicy(policy);
+    actions->addWidget(m_arrangeButton);
+    layout->addLayout(actions);
+    m_noticeLabel = new QLabel(this);
+    m_noticeLabel->setObjectName("captureNotice");
+    m_noticeLabel->setWordWrap(true);
+    m_noticeLabel->setAlignment(Qt::AlignCenter);
+    m_noticeLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_noticeLabel->setStyleSheet("color: #f1d4a2; background: #1b1e23; border-radius: 6px; padding: 10px;");
+    connect(cancel, &QPushButton::clicked, this, &RegionSelector::canceled);
+    connect(m_arrangeButton, &QPushButton::clicked, this, &RegionSelector::accepted);
+    connect(m_singleButton, &QPushButton::clicked, this, [this] {
+        if (m_multiple || m_video) { m_dragging = false; emit singleRequested(); }
+        updateToolbar();
+    });
+    connect(m_multipleButton, &QPushButton::clicked, this, [this] {
+        if (!m_multiple && !m_video) { m_dragging = false; emit multipleRequested(); }
+        updateToolbar();
+    });
+    connect(m_videoButton, &QPushButton::clicked, this, [this] {
+        if (!m_video) { m_dragging = false; emit videoRequested(); }
+        updateToolbar();
+    });
+    updateToolbar();
+    layoutControls();
+}
+
+void RegionSelector::updateToolbar() {
+    m_singleButton->setChecked(!m_multiple && !m_video);
+    m_multipleButton->setChecked(m_multiple && !m_video);
+    m_multipleButton->setEnabled(!m_video);
+    m_videoButton->setChecked(m_video);
+    m_instruction->setText(m_video ? "Drag to record." : m_multiple ? "Drag to add regions." : "Drag to capture.");
+    m_count->setText(m_multiple && !m_video ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
+    m_arrangeButton->setVisible(m_multiple && !m_video);
+    m_arrangeButton->setEnabled(m_multiple && !m_video && m_total > 0);
+    m_noticeLabel->setText(m_notice);
+    m_noticeLabel->setVisible(!m_notice.isEmpty());
+    layoutControls();
+}
+
+void RegionSelector::layoutControls() {
+    if (!m_toolbar) return;
+    const bool compact = width() < 560;
+    QFont font = m_toolbar->font();
+    font.setPixelSize(compact ? 12 : 14);
+    m_toolbar->setFont(font);
+    // Stylesheet-backed controls can keep a resolved font of their own.
+    for (auto *control : m_toolbar->findChildren<QWidget *>()) control->setFont(font);
+    m_count->setFixedWidth(compact ? 64 : 86);
+    m_arrangeButton->setFixedWidth(compact ? 132 : 164);
+    const int panelWidth = qMin(760, qMax(1, width() - 24));
+    m_toolbar->setGeometry((width() - panelWidth) / 2, 24, panelWidth, 104);
+    m_noticeLabel->setGeometry(m_toolbar->x(), m_toolbar->geometry().bottom() + 8,
+                               panelWidth, m_noticeLabel->heightForWidth(panelWidth));
+    for (int i = 0; i < m_removeButtons.size(); ++i) {
+        const QRectF area = m_areas[i].second;
+        // Keep a full-sized target even for tiny selections, away from the number badge.
+        const qreal x = area.width() >= 60 ? area.right() - 28 : area.right() + 4;
+        m_removeButtons[i]->setGeometry(qBound(0, qRound(x), qMax(0, width() - 28)),
+                                        qBound(0, qRound(area.top()), qMax(0, height() - 28)), 28, 28);
+    }
+    m_toolbar->raise();
+    m_noticeLabel->raise();
+}
+
+void RegionSelector::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    layoutControls();
 }
 
 QRect RegionSelector::pixelRect(const QRectF &selection, const QSizeF &viewSize, const QSize &imageSize) {
@@ -41,14 +166,38 @@ void RegionSelector::setSelections(bool multiple, const QList<QPair<int, QRectF>
     m_areas = areas;
     m_total = total;
     m_notice.clear();
+    // Reuse controls: a removal can synchronously update selections from its own clicked signal.
+    while (m_removeButtons.size() > areas.size()) {
+        auto *remove = m_removeButtons.takeLast();
+        remove->hide();
+        remove->deleteLater();
+    }
+    while (m_removeButtons.size() < areas.size()) {
+        auto *remove = new QToolButton(this);
+        remove->setText("×");
+        remove->setFocusPolicy(Qt::NoFocus);
+        remove->setCursor(Qt::PointingHandCursor);
+        remove->setStyleSheet("QToolButton { color: white; background: #1b1e23; border: 1px solid #a3e6ca; border-radius: 5px; font-size: 20px; } QToolButton:hover { background: #594047; }");
+        connect(remove, &QToolButton::clicked, this, [this, remove] { emit regionRemoved(remove->property("regionIndex").toInt()); });
+        m_removeButtons.append(remove);
+    }
+    for (int i = 0; i < areas.size(); ++i) {
+        auto *remove = m_removeButtons[i];
+        remove->setProperty("regionIndex", areas[i].first);
+        remove->setAccessibleName(QStringLiteral("Remove region %1").arg(areas[i].first + 1));
+        remove->setToolTip(remove->accessibleName());
+        remove->setVisible(m_multiple);
+    }
+    updateToolbar();
     update();
 }
 
-void RegionSelector::setNotice(const QString &notice) { m_notice = notice; update(); }
+void RegionSelector::setNotice(const QString &notice) { m_notice = notice; updateToolbar(); }
 
 void RegionSelector::setVideo(bool video) {
     m_video = video;
     setWindowTitle(video ? "xshot — Select a recording region" : "xshot — Select a region");
+    updateToolbar();
     update();
 }
 
@@ -78,22 +227,21 @@ void RegionSelector::paintEvent(QPaintEvent *) {
         p.setPen(QPen(QColor("#a3e6ca"), 2));
         p.drawRect(area);
     }
-    const QRect pixels = pixelRect(area, size(), m_image.size());
-    const QString hint = !m_notice.isEmpty() ? m_notice
-        : m_dragging ? QStringLiteral("%1 × %2 px · Release to %3 · Esc to cancel")
-                                         .arg(pixels.width()).arg(pixels.height())
-                                         .arg(m_video ? "start recording" : m_multiple ? "add region" : "capture")
-        : m_video ? QStringLiteral("Drag to record one region · Screenshot (V) · Cancel (Esc)")
-        : m_multiple ? QStringLiteral("%1 selected · Drag to add · Click to remove · Finish selecting → Arrange (Enter) · Video (V) · Cancel (Esc)").arg(m_total)
-        : QStringLiteral("Drag to select a region · Multiple (M) · Video (V) · Cancel (Esc)");
-    QFont font = p.font(); font.setPixelSize(16); font.setBold(false); p.setFont(font);
-    const int boxWidth = qMin(width() - 24, p.fontMetrics().horizontalAdvance(hint) + 32);
-    const int textFlags = Qt::AlignCenter | Qt::TextWordWrap;
-    const QRect textBounds = p.fontMetrics().boundingRect(QRect(0, 0, qMax(1, boxWidth - 32), height()), textFlags, hint);
-    const QRect box((width() - boxWidth) / 2, 24, boxWidth, textBounds.height() + 20);
-    p.fillRect(box, QColor("#1b1e23"));
-    p.setPen(Qt::white);
-    p.drawText(box.adjusted(16, 10, -16, -10), textFlags, hint);
+    if (m_dragging) {
+        const QRect pixels = pixelRect(area, size(), m_image.size());
+        const QString dimensions = QStringLiteral("%1 × %2 px").arg(pixels.width()).arg(pixels.height());
+        QFont font = p.font(); font.setPixelSize(14); font.setBold(false); p.setFont(font);
+        const QSize labelSize(p.fontMetrics().horizontalAdvance(dimensions) + 20, 30);
+        const int x = qBound(0, qRound(area.right()) - labelSize.width(), qMax(0, width() - labelSize.width()));
+        int y = qRound(area.bottom()) + 8;
+        if (y + labelSize.height() > height()) y = qMax(0, qRound(area.bottom()) - labelSize.height() - 8);
+        const QRect label(QPoint(x, y), labelSize);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#1b1e23"));
+        p.drawRoundedRect(label, 5, 5);
+        p.setPen(Qt::white);
+        p.drawText(label, Qt::AlignCenter, dimensions);
+    }
 }
 
 void RegionSelector::mousePressEvent(QMouseEvent *event) {
@@ -130,9 +278,9 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
 
 void RegionSelector::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Escape) emit canceled();
-    else if (event->key() == Qt::Key_V) emit videoRequested();
-    else if (event->key() == Qt::Key_M && !m_video) emit multipleRequested();
-    else if (m_multiple && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+    else if (event->key() == Qt::Key_V) { m_dragging = false; emit videoRequested(); update(); }
+    else if (event->key() == Qt::Key_M && !m_video) { m_dragging = false; emit multipleRequested(); update(); }
+    else if (m_multiple && m_total > 0 && !m_dragging && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
              && event->modifiers() == Qt::NoModifier) emit accepted();
     else if (m_multiple && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)) emit removeLastRequested();
     else QWidget::keyPressEvent(event);

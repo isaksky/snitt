@@ -12,6 +12,9 @@
 #include <QTimer>
 #include <QFileInfo>
 #include <QScopeGuard>
+#include <QLabel>
+#include <QPushButton>
+#include <QToolButton>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -35,6 +38,7 @@ private slots:
     void qmlRecordingControls();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
+    void captureToolbarInteraction();
     void gridArrangementPreservesPixels();
     void desktopMultipleCapture();
     void windowsHotkeyRegistration();
@@ -571,6 +575,88 @@ void EditorTests::multipleRegionSelection() {
     QCOMPARE(accepted.size(), 2);
     QTest::keyClick(&selector, Qt::Key_Escape);
     QCOMPARE(canceled.size(), 1);
+}
+
+void EditorTests::captureToolbarInteraction() {
+    RegionSelector selector(pattern().convertToFormat(QImage::Format_RGB32), QRect(0, 0, 860, 560));
+    auto *toolbar = selector.findChild<QWidget *>("captureToolbar");
+    auto *single = selector.findChild<QPushButton *>("singleCaptureButton");
+    auto *multiple = selector.findChild<QPushButton *>("multipleCaptureButton");
+    auto *video = selector.findChild<QPushButton *>("videoCaptureButton");
+    auto *arrange = selector.findChild<QPushButton *>("arrangeCaptureButton");
+    auto *instruction = selector.findChild<QLabel *>("captureInstruction");
+    auto *count = selector.findChild<QLabel *>("captureCount");
+    QVERIFY(toolbar && single && multiple && video && arrange && instruction && count);
+    connect(&selector, &RegionSelector::multipleRequested, &selector, [&] { selector.setSelections(true, {}, 0); });
+    connect(&selector, &RegionSelector::singleRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(false); });
+    QSignalSpy added(&selector, &RegionSelector::regionAdded);
+    QSignalSpy accepted(&selector, &RegionSelector::accepted);
+    QSignalSpy removed(&selector, &RegionSelector::regionRemoved);
+    selector.show();
+    QCoreApplication::processEvents();
+    const QRect toolbarBounds = toolbar->geometry();
+    const QRect modeBounds = multiple->geometry();
+    const QRect instructionBounds = instruction->geometry();
+    QVERIFY(single->isChecked());
+    QVERIFY(arrange->isHidden());
+    QTest::mouseClick(toolbar, Qt::LeftButton, Qt::NoModifier, QPoint(400, 50));
+    QSignalSpy captured(&selector, &RegionSelector::selected);
+    QTest::mouseRelease(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(500, 300));
+    QCOMPARE(captured.size(), 0); // The toolbar background must not begin a drag either.
+    QVERIFY(selector.grab().save("capture-toolbar-single.png"));
+    QTest::mouseClick(multiple, Qt::LeftButton);
+    QCoreApplication::processEvents();
+    QVERIFY(multiple->isChecked());
+    QVERIFY(!arrange->isHidden());
+    QVERIFY(!arrange->isEnabled());
+    QCOMPARE(toolbar->geometry(), toolbarBounds);
+    QCOMPARE(multiple->geometry(), modeBounds);
+    QCOMPARE(instruction->geometry(), instructionBounds);
+    QTest::keyClick(&selector, Qt::Key_Return);
+    QTest::mouseClick(arrange, Qt::LeftButton);
+    QCOMPARE(accepted.size(), 0);
+    QVERIFY(selector.grab().save("capture-toolbar-multiple-empty.png"));
+    QTest::mousePress(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(80, 180));
+    QTest::mouseMove(&selector, QPoint(360, 300));
+    QCOMPARE(instruction->text(), QString("Drag to add regions."));
+    QVERIFY(selector.grab().save("capture-toolbar-drag.png"));
+    QTest::mouseRelease(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(360, 300));
+    QCOMPARE(added.size(), 1);
+    selector.setSelections(true, {{7, QRectF(80, 180, 280, 120)}}, 10);
+    QCoreApplication::processEvents();
+    QVERIFY(arrange->isEnabled());
+    QCOMPARE(count->text(), QString("10 regions"));
+    QCOMPARE(toolbar->geometry(), toolbarBounds);
+    QCOMPARE(multiple->geometry(), modeBounds);
+    QCOMPARE(instruction->geometry(), instructionBounds);
+    QVERIFY(selector.grab().save("capture-toolbar-multiple.png"));
+    auto *remove = selector.findChild<QToolButton *>();
+    QVERIFY(remove && remove->isVisible());
+    QTest::mouseClick(remove, Qt::LeftButton);
+    QCOMPARE(removed.size(), 1);
+    QCOMPARE(removed.first().first().toInt(), 7);
+    QCOMPARE(added.size(), 1); // Controls never start a new capture.
+    QTest::mouseClick(arrange, Qt::LeftButton);
+    QCOMPARE(accepted.size(), 1);
+    QTest::mouseClick(single, Qt::LeftButton);
+    QVERIFY(single->isChecked());
+    QVERIFY(arrange->isHidden());
+    QVERIFY(remove->isHidden());
+    selector.setVideo(true);
+    QVERIFY(video->isChecked());
+    QVERIFY(!multiple->isEnabled());
+    QCOMPARE(toolbar->geometry(), toolbarBounds);
+    selector.resize(400, 300);
+    QCoreApplication::processEvents();
+    QVERIFY(selector.grab().save("capture-toolbar-compact.png"));
+    for (auto *control : toolbar->findChildren<QPushButton *>())
+        QVERIFY(toolbar->rect().contains(control->geometry()));
+    selector.setVideo(false);
+    selector.setSelections(true, {}, 0);
+    QCoreApplication::processEvents();
+    QVERIFY(instruction->width() >= instruction->fontMetrics().horizontalAdvance(instruction->text()));
+    for (auto *control : toolbar->findChildren<QPushButton *>())
+        QVERIFY(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20);
 }
 
 void EditorTests::gridArrangementPreservesPixels() {
