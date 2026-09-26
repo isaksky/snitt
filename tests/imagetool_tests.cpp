@@ -26,6 +26,7 @@ private slots:
     void eraseReplayKeepsExactSample();
     void annotationPreviewDoesNotSoftenOnRelease();
     void earlierAnnotationsStaySharpThroughRasterEdits();
+    void fractionalCutsKeepEarlierAnnotationsInsideMasks();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
 };
@@ -602,10 +603,14 @@ void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
             const QImage beforeCut = doc.render(scale);
             QVERIFY(doc.cut(true, 2, 5));
             const QImage afterCut = doc.render(scale);
-            const int start = qRound(2 * scale), end = qRound(5 * scale);
-            const int suffix = qMin(afterCut.width() - start, beforeCut.width() - end);
-            QCOMPARE(afterCut.copy(QRect(start, 0, suffix, afterCut.height())),
-                     beforeCut.copy(QRect(end, 0, suffix, beforeCut.height())));
+            ImageDocument repositioned;
+            repositioned.reset(white);
+            QVERIFY(repositioned.cut(true, 2, 5));
+            if (shape == "text")
+                QVERIFY(repositioned.text(QRectF(7, 12, 65, 30), "Sharp", Qt::red, 13));
+            else
+                QVERIFY(repositioned.annotate(shape, {7.25, 10.25}, {67.25, 50.25}, Qt::red, 1));
+            QCOMPARE(afterCut, repositioned.render(scale));
             // Check the resulting edges against an enlarged native frame too.
             const QImage flattened = doc.image().scaled(afterCut.size(), Qt::IgnoreAspectRatio,
                                                         Qt::FastTransformation);
@@ -654,6 +659,65 @@ void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
             for (int x = 0; x < expected.width(); ++x)
                 if (expected.pixel(x, y) != qRgb(255, 255, 255))
                     QCOMPARE(actual.pixel(x, y), expected.pixel(x, y));
+    }
+}
+
+void ImageToolTests::fractionalCutsKeepEarlierAnnotationsInsideMasks() {
+    QImage white(800, 480, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    for (const bool vertical : {true, false}) {
+        for (const bool mixed : {false, true}) {
+            for (const bool erase : {false, true}) {
+                for (const bool text : {false, true}) {
+                    ImageDocument clean, covered;
+                    clean.reset(white); covered.reset(white);
+                    for (ImageDocument *doc : {&clean, &covered})
+                        QVERIFY(doc->annotate("arrow", {300, 300}, {350, 300}, Qt::blue, 2));
+                    if (text)
+                        QVERIFY(covered.text(QRectF(40, 20, 40, 40), "Secret", Qt::red, 18));
+                    else
+                        QVERIFY(covered.annotate("rect", {40, 20}, {80, 60}, Qt::red, 2));
+                    const QList<QPair<int, int>> cuts = mixed
+                        ? QList<QPair<int, int>>{{1, 2}, {3, 5}, {2, 3}, {0, 1}}
+                        : QList<QPair<int, int>>{{1, 2}, {1, 2}, {1, 2},
+                                                 {1, 2}, {1, 2}, {1, 2}};
+                    int removed = 0;
+                    for (const auto &cut : cuts) {
+                        for (ImageDocument *doc : {&clean, &covered})
+                            QVERIFY(doc->cut(vertical, cut.first, cut.second));
+                        removed += cut.second - cut.first;
+                    }
+                    const QRectF area = vertical ? QRectF(37 - removed, 17, 46, 46)
+                                                 : QRectF(37, 17 - removed, 46, 46);
+                    for (ImageDocument *doc : {&clean, &covered}) {
+                        if (erase) QVERIFY(doc->erase(area, {200, 100}));
+                        else QVERIFY(doc->blur(area));
+                    }
+                    QCOMPARE(clean.image(), covered.image());
+                    QCOMPARE(clean.exportScale(), covered.exportScale());
+                    for (const qreal scale : {1.25, 1.5, 2.5}) {
+                        QCOMPARE(clean.render(scale), covered.render(scale));
+                        const QSize frameSize(qRound(clean.image().width() * scale),
+                                              qRound(clean.image().height() * scale));
+                        const auto preview = [&](ImageDocument &doc) {
+                            QImage frame(frameSize, QImage::Format_ARGB32_Premultiplied);
+                            frame.fill(Qt::transparent);
+                            QPainter painter(&frame);
+                            painter.scale(scale, scale);
+                            doc.paint(painter, scale);
+                            painter.end();
+                            return frame;
+                        };
+                        QCOMPARE(preview(clean), preview(covered));
+                    }
+                    QCOMPARE(clean.render(clean.exportScale()),
+                             covered.render(covered.exportScale()));
+                    const QImage exported = covered.render(1.5);
+                    covered.undo(); covered.redo();
+                    QCOMPARE(covered.render(1.5), exported);
+                }
+            }
+        }
     }
 }
 

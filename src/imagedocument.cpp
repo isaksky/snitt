@@ -1,6 +1,7 @@
 #include "imagedocument.h"
 #include <QFont>
 #include <QPainter>
+#include <QRegion>
 #include <algorithm>
 #include <cmath>
 
@@ -205,26 +206,25 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
 
     if (annotationBeforeRasterEdit) {
         // Keep destructive edits at native resolution so fractional cuts cannot
-        // expose source pixels at a rounded boundary. Replay annotations into a
-        // separate full-resolution layer: flattening them with the native frame
-        // here would enlarge their edges after the next blur, erase, or cut.
+        // expose source pixels at a rounded boundary. Retain each annotation's
+        // visible region in document coordinates. Repeated cuts then change its
+        // integral translation, not a rounded high-resolution bitmap offset.
+        // This keeps later masks aligned at every fractional replay scale.
         ImageDocument raster;
         raster.reset(m_source);
-        QImage annotations(scaledSize(m_source.size()), QImage::Format_ARGB32_Premultiplied);
-        if (annotations.isNull()) return {};
-        annotations.fill(Qt::transparent);
+        struct Fragment {
+            const Operation *annotation;
+            QRegion visible;
+            QPoint offset;
+        };
+        QVector<Fragment> fragments;
         for (int i = 0; i < operationCount; ++i) {
             const auto &op = ops[i];
             switch (op.kind) {
             case Operation::Annotation:
-            case Operation::Text: {
-                QPainter p(&annotations);
-                p.scale(scale, scale);
-                if (op.kind == Operation::Annotation)
-                    drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
-                else drawText(p, op);
+            case Operation::Text:
+                fragments.append({&op, QRegion(QRect(QPoint(0, 0), raster.image().size())), {0, 0}});
                 break;
-            }
             case Operation::Blur:
             case Operation::Erase: {
                 const QRect pixels = selectedPixels(op.area, raster.image().size());
@@ -234,36 +234,37 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                     fillWithSample(frame, pixels, op.sampledPixel);
                     raster.commit(std::move(frame), &op);
                 }
-                // The edited rectangle removes annotations already below it;
-                // later annotations must still be allowed on top.
-                QPainter p(&annotations);
-                p.setCompositionMode(QPainter::CompositionMode_Clear);
-                p.fillRect(QRectF(pixels.x() * scale, pixels.y() * scale,
-                                  pixels.width() * scale, pixels.height() * scale), Qt::white);
+                // Remove only earlier annotation content. An annotation added
+                // after this edit is appended with its full visible region.
+                for (auto &fragment : fragments)
+                    fragment.visible = fragment.visible.subtracted(
+                        QRegion(pixels.translated(-fragment.offset)));
                 break;
             }
             case Operation::Cut: {
-                const QSize oldSize = annotations.size();
-                raster.cut(op.vertical, op.start, op.end);
-                QImage next(scaledSize(raster.image().size()), annotations.format());
-                if (next.isNull()) return {};
-                next.fill(Qt::transparent);
-                QPainter p(&next);
-                const int start = qRound(op.start * scale);
-                const int end = qRound(op.end * scale);
-                if (op.vertical) {
-                    p.drawImage(QPoint(0, 0), annotations, QRect(0, 0, start, oldSize.height()));
-                    p.drawImage(QPoint(start, 0), annotations,
-                                QRect(end, 0, qMin(next.width() - start, oldSize.width() - end),
-                                      oldSize.height()));
-                } else {
-                    p.drawImage(QPoint(0, 0), annotations, QRect(0, 0, oldSize.width(), start));
-                    p.drawImage(QPoint(0, start), annotations,
-                                QRect(0, end, oldSize.width(),
-                                      qMin(next.height() - start, oldSize.height() - end)));
+                const QSize oldSize = raster.image().size();
+                const int removed = op.end - op.start;
+                const QRect before = op.vertical ? QRect(0, 0, op.start, oldSize.height())
+                                                 : QRect(0, 0, oldSize.width(), op.start);
+                const QRect after = op.vertical ? QRect(op.end, 0, oldSize.width() - op.end, oldSize.height())
+                                                : QRect(0, op.end, oldSize.width(), oldSize.height() - op.end);
+                QVector<Fragment> next;
+                next.reserve(fragments.size() * 2);
+                for (const auto &fragment : fragments) {
+                    const QRegion current = fragment.visible.translated(fragment.offset);
+                    const QRegion prefix = current.intersected(before);
+                    if (!prefix.isEmpty())
+                        next.append({fragment.annotation, prefix.translated(-fragment.offset), fragment.offset});
+                    const QRegion suffix = current.intersected(after);
+                    if (!suffix.isEmpty()) {
+                        QPoint shifted = fragment.offset;
+                        if (op.vertical) shifted.rx() -= removed;
+                        else shifted.ry() -= removed;
+                        next.append({fragment.annotation, suffix.translated(-fragment.offset), shifted});
+                    }
                 }
-                p.end();
-                annotations = std::move(next);
+                fragments = std::move(next);
+                raster.cut(op.vertical, op.start, op.end);
                 break;
             }
             }
@@ -272,7 +273,17 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                                               Qt::IgnoreAspectRatio, Qt::FastTransformation);
         if (result.isNull()) return {};
         QPainter p(&result);
-        p.drawImage(0, 0, annotations);
+        p.scale(scale, scale);
+        for (const auto &fragment : fragments) {
+            p.save();
+            p.translate(fragment.offset);
+            p.setClipRegion(fragment.visible);
+            const auto &op = *fragment.annotation;
+            if (op.kind == Operation::Annotation)
+                drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+            else drawText(p, op);
+            p.restore();
+        }
         return result;
     }
 
