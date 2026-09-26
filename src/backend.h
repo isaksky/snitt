@@ -10,6 +10,7 @@
 #include <QRect>
 #include <QVariantList>
 #include "videorecorder.h"
+#include "trimsession.h"
 #ifdef Q_OS_MACOS
 #include "macrecorder.h"
 using Recorder = MacRecorder;
@@ -30,6 +31,7 @@ class Backend : public QObject {
     Q_PROPERTY(QRect recordingIndicatorGeometry READ recordingIndicatorGeometry NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingControlsGeometry READ recordingControlsGeometry NOTIFY recordingChanged)
     Q_PROPERTY(bool recordingProtectionPending READ recordingProtectionPending NOTIFY recordingChanged)
+    Q_PROPERTY(QObject* trim READ trim CONSTANT)
 public:
     explicit Backend(QObject *parent = nullptr);
     ~Backend() override;
@@ -40,6 +42,7 @@ public:
     bool finishingRecording() const { return m_recorder.finishing(); }
     int recordingElapsed() const { return m_recorder.elapsed(); }
     QString recordingPath() const { return m_recorder.path(); }
+    QObject *trim() { return &m_trim; }
     QRect recordingRegion() const { return m_recordingRegion; }
     QRect recordingIndicatorGeometry() const { return m_recordingIndicatorGeometry; }
     QRect recordingControlsGeometry() const { return m_recordingControlsGeometry; }
@@ -81,6 +84,7 @@ private:
     bool m_multiple = false;
     bool m_video = false;
     Recorder m_recorder;
+    TrimSession m_trim;
     bool m_pendingRecording = false;
     recording::Source m_pendingSource;
 #ifdef Q_OS_WIN

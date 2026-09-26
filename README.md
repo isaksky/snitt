@@ -9,7 +9,7 @@ and Material controls.
 xshot lives in the menu bar on macOS or the system tray on Windows. It starts at
 login and stays running after you finish editing. **Ctrl+Print Screen** starts
 region selection from any app. **C** copies the screenshot and finishes the session
-when you are not typing an annotation. Saving a video reveals it in Finder or Explorer.
+when you are not typing an annotation. Finalizing a video reveals it in Finder or Explorer.
 Choose **Quit xshot** from its icon menu to stop it until the next launch/login.
 Only one instance runs per user desktop session; launching it again requests a
 capture from the existing instance.
@@ -19,7 +19,7 @@ capture from the existing instance.
 From this checkout:
 
 ```sh
-brew install qtdeclarative  # development dependency, if needed
+brew install qtdeclarative qtmultimedia  # development dependencies, if needed
 ./bin/install
 ```
 
@@ -162,13 +162,22 @@ start recording. **Record video (V)** in the editor also opens this picker.
 Video mode selects one rectangle on one monitor; **M** is unavailable in this mode.
 The compact recording strip sits at the top center of the selected display and
 shows elapsed time. Choose **Stop**, press **Ctrl+Print Screen** again, or press
-**Command/Ctrl+C** while the strip is active to save the clip and reveal it
-selected in Finder or Explorer. Repeated shortcut presses while it is saving do
+**Command/Ctrl+C** while the strip is active to stop the clip and open its review.
+Repeated shortcut presses while it is saving do
 not start another capture. The clipboard keeps its previous contents.
 Choose **Cancel**, or press **Escape** while the strip is active, to discard the clip.
 Windows excludes the strip from captured video.
 On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
 the startup indicator and controls; they can remain over the selected region.
+
+After Stop, preview the video and drag the filmstrip's blue handles to choose the
+portion to keep. Space plays or pauses; Left/Right seek one second, Shift+Left/Right
+seek five seconds, and Z zooms the filmstrip to the selected range. **Save trim**
+exports the chosen range and replaces the original MP4 only after the new file
+passes validation. **Keep original**, Escape, or closing review keeps the full
+recording. Canceling an export or an export error also keeps the original. The
+final file is selected in Finder or Explorer after Keep original or a successful
+trim; previewing and trimming never change the clipboard.
 
 Recordings are silent MP4 files saved under `~/Movies/xshot` on macOS or your
 Windows **Videos\xshot** folder. Both platforms capture the selected region and
@@ -275,7 +284,8 @@ MSYS2 UCRT64 dependencies:
 
 ```sh
 pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
-  mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-declarative
+  mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-declarative \
+  mingw-w64-ucrt-x86_64-qt6-multimedia
 ```
 
 Tests cover exact pixel joins, undo/redo, annotations, privacy-mask independence,

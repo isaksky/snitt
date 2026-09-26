@@ -32,9 +32,13 @@ Backend::Backend(QObject *parent) : QObject(parent) {
     connect(&m_recorder, &Recorder::error, this, &Backend::error);
     connect(&m_recorder, &Recorder::saved, this, [this](const QString &path) {
         const QString nativePath = QDir::toNativeSeparators(path);
+        m_trim.open(path);
         emit recordingSaved(nativePath);
+    });
+    connect(&m_trim, &TrimSession::finalized, this, [this](const QString &path) {
         if (!recording::revealSavedFile(path))
-            emit error(QStringLiteral("Recording saved at %1, but could not reveal it in the file manager.").arg(nativePath));
+            emit error(QStringLiteral("Recording saved at %1, but could not reveal it in the file manager.")
+                       .arg(QDir::toNativeSeparators(path)));
     });
     connect(&m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus state) {
         if (!m_capturing) return;
@@ -160,7 +164,7 @@ QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const
 }
 
 void Backend::capture(bool multiple, bool video) {
-    if (m_capturing || recording()) return;
+    if (m_capturing || recording() || !m_trim.path().isEmpty()) return;
 #ifdef Q_OS_MACOS
     // Without permission macOS can return a successful wallpaper-only image.
     if (!CGPreflightScreenCaptureAccess() && !CGRequestScreenCaptureAccess()) {

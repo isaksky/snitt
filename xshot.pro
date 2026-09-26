@@ -1,4 +1,4 @@
-QT += core gui widgets network qml quick quickcontrols2 svg
+QT += core gui widgets network qml quick quickcontrols2 svg multimedia
 
 CONFIG += c++17 release
 TARGET = xshot
@@ -15,11 +15,15 @@ HEADERS += src/videorecorder.h
 SOURCES += src/videorecorder.cpp
 HEADERS += src/screenshotsave.h
 SOURCES += src/screenshotsave.cpp
+HEADERS += src/trimsession.h
+SOURCES += src/trimsession.cpp
 macx {
     HEADERS += src/macrecorder.h
     SOURCES += src/macrecorder.mm
     QMAKE_CXXFLAGS += -fobjc-arc
-    LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation
+    HEADERS += src/macclip.h
+    SOURCES += src/macclip.mm
+    LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation -framework AppKit
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }
 win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32

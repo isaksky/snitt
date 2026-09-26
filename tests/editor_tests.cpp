@@ -44,6 +44,7 @@ private slots:
     void qmlDismissal();
     void qmlRecordingControls();
     void qmlRecordingHotkeyStop();
+    void qmlRecordingReview();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void captureToolbarInteraction();
@@ -921,6 +922,77 @@ void EditorTests::qmlDismissal() {
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 }
 
+void EditorTests::qmlRecordingReview() {
+    if (QGuiApplication::platformName() == "offscreen")
+        QSKIP("Qt Multimedia playback requires an interactive display");
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed to build a video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString clip = directory.filePath("review.mp4");
+    QProcess fixture;
+    fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=3",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", clip});
+    QVERIFY(fixture.waitForFinished(15000));
+    QCOMPARE(fixture.exitCode(), 0);
+    Backend backend;
+    auto *trim = qobject_cast<TrimSession *>(backend.trim());
+    QVERIFY(trim);
+    trim->open(clip);
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *root = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(root);
+    auto *review = root->findChild<QQuickWindow *>("recordingReviewWindow");
+    QVERIFY(review);
+    QTRY_VERIFY(review->isVisible());
+    auto *bar = review->findChild<QObject *>("recordingTrimBar");
+    auto *player = review->findChild<QObject *>("recordingReviewPlayer");
+    QVERIFY(bar && player);
+    QTRY_VERIFY_WITH_TIMEOUT(bar->property("endSec").toDouble() > 2.0, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 2000, 30000);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 500, 15000);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &url : trim->thumbnails()) if (!url.isEmpty()) return true;
+        return false;
+    })(), 45000);
+    QVERIFY(review->grabWindow().save("trim-review-normal.png"));
+    review->resize(680, 520);
+    QTest::qWait(150);
+    QVERIFY(review->grabWindow().save("trim-review-minimum.png"));
+    QSignalSpy finalized(trim, &TrimSession::finalized);
+    trim->keepOriginal();
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), clip);
+    QTRY_VERIFY(!review->isVisible());
+    QVERIFY(QFileInfo(clip).size() > 0);
+    finalized.clear();
+    trim->open(clip);
+    QTRY_VERIFY(review->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(trim->duration() > 2000 && review->property("canEdit").toBool(), 30000);
+    bar->setProperty("startSec", 0.5);
+    bar->setProperty("endSec", 2.0);
+    auto *save = review->findChild<QObject *>("recordingSaveTrimButton");
+    QVERIFY(save);
+    QTRY_VERIFY(save->property("enabled").toBool());
+    QVERIFY(review->grabWindow().save("trim-review-selected.png"));
+    QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
+    QTRY_VERIFY_WITH_TIMEOUT(!finalized.isEmpty() || !trim->problem().isEmpty(), 60000);
+    QVERIFY2(trim->problem().isEmpty(), qPrintable(trim->problem()));
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), clip);
+    QTRY_VERIFY(!review->isVisible());
+}
+
 void EditorTests::qmlRecordingControls() {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
@@ -958,8 +1030,10 @@ void EditorTests::qmlRecordingControls() {
     QVERIFY(window);
     auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
     auto *indicator = window->findChild<QQuickWindow *>("recordingStartupIndicator");
+    auto *review = window->findChild<QQuickWindow *>("recordingReviewWindow");
     QVERIFY(controls);
     QVERIFY(indicator);
+    QVERIFY(review);
     QVERIFY(!window->isVisible()); QVERIFY(!controls->isVisible());
 
     QWidget marker;
@@ -1075,6 +1149,9 @@ void EditorTests::qmlRecordingControls() {
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());
+    QTRY_VERIFY(review->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
+    QTRY_VERIFY(!review->isVisible());
     QTest::qWait(250); // Let Finder/Explorer select the completed file before cleanup.
     QVERIFY(QFile::remove(path));
 #else
@@ -1111,7 +1188,9 @@ void EditorTests::qmlRecordingHotkeyStop() {
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     QVERIFY(window);
     auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
+    auto *review = window->findChild<QQuickWindow *>("recordingReviewWindow");
     QVERIFY(controls);
+    QVERIFY(review);
     QGuiApplication::clipboard()->setText("keep clipboard during hotkey stop");
     backend.capture(false, true);
     RegionSelector *selector = nullptr;
@@ -1142,6 +1221,9 @@ void EditorTests::qmlRecordingHotkeyStop() {
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());
+    QTRY_VERIFY(review->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
+    QTRY_VERIFY(!review->isVisible());
     for (QWidget *widget : QApplication::topLevelWidgets())
         QVERIFY(!qobject_cast<RegionSelector *>(widget) || !widget->isVisible());
     const QString path = saved.first().first().toString();

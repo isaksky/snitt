@@ -1,4 +1,4 @@
-QT += core gui widgets network quick quickcontrols2 svg testlib
+QT += core gui widgets network quick quickcontrols2 svg multimedia testlib
 CONFIG += c++17 testcase console
 CONFIG -= app_bundle
 TARGET = editor_tests
@@ -11,11 +11,14 @@ HEADERS += ../src/videorecorder.h
 SOURCES += ../src/videorecorder.cpp
 HEADERS += ../src/screenshotsave.h
 SOURCES += ../src/screenshotsave.cpp
+HEADERS += ../src/trimsession.h
+SOURCES += ../src/trimsession.cpp
 macx {
     HEADERS += ../src/macrecorder.h
-    SOURCES += ../src/macrecorder.mm
+    HEADERS += ../src/macclip.h
+    SOURCES += ../src/macrecorder.mm ../src/macclip.mm
     QMAKE_CXXFLAGS += -fobjc-arc
-    LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation
+    LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation -framework AppKit
 }
 win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32
 RESOURCES += ../src/resources.qrc

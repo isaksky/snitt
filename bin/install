@@ -13,8 +13,25 @@ mkdir -p "$PACKAGE"
 # Only the generated staging bundle is replaced here.
 rm -rf "$PACKAGE/xshot.app"
 ditto "$ROOT/build/xshot.app" "$PACKAGE/xshot.app"
-QTLIBS="$(qmake -query QT_INSTALL_LIBS)"
-"$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$QTLIBS" -always-overwrite
+# Homebrew places Qt Quick Timeline in a separate keg. macdeployqt searches
+# one explicit libpath, so expose those frameworks in our existing build rpath.
+mkdir -p "$ROOT/build/lib"
+for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
+    ln -sfn "$(brew --prefix qtquicktimeline)/lib/$framework.framework" \
+        "$ROOT/build/lib/$framework.framework"
+done
+"$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
+# The Quick Timeline blend-trees plugin can be found only after its parent
+# Timeline framework has been copied on the first pass.
+if [ ! -f "$PACKAGE/xshot.app/Contents/Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees" ]; then
+    "$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
+fi
+for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
+    [ -f "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework/Versions/A/$framework" ] || {
+        echo "Qt deployment did not bundle $framework" >&2
+        exit 1
+    }
+done
 "$ROOT/bin/sign-macos" "$PACKAGE/xshot.app"
 DEST="$HOME/Applications/xshot.app"
 AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"

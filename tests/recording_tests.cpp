@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <QApplication>
 #include <QClipboard>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QElapsedTimer>
@@ -25,11 +26,166 @@ private slots:
     void indicatorPlacement();
     void videoSelectorIsSingleRegion();
     void desktopRecording();
+    void trimKeepsOriginalOnDismissAndInvalidRange();
+    void trimHeadAndTailAccurately();
+    void trimCancellationPreservesOriginal();
+    void trimReplacementFailurePreservesOriginal();
 #ifdef Q_OS_MACOS
     void cancellationTimeoutDiscards();
     void interactiveCancellationTimeout();
 #endif
 };
+
+static QString makeFourColorClip(const QString &directory) {
+    const QString path = QDir(directory).filePath("source.mp4");
+    const QString ffmpeg = recording::toolPath("ffmpeg");
+    if (ffmpeg.isEmpty()) return {};
+    QProcess process;
+    QStringList args {"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+        "color=c=black:s=160x90:r=30:d=4", "-vf",
+        "drawbox=c=red:t=fill:enable='lt(t,1)',"
+        "drawbox=c=green:t=fill:enable='gte(t,1)*lt(t,2)',"
+        "drawbox=c=blue:t=fill:enable='gte(t,2)*lt(t,3)',"
+        "drawbox=c=yellow:t=fill:enable='gte(t,3)'",
+        "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path};
+    process.start(ffmpeg, args);
+    if (!process.waitForFinished(15000) || process.exitCode() != 0) return {};
+    return path;
+}
+
+static QByteArray clipPixels(const QString &path) {
+    QProcess decoder;
+    decoder.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error",
+        "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
+    if (!decoder.waitForFinished(15000) || decoder.exitCode() != 0) return {};
+    return decoder.readAllStandardOutput();
+}
+
+void RecordingTests::trimKeepsOriginalOnDismissAndInvalidRange() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY2(!path.isEmpty(), "Could not make the four-color recording fixture");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+    file.close();
+    TrimSession trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    QVERIFY(trim.duration() > 3000);
+    trim.exportRange(-1, 2000);
+    QVERIFY(!trim.problem().isEmpty());
+    QVERIFY(!trim.busy());
+    trim.keepOriginal();
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256), original);
+    file.close();
+    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    finalized.clear();
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    trim.exportRange(0, trim.duration());
+    QCOMPARE(finalized.size(), 1);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256), original);
+    file.close();
+}
+
+void RecordingTests::trimHeadAndTailAccurately() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY2(!path.isEmpty(), "Could not make the four-color recording fixture");
+    TrimSession trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    QVERIFY(trim.duration() > 3000);
+    trim.exportRange(1100, 2100);
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 60000);
+    QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), path);
+    const QByteArray decoded = clipPixels(path);
+    const qsizetype frameSize = 160 * 90 * 3;
+    QVERIFY(decoded.size() >= frameSize * 25);
+    QVERIFY(decoded.size() <= frameSize * 32);
+    const auto pixel = [&](qsizetype offset) {
+        const qsizetype middle = offset + (45 * 160 + 80) * 3;
+        return QColor(uchar(decoded[middle]), uchar(decoded[middle + 1]), uchar(decoded[middle + 2]));
+    };
+    const QColor first = pixel(0);
+    const QColor last = pixel(decoded.size() - frameSize);
+    QVERIFY2(first.green() > first.red() * 1.5 && first.green() > first.blue() * 1.5,
+             qPrintable(QStringLiteral("First frame %1 was not green").arg(first.name())));
+    QVERIFY2(last.blue() > last.red() * 1.5 && last.blue() > last.green() * 1.5,
+             qPrintable(QStringLiteral("Last frame %1 was not blue").arg(last.name())));
+    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+}
+
+void RecordingTests::trimCancellationPreservesOriginal() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY(!path.isEmpty());
+    QFile source(path);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256);
+    source.close();
+    TrimSession trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    trim.exportRange(500, 2500);
+    QVERIFY(trim.busy());
+    trim.cancelExport();
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
+    QVERIFY(finalized.isEmpty());
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+    source.close();
+    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    trim.keepOriginal();
+    QCOMPARE(finalized.size(), 1);
+}
+
+void RecordingTests::trimReplacementFailurePreservesOriginal() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
+    class FailingReplacement : public TrimSession {
+    protected:
+        bool replaceFile(const QString &, const QString &, QString *problem) override {
+            *problem = QStringLiteral("Simulated replacement failure; original preserved.");
+            return false;
+        }
+    };
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = makeFourColorClip(directory.path());
+    QVERIFY(!path.isEmpty());
+    QFile source(path);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray original = QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256);
+    source.close();
+    FailingReplacement trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    if (trim.duration() == 0) trim.setDuration(4000);
+    trim.exportRange(1100, 2100);
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 60000);
+    QVERIFY(!trim.problem().isEmpty());
+    QVERIFY(finalized.isEmpty());
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
+    source.close();
+    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+}
 
 void RecordingTests::indicatorPlacement() {
     const QRect primary(0, 0, 1920, 1080);

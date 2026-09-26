@@ -3,6 +3,8 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtMultimedia
+import "Format.js" as Format
 import XShot 1.0
 
 ApplicationWindow {
@@ -25,7 +27,7 @@ ApplicationWindow {
     readonly property string commandKey: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
     readonly property string copyKey: "C"
     readonly property string redoKey: Qt.platform.os === "osx" ? "⇧⌘Z" : "Ctrl+Y"
-    readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !openDialog.visible
+    readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !reviewWindow.visible && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
     readonly property string hint: editingText ? "Text · " + canvas.textSize + " px · Wheel outside note to resize · " + commandKey + "Enter to place · Esc to cancel"
@@ -59,6 +61,7 @@ ApplicationWindow {
     function capture() { startCapture(false, false) }
     function hotkeyCapture() {
         if (backend.recording) { backend.stopRecordingFromHotkey(); return }
+        if (backend.trim.path !== "") return
         capture()
     }
     function captureMultiple() { startCapture(true, false) }
@@ -291,6 +294,239 @@ ApplicationWindow {
         }
         Shortcut { sequences: [StandardKey.Copy]; enabled: recordingWindow.visible && !backend.startingRecording && !backend.finishingRecording; onActivated: backend.finishRecording() }
         Shortcut { sequence: "Escape"; enabled: recordingWindow.visible && !backend.finishingRecording; onActivated: backend.cancelRecording() }
+    }
+
+    Window {
+        id: reviewWindow
+        objectName: "recordingReviewWindow"
+        title: "xshot — Review recording"
+        transientParent: null
+        width: 960; height: 690
+        minimumWidth: 680; minimumHeight: 520
+        color: "#111317"
+        visible: backend.trim.path !== ""
+        Material.theme: Material.Dark
+        Material.accent: "#91bff0"
+        property url playbackSource: ""
+        property bool preparingExport: false
+        property bool dismissAfterCancel: false
+        readonly property bool canEdit: backend.trim.duration > 0 && !backend.trim.busy && !preparingExport
+        readonly property bool hasTrim: trimBar.startSec > 0.001
+            || trimBar.endSec < backend.trim.duration / 1000 - 0.001
+
+        function togglePlay() {
+            if (!canEdit) return
+            if (reviewPlayer.playbackState === MediaPlayer.PlayingState) { reviewPlayer.pause(); return }
+            if (reviewPlayer.position / 1000 < trimBar.startSec
+                    || reviewPlayer.position / 1000 >= trimBar.endSec - 0.01)
+                reviewPlayer.position = Math.round(trimBar.startSec * 1000)
+            reviewPlayer.play()
+        }
+        function seek(seconds) {
+            if (!canEdit) return
+            trimBar.playheadSec = Math.max(trimBar.startSec, Math.min(trimBar.endSec,
+                trimBar.playheadSec + seconds))
+            reviewPlayer.position = Math.round(trimBar.playheadSec * 1000)
+        }
+        function prepareExport() {
+            if (!canEdit || !hasTrim) return
+            preparingExport = true
+            reviewPlayer.stop()
+            playbackSource = ""
+            exportReleaseTimer.restart()
+        }
+        onVisibleChanged: if (visible) {
+            playbackSource = backend.trim.source
+            trimBar.startSec = 0
+            trimBar.endSec = backend.trim.duration / 1000
+            trimBar.playheadSec = 0
+            trimBar.zoomed = false
+            raise(); requestActivate()
+        } else {
+            reviewPlayer.stop()
+            playbackSource = ""
+            preparingExport = false
+            dismissAfterCancel = false
+        }
+        onClosing: close => {
+            close.accepted = false
+            if (backend.trim.busy) {
+                dismissAfterCancel = true
+                backend.trim.cancelExport()
+            } else if (preparingExport) {
+                exportReleaseTimer.stop()
+                preparingExport = false
+                backend.trim.keepOriginal()
+            } else backend.trim.keepOriginal()
+        }
+        Connections {
+            target: backend.trim
+            function onChanged() {
+                if (reviewWindow.dismissAfterCancel && !backend.trim.busy) {
+                    reviewWindow.dismissAfterCancel = false
+                    backend.trim.keepOriginal()
+                    return
+                }
+                if (!backend.trim.busy && !reviewWindow.preparingExport
+                        && backend.trim.path !== "" && reviewWindow.playbackSource.toString() === "")
+                    reviewWindow.playbackSource = backend.trim.source
+            }
+        }
+        Timer {
+            id: exportReleaseTimer
+            interval: 180
+            onTriggered: {
+                reviewWindow.preparingExport = false
+                backend.trim.exportRange(Math.round(trimBar.startSec * 1000),
+                                         Math.round(trimBar.endSec * 1000))
+            }
+        }
+        MediaPlayer {
+            id: reviewPlayer
+            objectName: "recordingReviewPlayer"
+            source: reviewWindow.playbackSource
+            videoOutput: reviewVideo
+            audioOutput: AudioOutput {}
+            onDurationChanged: duration => {
+                if (duration > 0) {
+                    backend.trim.setDuration(duration)
+                    if (trimBar.endSec <= 0) trimBar.endSec = backend.trim.duration / 1000
+                }
+            }
+            onPositionChanged: position => {
+                if (playbackState === MediaPlayer.PlayingState
+                        && position / 1000 >= trimBar.endSec && trimBar.endSec > 0) {
+                    pause()
+                    reviewPlayer.position = Math.round(trimBar.endSec * 1000)
+                }
+                if (!trimBar.interacting) trimBar.playheadSec = position / 1000
+            }
+            onErrorOccurred: (error, errorString) => {
+                if (reviewWindow.visible && !backend.trim.busy)
+                    playbackError.text = "Playback unavailable: " + errorString
+            }
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 24
+            spacing: 14
+            Label {
+                Layout.fillWidth: true
+                text: "Review recording"
+                color: "#f0f3f7"
+                font.pixelSize: 24
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "Drag the blue handles to choose a range. Keeping or closing this review preserves the full recording."
+                color: "#aab3c0"; wrapMode: Text.WordWrap
+            }
+            Rectangle {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                color: "#07090b"; radius: 10
+                VideoOutput {
+                    id: reviewVideo
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    fillMode: VideoOutput.PreserveAspectFit
+                }
+                Label {
+                    id: playbackError
+                    anchors.centerIn: parent
+                    visible: text !== ""
+                    color: "#f0b5b5"
+                    text: ""
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton {
+                    objectName: "recordingReviewPlayButton"
+                    text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia ? "Loading…"
+                        : reviewPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                    enabled: reviewWindow.canEdit && reviewPlayer.duration > 0
+                    onClicked: reviewWindow.togglePlay()
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: Format.fmt(trimBar.playheadSec) + " / " + Format.fmt(backend.trim.duration / 1000)
+                    color: "#dfe5ed"
+                }
+                ActionButton {
+                    text: trimBar.zoomed ? "Zoom out" : "Zoom to selection"
+                    enabled: reviewWindow.canEdit
+                    onClicked: trimBar.toggleZoom()
+                }
+            }
+            TrimBar {
+                id: trimBar
+                objectName: "recordingTrimBar"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 84
+                enabled: reviewWindow.canEdit
+                durationSec: backend.trim.duration / 1000
+                thumbCount: 12
+                thumbnails: backend.trim.thumbnails
+                onScrub: seconds => reviewPlayer.position = Math.round(seconds * 1000)
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "From " + Format.fmt(trimBar.startSec); color: "#91bff0" }
+                Item { Layout.fillWidth: true }
+                Label { text: "To " + Format.fmt(trimBar.endSec); color: "#91bff0" }
+            }
+            Label {
+                Layout.fillWidth: true
+                text: backend.trim.problem !== "" ? backend.trim.problem
+                    : backend.trim.busy ? "Exporting trimmed recording… " + Math.round(backend.trim.progress * 100) + "%"
+                    : ""
+                visible: text !== ""
+                color: backend.trim.problem !== "" ? "#f0b5b5" : "#aab3c0"
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+                ActionButton {
+                    objectName: "recordingKeepOriginalButton"
+                    text: "Keep original"
+                    enabled: !backend.trim.busy && !reviewWindow.preparingExport
+                    onClicked: backend.trim.keepOriginal()
+                }
+                Item { Layout.fillWidth: true }
+                ActionButton {
+                    text: "Cancel export"
+                    visible: backend.trim.busy || reviewWindow.preparingExport
+                    onClicked: {
+                        exportReleaseTimer.stop()
+                        reviewWindow.preparingExport = false
+                        backend.trim.cancelExport()
+                    }
+                }
+                PrimaryButton {
+                    objectName: "recordingSaveTrimButton"
+                    text: "Save trim"
+                    enabled: reviewWindow.canEdit && reviewWindow.hasTrim
+                    onClicked: reviewWindow.prepareExport()
+                }
+            }
+        }
+        Shortcut { sequence: "Space"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.togglePlay() }
+        Shortcut { sequence: "Left"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-1) }
+        Shortcut { sequence: "Right"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(1) }
+        Shortcut { sequence: "Shift+Left"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-5) }
+        Shortcut { sequence: "Shift+Right"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(5) }
+        Shortcut { sequence: "Z"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: trimBar.toggleZoom() }
+        Shortcut { sequence: "Ctrl+Space"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
+            trimBar.startSec = Math.min(trimBar.playheadSec, trimBar.endSec - 0.1) } }
+        Shortcut { sequence: "Alt+Space"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
+            trimBar.endSec = Math.max(trimBar.playheadSec, trimBar.startSec + 0.1) } }
+        Shortcut { sequence: "Escape"; enabled: reviewWindow.visible; onActivated: {
+            if (backend.trim.busy || reviewWindow.preparingExport) {
+                exportReleaseTimer.stop(); reviewWindow.preparingExport = false; backend.trim.cancelExport()
+            } else backend.trim.keepOriginal()
+        } }
     }
 
     Dialog {

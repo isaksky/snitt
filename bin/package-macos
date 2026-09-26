@@ -45,6 +45,13 @@ def verify_bundle(bundle):
     contents = bundle / "Contents"
     if not (contents / "PlugIns/imageformats/libqsvg.dylib").is_file():
         raise RuntimeError("Bundled SVG image plugin is missing")
+    for relative in ("Resources/qml/QtMultimedia/qmldir",
+                     "PlugIns/multimedia/libdarwinmediaplugin.dylib",
+                     "Frameworks/QtMultimedia.framework/Versions/A/QtMultimedia",
+                     "Frameworks/QtQuickTimeline.framework/Versions/A/QtQuickTimeline",
+                     "Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees"):
+        if not (contents / relative).is_file():
+            raise RuntimeError(f"Bundled multimedia runtime is missing: {relative}")
     binaries = list(binary_files(bundle))
     dependencies = {}
     for binary in binaries:
@@ -190,6 +197,7 @@ def add_notices(payload, packages, cache, dependencies):
     inventory = []
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
+    copy_file(ROOT / "src/OMACUT-LICENSE", licenses / "omacut/LICENSE")
     for package, files in sorted(packages.items()):
         name = package.parent.name
         destination = licenses / f"{name}-{package.name}"
@@ -238,6 +246,9 @@ Qt's installed SBOMs identify additional component source locations.
 
 Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
 licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
+
+The recording trim filmstrip and time formatter are adapted from omacut under
+the MIT license in licenses/omacut/LICENSE. Source: https://github.com/omacom/omacut
 
 Portions of this software are copyright The FreeType Project
 (https://freetype.org/). All rights reserved.
