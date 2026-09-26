@@ -52,7 +52,7 @@ public:
     Q_INVOKABLE void begin(qreal x, qreal y);
     Q_INVOKABLE void move(qreal x, qreal y);
     Q_INVOKABLE void end(qreal x, qreal y);
-    Q_INVOKABLE void cancel();
+    Q_INVOKABLE bool cancel();
     Q_INVOKABLE void addText(qreal x, qreal y, qreal width, qreal height, const QString &text);
 signals:
     void imageChanged();

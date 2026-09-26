@@ -35,6 +35,7 @@ private slots:
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
     void qmlKeyboardCommands();
+    void qmlDismissal();
     void qmlRecordingControls();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
@@ -445,6 +446,106 @@ void EditorTests::qmlKeyboardCommands() {
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(canvas->regionCount(), 0);
     QCOMPARE(QGuiApplication::clipboard()->image(), expectedGrid);
+}
+
+void EditorTests::qmlDismissal() {
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    const QString path = dir.filePath("input.png");
+    QVERIFY(pattern().save(path));
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(window->isVisible() && canvas->hasImage());
+    const auto reopen = [&] {
+        QVERIFY(canvas->load(QUrl::fromLocalFile(path)));
+        QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+        canvas->forceActiveFocus();
+        QTRY_VERIFY(window->isActive());
+    };
+    QGuiApplication::clipboard()->setText("keep clipboard");
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard"));
+
+    QVERIFY(canvas->loadRegions({pattern(), pattern()}));
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    canvas->forceActiveFocus();
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(canvas->regionCount(), 0);
+
+    reopen();
+    canvas->setTool("text");
+    const QPointF center = canvas->imageRect().center();
+    canvas->begin(center.x(), center.y());
+    QVERIFY(window->property("editingText").toBool());
+    auto *text = window->findChild<QObject *>("annotationText");
+    QVERIFY(text);
+    text->setProperty("text", "draft");
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->property("editingText").toBool());
+    QVERIFY(window->isVisible() && canvas->hasImage());
+    QVERIFY(!canvas->canUndo());
+    QCOMPARE(text->property("text").toString(), QString());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+
+    reopen();
+    canvas->begin(center.x(), center.y()); // Empty text drafts have the same two-Escape behavior.
+    QVERIFY(window->property("editingText").toBool());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QVERIFY(window->isVisible() && canvas->hasImage());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+
+    reopen();
+    canvas->setTool("rect");
+    canvas->begin(center.x(), center.y());
+    canvas->move(center.x() + 30, center.y() + 30);
+    QTest::keyClick(window, Qt::Key_Escape);
+    QVERIFY(window->isVisible() && canvas->hasImage());
+    QVERIFY(!canvas->canUndo());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+
+    reopen();
+    auto *dialog = window->findChild<QObject *>("captureErrorDialog");
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!dialog->property("visible").toBool());
+    QVERIFY(window->isVisible() && canvas->hasImage());
+    auto *arrangeDialog = window->findChild<QObject *>("rearrangeDialog");
+    QVERIFY(arrangeDialog);
+    QVERIFY(QMetaObject::invokeMethod(arrangeDialog, "open"));
+    QTRY_VERIFY(arrangeDialog->property("visible").toBool());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!arrangeDialog->property("visible").toBool());
+    QVERIFY(window->isVisible() && canvas->hasImage());
+    canvas->begin(center.x(), center.y());
+    window->close();
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard"));
+    reopen(); // The next screenshot session still opens normally.
+    window->close();
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 }
 
 void EditorTests::qmlRecordingControls() {

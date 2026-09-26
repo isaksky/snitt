@@ -190,7 +190,12 @@ void EditorCanvas::end(qreal x, qreal y) {
     changed();
 }
 
-void EditorCanvas::cancel() { m_dragging = false; update(); }
+bool EditorCanvas::cancel() {
+    const bool wasDragging = m_dragging;
+    m_dragging = false;
+    update();
+    return wasDragging;
+}
 
 void EditorCanvas::addText(qreal x, qreal y, qreal width, qreal height, const QString &text) {
     if (m_document.text(QRectF(x, y, width, height), text, m_ink)) changed();

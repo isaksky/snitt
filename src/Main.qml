@@ -68,9 +68,18 @@ ApplicationWindow {
         canvas.cancel()
         if (canvas.copy()) { win.hide(); canvas.clear() }
     }
+    function dismissEditor() {
+        win.editingText = false
+        textInput.text = ""
+        win.restoreAfterCapture = false
+        captureErrorDialog.close()
+        rearrangeDialog.close()
+        win.hide()
+        canvas.clear()
+    }
     function showEditor() { win.show(); win.raise(); win.requestActivate() }
     function openImage(file) { commitText(); canvas.load(file); showEditor() }
-    onClosing: close => { close.accepted = false; win.hide() }
+    onClosing: close => { close.accepted = false; win.dismissEditor() }
     function showError(message) { notice = message; noticeTimer.restart() }
 
     Timer { id: noticeTimer; interval: 9000; onTriggered: win.notice = "" }
@@ -176,7 +185,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: Math.min(560, win.width - 48)
         modal: true
-        closePolicy: Popup.NoAutoClose
+        closePolicy: Popup.CloseOnEscape
         contentItem: ColumnLayout {
             spacing: 20
             Label {
@@ -273,7 +282,7 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Escape"; enabled: win.shortcutsOn
-        onActivated: canvas.cancel()
+        onActivated: if (!canvas.cancel()) win.dismissEditor()
     }
 
     component ActionButton: Button {
@@ -512,6 +521,7 @@ ApplicationWindow {
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_Escape) {
                     win.editingText = false
+                    textInput.text = ""
                     canvas.forceActiveFocus()
                     event.accepted = true
                 } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
