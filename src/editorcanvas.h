@@ -17,6 +17,8 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
     Q_PROPERTY(int strokeWidth READ strokeWidth NOTIFY sizeChanged)
     Q_PROPERTY(int textSize READ textSize NOTIFY sizeChanged)
+    Q_PROPERTY(int pixelBlockSize READ pixelBlockSize NOTIFY sizeChanged)
+    Q_PROPERTY(int maxPixelBlockSize READ maxPixelBlockSize NOTIFY sizeChanged)
     Q_PROPERTY(int maxStrokeWidth READ maxStrokeWidth NOTIFY sizeChanged)
     Q_PROPERTY(int maxTextSize READ maxTextSize NOTIFY sizeChanged)
     Q_PROPERTY(bool arranging READ arranging NOTIFY arrangementChanged)
@@ -38,6 +40,8 @@ public:
     void setInk(QColor ink);
     int strokeWidth() const { return m_strokeWidth; }
     int textSize() const { return m_textSize; }
+    int pixelBlockSize() const { return m_pixelBlockSize; }
+    int maxPixelBlockSize() const;
     int maxStrokeWidth() const;
     int maxTextSize() const;
     void paint(QPainter *painter) override;
@@ -88,6 +92,7 @@ private:
     QColor m_ink = QColor("#ef4444");
     int m_strokeWidth = 4;
     int m_textSize = 24;
+    int m_pixelBlockSize = 12;
     qreal m_wheelRemainder = 0;
     bool m_dragging = false;
     QPointF m_start, m_end;

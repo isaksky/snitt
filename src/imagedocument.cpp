@@ -19,45 +19,52 @@ void fillWithSample(QImage &image, const QRect &area, QRgb sampledPixel) {
     }
 }
 
-const QImage &privacyTexture() {
-    // This opaque pattern never uses screenshot pixels. Blurring the source
-    // would retain information about the contents the user meant to hide.
-    static const QImage texture = [] {
-        constexpr int side = 96;
-        constexpr int block = 12;
-        constexpr int radius = 2;
-        QImage pixels(side, side, QImage::Format_ARGB32_Premultiplied);
-        for (int y = 0; y < side; ++y) {
-            auto *row = reinterpret_cast<QRgb *>(pixels.scanLine(y));
-            for (int x = 0; x < side; ++x) {
-                const quint32 seed = quint32(x / block) * 0x9e3779b9U
-                                   ^ quint32(y / block) * 0x85ebca6bU;
-                const int shade = int((seed ^ (seed >> 13)) % 25);
-                row[x] = qRgb(125 + shade, 133 + shade, 144 + shade);
-            }
+QRgb averageBlock(const QImage &source, const QRect &block) {
+    quint64 red = 0, green = 0, blue = 0, alpha = 0;
+    for (int y = block.top(); y <= block.bottom(); ++y) {
+        const auto *row = reinterpret_cast<const QRgb *>(source.constScanLine(y));
+        for (int x = block.left(); x <= block.right(); ++x) {
+            const QRgb pixel = row[x]; // Source images use premultiplied ARGB.
+            red += qRed(pixel); green += qGreen(pixel); blue += qBlue(pixel);
+            alpha += qAlpha(pixel);
         }
-        QImage horizontal(side, side, pixels.format());
-        QImage softened(side, side, pixels.format());
-        for (int pass = 0; pass < 2; ++pass) {
-            const QImage &input = pass == 0 ? pixels : horizontal;
-            QImage &output = pass == 0 ? horizontal : softened;
-            for (int y = 0; y < side; ++y) {
-                auto *row = reinterpret_cast<QRgb *>(output.scanLine(y));
-                for (int x = 0; x < side; ++x) {
-                    int red = 0, green = 0, blue = 0;
-                    for (int offset = -radius; offset <= radius; ++offset) {
-                        const QRgb value = input.pixel(
-                            pass == 0 ? (x + offset + side) % side : x,
-                            pass == 1 ? (y + offset + side) % side : y);
-                        red += qRed(value); green += qGreen(value); blue += qBlue(value);
-                    }
-                    row[x] = qRgb(red / 5, green / 5, blue / 5);
-                }
-            }
-        }
-        return softened;
-    }();
-    return texture;
+    }
+    const quint64 count = quint64(block.width()) * block.height();
+    if (!alpha) return 0;
+    return qRgba(int(qMin<quint64>(255, (red * 255 + alpha / 2) / alpha)),
+                 int(qMin<quint64>(255, (green * 255 + alpha / 2) / alpha)),
+                 int(qMin<quint64>(255, (blue * 255 + alpha / 2) / alpha)),
+                 int((alpha + count / 2) / count));
+}
+
+QImage samplePixelGrid(const QImage &source, const QRect &area, int blockSize) {
+    const QRect selected = area.intersected(source.rect());
+    if (selected.isEmpty()) return {};
+    const int firstX = selected.left() / blockSize;
+    const int firstY = selected.top() / blockSize;
+    const int columns = selected.right() / blockSize - firstX + 1;
+    const int rows = selected.bottom() / blockSize - firstY + 1;
+    QImage grid(columns, rows, QImage::Format_ARGB32);
+    for (int row = 0; row < rows; ++row)
+        for (int column = 0; column < columns; ++column)
+            grid.setPixel(column, row, averageBlock(source,
+                QRect((firstX + column) * blockSize, (firstY + row) * blockSize,
+                      blockSize, blockSize).intersected(source.rect())));
+    return grid;
+}
+
+void paintPixelGrid(QPainter &painter, const QRect &area, int blockSize, const QImage &grid) {
+    if (grid.isNull()) return;
+    const int firstX = area.left() / blockSize;
+    const int firstY = area.top() / blockSize;
+    painter.save();
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    for (int row = 0; row < grid.height(); ++row)
+        for (int column = 0; column < grid.width(); ++column)
+            painter.fillRect(QRect((firstX + column) * blockSize, (firstY + row) * blockSize,
+                                   blockSize, blockSize).intersected(area),
+                             QColor::fromRgba(grid.pixel(column, row)));
+    painter.restore();
 }
 }
 
@@ -228,7 +235,13 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
             case Operation::Blur:
             case Operation::Erase: {
                 const QRect pixels = selectedPixels(op.area, raster.image().size());
-                if (op.kind == Operation::Blur) raster.blur(op.area);
+                if (op.kind == Operation::Blur) {
+                    QImage frame = raster.image().copy();
+                    QPainter p(&frame);
+                    paintPixelGrid(p, pixels, op.blockSize, op.pixelGrid);
+                    p.end();
+                    raster.commit(std::move(frame), &op);
+                }
                 else {
                     QImage frame = raster.image().copy();
                     fillWithSample(frame, pixels, op.sampledPixel);
@@ -312,7 +325,14 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                 const auto &op = ops[i];
                 switch (op.kind) {
                 case Operation::Cut: replay.cut(op.vertical, op.start, op.end); break;
-                case Operation::Blur: replay.blur(op.area); break;
+                case Operation::Blur: {
+                    QImage frame = replay.image().copy();
+                    QPainter p(&frame);
+                    paintPixelGrid(p, selectedPixels(op.area, frame.size()), op.blockSize, op.pixelGrid);
+                    p.end();
+                    replay.commit(std::move(frame), &op);
+                    break;
+                }
                 case Operation::Erase: {
                     QImage frame = replay.image().copy();
                     fillWithSample(frame, selectedPixels(op.area, frame.size()), op.sampledPixel);
@@ -400,22 +420,29 @@ bool ImageDocument::cut(bool vertical, int start, int end) {
     return true;
 }
 
-void ImageDocument::drawPrivacyMask(QPainter &painter, const QRect &area) {
-    painter.save();
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
-    painter.fillRect(area, QBrush(privacyTexture()));
-    painter.restore();
+void ImageDocument::drawPixelation(QPainter &painter, const QImage &source,
+                                  const QRect &area, int blockSize) {
+    if (source.isNull()) return;
+    const QRect selected = area.intersected(source.rect());
+    if (selected.isEmpty()) return;
+    blockSize = qBound(4, blockSize, 64);
+    // Anchor cells to the document, not the drag corner. Edge cells sample the
+    // full available source block, but only paint inside the selection.
+    paintPixelGrid(painter, selected, blockSize, samplePixelGrid(source, selected, blockSize));
 }
 
-bool ImageDocument::blur(QRectF area) {
+bool ImageDocument::blur(QRectF area, int blockSize) {
     if (image().isNull()) return false;
     const QRect pixels = selectedPixels(area, image().size());
     if (pixels.isEmpty()) return false;
+    blockSize = qBound(4, blockSize, 64);
+    const QImage grid = samplePixelGrid(image(), pixels, blockSize);
     QImage result = image().copy();
     QPainter painter(&result);
-    drawPrivacyMask(painter, pixels);
+    paintPixelGrid(painter, pixels, blockSize, grid);
     painter.end();
-    Operation op; op.kind = Operation::Blur; op.area = pixels;
+    Operation op; op.kind = Operation::Blur; op.area = pixels; op.blockSize = blockSize;
+    op.pixelGrid = grid;
     commit(std::move(result), &op);
     return true;
 }

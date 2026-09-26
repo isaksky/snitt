@@ -14,7 +14,8 @@
 class ImageToolTests : public QObject {
     Q_OBJECT
 private slots:
-    void privacyMaskDiscardsSourcePixels();
+    void pixelationUsesSourceColors();
+    void pixelateWheelPreviewAndExport();
     void selectionBoundsAndHistory();
     void eraseUsesExactDragStartPixel();
     void scaledGesturesAndClipboard();
@@ -39,30 +40,33 @@ static QImage sourceImage() {
     return image;
 }
 
-void ImageToolTests::privacyMaskDiscardsSourcePixels() {
-    const QRect area(12, 8, 49, 37);
-    const QImage original = sourceImage();
-    QImage changedSecret = original;
-    for (int y = area.top(); y <= area.bottom(); ++y)
-        for (int x = area.left(); x <= area.right(); ++x)
-            changedSecret.setPixelColor(x, y, QColor(255 - x, 255 - y, 0, (x + y) % 2 ? 255 : 0));
+void ImageToolTests::pixelationUsesSourceColors() {
+    const QRect area(0, 0, 24, 12);
+    QImage original(48, 36, QImage::Format_ARGB32_Premultiplied);
+    original.fill(Qt::white);
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 24; ++x)
+            original.setPixelColor(x, y, x < 6 ? Qt::red : x < 12 ? Qt::blue : Qt::green);
+    QImage changedSource = original;
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 6; ++x) changedSource.setPixelColor(x, y, Qt::yellow);
     ImageDocument first, second;
-    first.reset(original); second.reset(changedSecret);
+    first.reset(original); second.reset(changedSource);
     QVERIFY(first.blur(area)); QVERIFY(second.blur(area));
-    QCOMPARE(first.image(), second.image());
-    bool varied = false;
-    const QRgb firstMaskPixel = first.image().pixel(area.topLeft());
+    const QImage pixelated = first.image();
+    QCOMPARE(pixelated.pixelColor(0, 0), QColor(128, 0, 128)); // Red + blue averaged.
+    QCOMPARE(pixelated.pixelColor(12, 0), QColor(Qt::green));
+    QVERIFY(pixelated.pixel(0, 0) != second.image().pixel(0, 0));
+    QCOMPARE(pixelated.pixel(12, 0), second.image().pixel(12, 0));
     for (int y = 0; y < original.height(); ++y) {
         for (int x = 0; x < original.width(); ++x) {
             if (area.contains(x, y)) {
-                QCOMPARE(qAlpha(first.image().pixel(x, y)), 255);
-                varied |= first.image().pixel(x, y) != firstMaskPixel;
+                QCOMPARE(pixelated.pixel(x, y), pixelated.pixel((x / 12) * 12, 0));
             } else {
-                QCOMPARE(first.image().pixel(x, y), original.pixel(x, y));
+                QCOMPARE(pixelated.pixel(x, y), original.pixel(x, y));
             }
         }
     }
-    QVERIFY(varied);
     QByteArray png;
     QBuffer buffer(&png);
     QVERIFY(buffer.open(QIODevice::WriteOnly));
@@ -70,7 +74,67 @@ void ImageToolTests::privacyMaskDiscardsSourcePixels() {
     const QImage exported = QImage::fromData(png, "PNG").convertToFormat(first.image().format());
     QCOMPARE(exported, first.image());
     first.undo(); QCOMPARE(first.image(), original);
-    first.redo(); QCOMPARE(first.image(), second.image());
+    first.redo(); QCOMPARE(first.image(), pixelated);
+}
+
+void ImageToolTests::pixelateWheelPreviewAndExport() {
+    const QImage original = sourceImage();
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString sourcePath = temporary.filePath("source.png");
+    QVERIFY(original.save(sourcePath));
+    EditorCanvas canvas;
+    canvas.setWidth(272); canvas.setHeight(212); // 3 preview pixels per image pixel.
+    QVERIFY(canvas.load(QUrl::fromLocalFile(sourcePath)));
+    canvas.setTool("blur");
+    QCOMPARE(canvas.pixelBlockSize(), 12);
+    QCOMPARE(canvas.maxPixelBlockSize(), 30);
+    canvas.adjustToolSize(120);
+    QCOMPARE(canvas.pixelBlockSize(), 14);
+    canvas.adjustToolSize(120 * 100);
+    QCOMPARE(canvas.pixelBlockSize(), 30);
+    canvas.adjustToolSize(-120 * 100);
+    QCOMPARE(canvas.pixelBlockSize(), 4);
+    canvas.adjustToolSize(120 * 4);
+    QCOMPARE(canvas.pixelBlockSize(), 12);
+    const auto point = [&canvas](QPointF imagePoint) {
+        return canvas.imageRect().topLeft() + imagePoint * canvas.imageScale();
+    };
+    const auto snapshot = [&]() {
+        QImage frame(272, 212, QImage::Format_ARGB32_Premultiplied);
+        frame.fill(Qt::transparent);
+        QPainter painter(&frame); canvas.paint(&painter);
+        return frame;
+    };
+    const QRgb before = snapshot().pixel(point({18, 18}).toPoint());
+    const QPointF start = point({8, 8}), end = point({58, 45});
+    canvas.begin(start.x(), start.y()); canvas.move(end.x(), end.y());
+    const QRgb live = snapshot().pixel(point({18, 18}).toPoint());
+    canvas.end(end.x(), end.y());
+    if (qEnvironmentVariableIsSet("XSHOT_RENDER_PREVIEW"))
+        QVERIFY(snapshot().save(QDir::current().filePath("pixelate-preview.png")));
+    QCOMPARE(snapshot().pixel(point({18, 18}).toPoint()), live);
+    QVERIFY(canvas.copy());
+    ImageDocument expected;
+    expected.reset(original);
+    QVERIFY(expected.blur(QRectF(QPointF(8, 8), QPointF(58, 45)), 12));
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(original.format()), expected.image());
+    const QString savedPath = canvas.saveTo(temporary.path());
+    QVERIFY(!savedPath.isEmpty());
+    QCOMPARE(QImage(savedPath).convertToFormat(original.format()), expected.image());
+    canvas.undo();
+    QCOMPARE(snapshot().pixel(point({18, 18}).toPoint()), before);
+    canvas.redo();
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(original.format()), expected.image());
+
+    // A later wheel change only affects the next operation, including replay.
+    canvas.adjustToolSize(120 * 3);
+    QCOMPARE(canvas.pixelBlockSize(), 18);
+    const QPointF secondStart = point({40, 20}), secondEnd = point({70, 50});
+    canvas.begin(secondStart.x(), secondStart.y()); canvas.end(secondEnd.x(), secondEnd.y());
+    QVERIFY(expected.blur(QRectF(QPointF(40, 20), QPointF(70, 50)), 18));
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(original.format()), expected.image());
 }
 
 void ImageToolTests::selectionBoundsAndHistory() {
@@ -85,7 +149,8 @@ void ImageToolTests::selectionBoundsAndHistory() {
     for (int y = 0; y < original.height(); ++y)
         for (int x = 0; x < original.width(); ++x)
             if (!expected.contains(x, y)) QCOMPARE(doc.image().pixel(x, y), original.pixel(x, y));
-            else QCOMPARE(qAlpha(doc.image().pixel(x, y)), 255);
+            else QCOMPARE(doc.image().pixel(x, y), doc.image().pixel((x / 12) * 12, (y / 12) * 12));
+    QVERIFY(doc.image().pixel(0, 0) != original.pixel(0, 0));
     doc.undo(); QCOMPARE(doc.image(), original);
     QVERIFY(doc.erase({-5, -5, 12, 12}, {-10, -10}));
     QCOMPARE(doc.image().pixel(6, 6), original.pixel(0, 0));
@@ -312,7 +377,7 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(afterCut.pixelColor(120, 30).red() > afterCut.pixelColor(120, 30).green());
     QVERIFY(doc.blur(QRectF(0, 8, 25, 8)));
     const QImage masked = doc.render(3);
-    QVERIFY(masked.pixelColor(45, 30).red() < 180);
+    QVERIFY(masked.pixel(45, 30) != afterCut.pixel(45, 30));
     QVERIFY(masked.pixelColor(120, 30).red() > masked.pixelColor(120, 30).green());
     doc.undo();
     QCOMPARE(doc.render(3), afterCut);
@@ -348,7 +413,8 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(changed.annotate("arrow", {40, 40}, {70, 40}, Qt::red, 2));
     QVERIFY(clean.blur(QRectF(10, 10, 20, 20)));
     QVERIFY(changed.blur(QRectF(10, 10, 20, 20)));
-    QCOMPARE(clean.render(3), changed.render(3)); // Hidden source pixels cannot bleed past the mask.
+    QVERIFY(clean.render(3) != changed.render(3)); // Coarse source colors remain visible.
+    QCOMPARE(clean.render(3).pixel(150, 120), changed.render(3).pixel(150, 120));
 
     QImage cutSecret = white;
     for (int y = 0; y < cutSecret.height(); ++y)
@@ -393,14 +459,26 @@ void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {
                 if (erase)
                     editBoth([&](ImageDocument &doc) { return doc.erase(area, {0, 0}); });
                 else
-                    editBoth([&](ImageDocument &doc) { return doc.blur(area); });
+                    editBoth([&](ImageDocument &doc) { return doc.blur(area, 18); });
                 editBoth([&](ImageDocument &doc) {
                     return doc.annotate("arrow", {300, 300}, {350, 300}, Qt::red, 2);
                 });
-                QCOMPARE(clean.image(), changed.image());
+                if (erase) QCOMPARE(clean.image(), changed.image());
+                else {
+                    QVERIFY(clean.image() != changed.image()); // Source colors affect the coarse blocks.
+                    for (int y = 0; y < clean.image().height(); ++y)
+                        for (int x = 0; x < clean.image().width(); ++x)
+                            if (!area.contains(QPointF(x, y)))
+                                QCOMPARE(clean.image().pixel(x, y), changed.image().pixel(x, y));
+                }
                 for (const qreal scale : {1.25, 1.5, 2.5}) {
                     const QImage first = clean.render(scale), second = changed.render(scale);
-                    QCOMPARE(first, second);
+                    if (erase) QCOMPARE(first, second);
+                    else {
+                        QVERIFY(first != second);
+                        QCOMPARE(first.pixel(qRound(100 * scale), qRound(100 * scale)),
+                                 second.pixel(qRound(100 * scale), qRound(100 * scale)));
+                    }
                     QCOMPARE(first.size(), QSize(qRound(clean.image().width() * scale),
                                                  qRound(clean.image().height() * scale)));
                     QImage previewA(first.size(), first.format()), previewB(first.size(), first.format());
@@ -409,12 +487,19 @@ void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {
                     a.scale(scale, scale); b.scale(scale, scale);
                     clean.paint(a, scale); changed.paint(b, scale);
                     a.end(); b.end();
-                    QCOMPARE(previewA, previewB);
+                    if (erase) QCOMPARE(previewA, previewB);
+                    else {
+                        QVERIFY(previewA != previewB);
+                        QCOMPARE(previewA.pixel(qRound(100 * scale), qRound(100 * scale)),
+                                 previewB.pixel(qRound(100 * scale), qRound(100 * scale)));
+                    }
                 }
                 clean.undo(); changed.undo();
-                QCOMPARE(clean.render(1.5), changed.render(1.5));
+                if (erase) QCOMPARE(clean.render(1.5), changed.render(1.5));
+                else QVERIFY(clean.render(1.5) != changed.render(1.5));
                 clean.redo(); changed.redo();
-                QCOMPARE(clean.render(clean.exportScale()), changed.render(changed.exportScale()));
+                if (erase) QCOMPARE(clean.render(clean.exportScale()), changed.render(changed.exportScale()));
+                else QVERIFY(clean.render(clean.exportScale()) != changed.render(changed.exportScale()));
             }
         }
     }
@@ -450,8 +535,12 @@ void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {
     QImage cleanCopy, cleanSaved, secretCopy, secretSaved;
     exported(whitePath, cleanCopy, cleanSaved);
     exported(secretPath, secretCopy, secretSaved);
-    QCOMPARE(cleanCopy, secretCopy);
-    QCOMPARE(cleanSaved, secretSaved);
+    QCOMPARE(cleanCopy.convertToFormat(QImage::Format_ARGB32_Premultiplied),
+             cleanSaved.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+    QCOMPARE(secretCopy.convertToFormat(QImage::Format_ARGB32_Premultiplied),
+             secretSaved.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+    QVERIFY(cleanCopy != secretCopy);
+    QCOMPARE(cleanCopy.pixel(300, 300), secretCopy.pixel(300, 300));
     QCOMPARE(cleanCopy.size(), QSize(1199, 720));
 }
 
@@ -629,7 +718,7 @@ void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
     QCOMPARE(afterCut.copy(QRect(90, 0, 120, 180)), beforeCut.copy(QRect(120, 0, 120, 180)));
     QVERIFY(doc.blur(QRectF(10, 18, 8, 5)));
     const QImage masked = doc.render(3);
-    QVERIFY(masked.pixelColor(39, 60).red() < 180);
+    QVERIFY(masked.pixel(39, 60) != afterCut.pixel(39, 60));
     QVERIFY(masked.pixelColor(150, 60).red() > masked.pixelColor(150, 60).green());
     QVERIFY(doc.annotate("arrow", {10, 20}, {20, 20}, Qt::blue, 1));
     QVERIFY(doc.render(3) != masked); // Later annotation remains above the mask.
@@ -644,8 +733,11 @@ void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
         QVERIFY(document->cut(true, 1, 2));
         QVERIFY(document->blur(QRectF(9, 10, 20, 20)));
     }
-    for (const qreal scale : {1.25, 1.5, 3.0})
-        QCOMPARE(clean.render(scale), changed.render(scale));
+    for (const qreal scale : {1.25, 1.5, 3.0}) {
+        QVERIFY(clean.render(scale) != changed.render(scale));
+        QCOMPARE(clean.render(scale).pixel(qRound(50 * scale), qRound(50 * scale)),
+                 changed.render(scale).pixel(qRound(50 * scale), qRound(50 * scale)));
+    }
 
     ImageDocument plainMask, coveredAnnotation;
     plainMask.reset(white); coveredAnnotation.reset(white);
@@ -655,10 +747,9 @@ void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {
     for (const qreal scale : {1.25, 1.5, 3.0}) {
         const QImage expected = plainMask.render(scale);
         const QImage actual = coveredAnnotation.render(scale);
-        for (int y = 0; y < expected.height(); ++y)
-            for (int x = 0; x < expected.width(); ++x)
-                if (expected.pixel(x, y) != qRgb(255, 255, 255))
-                    QCOMPARE(actual.pixel(x, y), expected.pixel(x, y));
+        QVERIFY(actual != expected); // Earlier red annotation contributes to block averages.
+        QCOMPARE(actual.pixel(qRound(50 * scale), qRound(50 * scale)),
+                 expected.pixel(qRound(50 * scale), qRound(50 * scale)));
     }
 }
 
@@ -691,12 +782,21 @@ void ImageToolTests::fractionalCutsKeepEarlierAnnotationsInsideMasks() {
                                                  : QRectF(37, 17 - removed, 46, 46);
                     for (ImageDocument *doc : {&clean, &covered}) {
                         if (erase) QVERIFY(doc->erase(area, {200, 100}));
-                        else QVERIFY(doc->blur(area));
+                        else QVERIFY(doc->blur(area, 18));
                     }
-                    QCOMPARE(clean.image(), covered.image());
+                    if (erase) QCOMPARE(clean.image(), covered.image());
+                    else {
+                        QVERIFY(clean.image() != covered.image());
+                        QCOMPARE(clean.image().pixel(100, 100), covered.image().pixel(100, 100));
+                    }
                     QCOMPARE(clean.exportScale(), covered.exportScale());
                     for (const qreal scale : {1.25, 1.5, 2.5}) {
-                        QCOMPARE(clean.render(scale), covered.render(scale));
+                        if (erase) QCOMPARE(clean.render(scale), covered.render(scale));
+                        else {
+                            QVERIFY(clean.render(scale) != covered.render(scale));
+                            QCOMPARE(clean.render(scale).pixel(qRound(100 * scale), qRound(100 * scale)),
+                                     covered.render(scale).pixel(qRound(100 * scale), qRound(100 * scale)));
+                        }
                         const QSize frameSize(qRound(clean.image().width() * scale),
                                               qRound(clean.image().height() * scale));
                         const auto preview = [&](ImageDocument &doc) {
@@ -708,10 +808,16 @@ void ImageToolTests::fractionalCutsKeepEarlierAnnotationsInsideMasks() {
                             painter.end();
                             return frame;
                         };
-                        QCOMPARE(preview(clean), preview(covered));
+                        if (erase) QCOMPARE(preview(clean), preview(covered));
+                        else {
+                            QVERIFY(preview(clean) != preview(covered));
+                            QCOMPARE(preview(clean).pixel(qRound(100 * scale), qRound(100 * scale)),
+                                     preview(covered).pixel(qRound(100 * scale), qRound(100 * scale)));
+                        }
                     }
-                    QCOMPARE(clean.render(clean.exportScale()),
-                             covered.render(covered.exportScale()));
+                    if (erase) QCOMPARE(clean.render(clean.exportScale()),
+                                        covered.render(covered.exportScale()));
+                    else QVERIFY(clean.render(clean.exportScale()) != covered.render(covered.exportScale()));
                     const QImage exported = covered.render(1.5);
                     covered.undo(); covered.redo();
                     QCOMPARE(covered.render(1.5), exported);

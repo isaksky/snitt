@@ -54,13 +54,19 @@ int EditorCanvas::maxTextSize() const {
     return hasImage() ? qMax(8, qMin(144, qMin(imageWidth(), imageHeight()) / 3)) : 144;
 }
 
+int EditorCanvas::maxPixelBlockSize() const {
+    return hasImage() ? qMax(4, qMin(64, qMin(imageWidth(), imageHeight()) / 2)) : 64;
+}
+
 void EditorCanvas::adjustToolSize(qreal wheelDelta) {
-    if (!hasImage() || m_arranging || (m_tool != "rect" && m_tool != "arrow" && m_tool != "text")) return;
+    if (!hasImage() || m_arranging || (m_tool != "rect" && m_tool != "arrow" && m_tool != "text" && m_tool != "blur")) return;
     m_wheelRemainder += wheelDelta;
     const int steps = int(m_wheelRemainder / 120);
     if (!steps) return;
     m_wheelRemainder -= steps * 120;
-    if (m_tool == "text") {
+    if (m_tool == "blur") {
+        m_pixelBlockSize = qBound(4, m_pixelBlockSize + steps * 2, maxPixelBlockSize());
+    } else if (m_tool == "text") {
         m_textSize = qBound(8, m_textSize + steps, maxTextSize());
     } else {
         m_strokeWidth = qBound(1, m_strokeWidth + steps, maxStrokeWidth());
@@ -111,7 +117,7 @@ void EditorCanvas::paint(QPainter *p) {
         const QRect area = QRectF(m_start, m_end).normalized().toAlignedRect()
             .intersected(m_document.image().rect());
         if (m_tool == "blur") {
-            ImageDocument::drawPrivacyMask(*p, area);
+            ImageDocument::drawPixelation(*p, m_document.image(), area, m_pixelBlockSize);
         } else {
             const int x = qBound(0, int(std::floor(m_start.x())), imageWidth() - 1);
             const int y = qBound(0, int(std::floor(m_start.y())), imageHeight() - 1);
@@ -134,6 +140,7 @@ void EditorCanvas::changed() {
     cancel();
     m_strokeWidth = qBound(1, m_strokeWidth, maxStrokeWidth());
     m_textSize = qBound(8, m_textSize, maxTextSize());
+    m_pixelBlockSize = qBound(4, m_pixelBlockSize, maxPixelBlockSize());
     emit sizeChanged();
     emit imageChanged();
     emit imageRectChanged();
@@ -235,7 +242,7 @@ void EditorCanvas::end(qreal x, qreal y) {
         m_document.cut(vertical, qRound(vertical ? m_start.x() : m_start.y()),
                        qRound(vertical ? m_end.x() : m_end.y()));
     } else if (m_tool == "blur") {
-        m_document.blur(QRectF(m_start, m_end));
+        m_document.blur(QRectF(m_start, m_end), m_pixelBlockSize);
     } else if (m_tool == "erase") {
         m_document.erase(QRectF(m_start, m_end), m_start);
     } else {

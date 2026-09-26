@@ -507,6 +507,14 @@ void EditorTests::qmlWheelSizes() {
     canvas->setTool("text");
     wheelAt(point({100, 250}), 120);
     QCOMPARE(canvas->textSize(), 25);
+    canvas->setTool("blur");
+    wheelAt(point({100, 250}), 120);
+    QCOMPARE(canvas->pixelBlockSize(), 14);
+    QCOMPARE(window->property("hint").toString(),
+             QString("Pixelate · 14 px blocks · Wheel to resize · Drag over an area"));
+    QCOMPARE(canvas->strokeWidth(), 4);
+    QCOMPARE(canvas->textSize(), 25);
+    canvas->setTool("text");
     canvas->begin(point({180, 180}).x(), point({180, 180}).y());
     auto *text = window->findChild<QObject *>("annotationText");
     QVERIFY(text);
@@ -697,6 +705,9 @@ void EditorTests::qmlKeyboardCommands() {
     QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_B);
     QTRY_COMPARE(canvas->tool(), QString("blur"));
+    QCOMPARE(window->property("hint").toString(), QString("Pixelate · 12 px blocks · Wheel to resize · Drag over an area"));
+    canvas->adjustToolSize(120);
+    QCOMPARE(window->property("hint").toString(), QString("Pixelate · 14 px blocks · Wheel to resize · Drag over an area"));
     QCOMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_D);
     QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));

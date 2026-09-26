@@ -133,7 +133,7 @@ and shows layout controls. Drawing tools are hidden during this phase.
 The indicator highlights **Annotate**, and drawing tools replace the layout
 controls. Tile numbers and selection outlines disappear; you now edit one combined image.
 
-- Use the normal drawing, text, blur, smart erase, and cut tools.
+- Use the normal drawing, text, Pixelate, smart erase, and cut tools.
 - Choose **← Back to arrange** to revise the layout. If edits exist, choose
   **Keep editing** to preserve them or **Discard edits** to reset
   annotations and cuts. The captured regions are kept.
@@ -186,7 +186,7 @@ including when started at login.
 | Rectangle | R | Click and drag around an area. |
 | Text | T | Click to place a textbox, then type. Command/Ctrl+Enter places it; Enter adds a line; Escape cancels. |
 | Arrow | A | Drag from the tail toward the tip. |
-| Blur | B | Drag a rectangle to replace its contents with an opaque pixelated blur. |
+| Pixelate | B | Drag a rectangle to replace its contents with coarse blocks averaged from the image. Use the wheel to change block size. |
 | Smart erase | E | Drag a rectangle to fill it with the exact color at the drag's starting point. Works in any drag direction. |
 | Green / good | G | Applies to new rectangles, arrows, and text. |
 | Red / bad | D | Applies to new rectangles, arrows, and text. |
@@ -201,7 +201,7 @@ including when started at login.
 
 The footer shows preview zoom and the current image's natural pixel dimensions.
 Zoom changes only the editor view. Copy and Save keep those dimensions for
-unannotated images, including cuts, arranged regions, blur, and erase. When
+unannotated images, including cuts, arranged regions, Pixelate, and erase. When
 visible shapes or text remain on a small image, xshot renders them fresh at a
 larger output size: it raises the
 shorter edge toward 720 pixels, never more than 3×, 16,384 pixels on either edge,
@@ -219,22 +219,25 @@ Annotations are flattened when placed; use undo to correct them. History is
 limited to 50 images or 256 MiB.
 
 Use the mouse wheel over the image with Rectangle or Arrow selected to change
-stroke width, or with Text selected to change font size. The current size appears
+stroke width, with Text selected to change font size, or with Pixelate selected
+to change block size. The current size appears
 in the editor hint. While entering text, wheel over the image outside the text
 box to resize the whole draft; wheel inside the box scrolls its contents. Widths
 and font sizes are source-image pixels and stay selected for the next annotation.
 Stroke width ranges from 1 px to the smaller of 64 px and one-eighth of the
 image's shorter edge (at least 1 px). Text ranges from 8 px to the smaller of
 144 px and one-third of that edge (at least 8 px). Existing annotations keep
-their size.
+their size. Pixelate blocks range from 4 px to the smaller of 64 px and half
+the image's shorter edge; each wheel step changes the size by 2 px. Existing
+pixelated areas keep their chosen block size.
 
-Blur is a privacy mask: the selected source pixels are completely replaced with
-an opaque neutral texture that does not depend on their original contents. Cover
-the entire sensitive area; pixels outside the selection are unchanged. The copied
-image contains the flattened mask, with no hidden original layer. Undo history and
-original regions remain available only during the active session and are cleared
-when you copy and finish. Smart erase samples the starting pixel, including its
-alpha, and is intended for extending a matching background.
+Pixelate averages source colors into larger blocks. It obscures fine detail but
+retains coarse information from the image, so do not use it to hide secrets.
+Pixels outside the selection are unchanged. The copied image contains the
+flattened result, with no hidden original layer. Undo history and original
+regions remain available only during the active session and are cleared when
+you copy and finish. Smart erase samples the starting pixel, including its alpha,
+and is intended for extending a matching background.
 
 Screenshots use macOS's built-in screenshot tool or Qt screen capture on Windows,
 followed by xshot's frozen selection overlay. FFmpeg is a Windows video runtime

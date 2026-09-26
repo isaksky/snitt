@@ -33,7 +33,7 @@ ApplicationWindow {
         : canvas.tool === "rect" ? "Rectangle · " + canvas.strokeWidth + " px · Wheel to resize · Drag to draw"
         : canvas.tool === "highlight" ? "Drag to highlight an area"
         : canvas.tool === "arrow" ? "Arrow · " + canvas.strokeWidth + " px · Wheel to resize · Drag from tail to tip"
-        : canvas.tool === "blur" ? "Drag to hide an area with an opaque pixelated blur"
+        : canvas.tool === "blur" ? "Pixelate · " + canvas.pixelBlockSize + " px blocks · Wheel to resize · Drag over an area"
         : canvas.tool === "erase" ? "Drag to fill an area with the color where you started"
         : "Text · " + canvas.textSize + " px · Wheel to resize · Click to place"
 
@@ -584,7 +584,7 @@ ApplicationWindow {
                              {label: "Highlight", key: "H", tool: "highlight", glyph: "highlighter"},
                              {label: "Text", key: "T", tool: "text", glyph: "type"},
                              {label: "Arrow", key: "A", tool: "arrow", glyph: "move-up-right"},
-                             {label: "Blur", key: "B", tool: "blur", glyph: "grid-3x3"},
+                             {label: "Pixelate", key: "B", tool: "blur", glyph: "grid-3x3"},
                              {label: "Smart erase", key: "E", tool: "erase", glyph: "eraser"} ]
                     ActionButton {
                         required property var modelData
@@ -593,7 +593,7 @@ ApplicationWindow {
                         icon.source: "qrc:/icons/" + modelData.glyph + ".svg"
                         Accessible.name: modelData.label
                         ToolTip.visible: hovered
-                        ToolTip.text: modelData.tool === "blur" ? "Blur: opaque privacy mask (B)"
+                        ToolTip.text: modelData.tool === "blur" ? "Pixelate image colors (B) · Wheel adjusts blocks"
                             : modelData.tool === "cut" ? "Cut: remove an image strip (X)"
                             : modelData.label + " (" + modelData.key + ")"
                         checked: canvas.tool === modelData.tool
@@ -655,7 +655,7 @@ ApplicationWindow {
                     wheel.accepted = true
                     return
                 }
-                if (canvas.arranging || (canvas.tool !== "rect" && canvas.tool !== "arrow" && canvas.tool !== "text")) {
+                if (canvas.arranging || (canvas.tool !== "rect" && canvas.tool !== "arrow" && canvas.tool !== "text" && canvas.tool !== "blur")) {
                     wheel.accepted = false
                     return
                 }
