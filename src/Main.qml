@@ -335,6 +335,14 @@ ApplicationWindow {
             playbackSource = ""
             exportReleaseTimer.restart()
         }
+        function cancelExport() {
+            const wasPreparing = preparingExport
+            exportReleaseTimer.stop()
+            preparingExport = false
+            if (backend.trim.busy) backend.trim.cancelExport()
+            else if (wasPreparing && backend.trim.path !== "")
+                playbackSource = backend.trim.source
+        }
         onVisibleChanged: if (visible) {
             playbackSource = backend.trim.source
             trimBar.startSec = 0
@@ -496,13 +504,10 @@ ApplicationWindow {
                 }
                 Item { Layout.fillWidth: true }
                 ActionButton {
+                    objectName: "recordingCancelExportButton"
                     text: "Cancel export"
                     visible: backend.trim.busy || reviewWindow.preparingExport
-                    onClicked: {
-                        exportReleaseTimer.stop()
-                        reviewWindow.preparingExport = false
-                        backend.trim.cancelExport()
-                    }
+                    onClicked: reviewWindow.cancelExport()
                 }
                 PrimaryButton {
                     objectName: "recordingSaveTrimButton"
@@ -522,9 +527,9 @@ ApplicationWindow {
             trimBar.startSec = Math.min(trimBar.playheadSec, trimBar.endSec - 0.1) } }
         Shortcut { sequence: "Alt+Space"; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
             trimBar.endSec = Math.max(trimBar.playheadSec, trimBar.startSec + 0.1) } }
-        Shortcut { sequence: "Escape"; enabled: reviewWindow.visible; onActivated: {
+        Shortcut { objectName: "recordingReviewEscapeShortcut"; sequence: "Escape"; enabled: reviewWindow.visible; onActivated: {
             if (backend.trim.busy || reviewWindow.preparingExport) {
-                exportReleaseTimer.stop(); reviewWindow.preparingExport = false; backend.trim.cancelExport()
+                reviewWindow.cancelExport()
             } else backend.trim.keepOriginal()
         } }
     }

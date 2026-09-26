@@ -11,6 +11,8 @@
 #include <QScreen>
 #include <QTimer>
 #include <QFileInfo>
+#include <QFile>
+#include <QCryptographicHash>
 #include <QScopeGuard>
 #include <QLabel>
 #include <QPushButton>
@@ -969,6 +971,45 @@ void EditorTests::qmlRecordingReview() {
     review->resize(680, 520);
     QTest::qWait(150);
     QVERIFY(review->grabWindow().save("trim-review-minimum.png"));
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
+        return true;
+    })(), 45000);
+    QFile originalClip(clip);
+    QVERIFY(originalClip.open(QIODevice::ReadOnly));
+    const QByteArray originalHash = QCryptographicHash::hash(originalClip.readAll(), QCryptographicHash::Sha256);
+    originalClip.close();
+    auto *cancel = review->findChild<QObject *>("recordingCancelExportButton");
+    auto *escape = review->findChild<QObject *>("recordingReviewEscapeShortcut");
+    QVERIFY(cancel);
+    QVERIFY(escape);
+    for (const bool useEscape : {false, true}) {
+        bar->setProperty("startSec", 0.5);
+        bar->setProperty("endSec", 2.0);
+        QVERIFY(QMetaObject::invokeMethod(review, "prepareExport"));
+        QVERIFY(review->property("preparingExport").toBool());
+        if (useEscape) {
+            QVERIFY(QMetaObject::invokeMethod(escape, "activated"));
+        } else QVERIFY(QMetaObject::invokeMethod(cancel, "clicked"));
+        QTRY_VERIFY(!review->property("preparingExport").toBool());
+        QVERIFY(!trim->busy());
+        QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 2000, 30000);
+        QCOMPARE(bar->property("startSec").toDouble(), 0.5);
+        QCOMPARE(bar->property("endSec").toDouble(), 2.0);
+        QTest::qWait(250); // The canceled release timer must not start an export.
+        QVERIFY(review->isVisible());
+        QVERIFY(!trim->busy());
+        QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+        QVERIFY(originalClip.open(QIODevice::ReadOnly));
+        QCOMPARE(QCryptographicHash::hash(originalClip.readAll(), QCryptographicHash::Sha256), originalHash);
+        originalClip.close();
+        QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+        QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 700, 15000);
+        QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+        bar->setProperty("playheadSec", 0.75);
+        QVERIFY(QMetaObject::invokeMethod(review, "seek", Q_ARG(QVariant, QVariant(0.25))));
+        QTRY_VERIFY(qAbs(player->property("position").toLongLong() - 1000) < 150);
+    }
     QSignalSpy finalized(trim, &TrimSession::finalized);
     trim->keepOriginal();
     QCOMPARE(finalized.size(), 1);
