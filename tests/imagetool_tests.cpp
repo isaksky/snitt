@@ -15,6 +15,7 @@ private slots:
     void eraseUsesExactDragStartPixel();
     void scaledGesturesAndClipboard();
     void highlightsPreviewAndHistory();
+    void annotationSizingAndPreview();
 };
 
 static QImage sourceImage() {
@@ -173,6 +174,80 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     canvas.redo(); canvas.redo();
     QVERIFY(canvas.copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), bothModes);
+}
+
+void ImageToolTests::annotationSizingAndPreview() {
+    QImage white(1200, 800, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    QTemporaryDir temporary;
+    const QString path = temporary.filePath("large.png");
+    QVERIFY(white.save(path));
+    EditorCanvas canvas;
+    canvas.setWidth(1232); canvas.setHeight(832); // 1 source pixel per preview pixel.
+    QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+    QCOMPARE(canvas.maxStrokeWidth(), 64);
+    QCOMPARE(canvas.maxTextSize(), 144);
+    canvas.setTool("rect");
+    canvas.adjustToolSize(120 * 100);
+    QCOMPARE(canvas.strokeWidth(), 64);
+    canvas.adjustToolSize(-120 * 200);
+    QCOMPARE(canvas.strokeWidth(), 1);
+    canvas.adjustToolSize(120 * 19);
+    QCOMPARE(canvas.strokeWidth(), 20);
+    const auto point = [&canvas](QPointF source) {
+        return canvas.imageRect().topLeft() + source * canvas.imageScale();
+    };
+    const QPointF start = point({100, 100}), end = point({300, 300});
+    canvas.begin(start.x(), start.y()); canvas.move(end.x(), end.y());
+    canvas.adjustToolSize(120);
+    QCOMPARE(canvas.strokeWidth(), 21);
+    canvas.adjustToolSize(-120);
+    QCOMPARE(canvas.strokeWidth(), 20);
+    QImage preview(1232, 832, QImage::Format_ARGB32_Premultiplied);
+    preview.fill(Qt::transparent);
+    { QPainter painter(&preview); canvas.paint(&painter); }
+    canvas.end(end.x(), end.y());
+    QVERIFY(canvas.copy());
+    const QImage rectangle = QGuiApplication::clipboard()->image();
+    QCOMPARE(preview.pixelColor(point({100, 200}).toPoint()), rectangle.pixelColor(100, 200));
+    QCOMPARE(rectangle.pixelColor(95, 200), QColor("#ef4444"));
+    QCOMPARE(rectangle.pixelColor(88, 200), QColor(Qt::white));
+    canvas.setTool("arrow");
+    canvas.adjustToolSize(120 * 100);
+    const QPointF arrowStart = point({400, 100}), arrowEnd = point({450, 100});
+    canvas.begin(arrowStart.x(), arrowStart.y()); canvas.end(arrowEnd.x(), arrowEnd.y());
+    QVERIFY(canvas.copy());
+    const QImage arrow = QGuiApplication::clipboard()->image();
+    QCOMPARE(arrow.pixelColor(420, 143), QColor("#ef4444")); // Thick head exceeds shaft radius.
+    canvas.undo(); QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), rectangle);
+    canvas.redo(); QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), arrow);
+    canvas.setTool("text");
+    canvas.adjustToolSize(-120 * 100);
+    QCOMPARE(canvas.textSize(), 8);
+    canvas.adjustToolSize(120 * 64);
+    QCOMPARE(canvas.textSize(), 72);
+    canvas.addText(500, 200, 500, 300, "Whole draft", canvas.textSize());
+    QVERIFY(canvas.copy());
+    const QImage largeText = QGuiApplication::clipboard()->image();
+    canvas.adjustToolSize(-120 * 64);
+    canvas.addText(500, 400, 500, 300, "Whole draft", canvas.textSize());
+    QVERIFY(canvas.copy());
+    const QImage bothText = QGuiApplication::clipboard()->image();
+    QCOMPARE(largeText.pixelColor(520, 230), bothText.pixelColor(520, 230));
+    QVERIFY(largeText != bothText);
+    QImage small(80, 60, QImage::Format_ARGB32_Premultiplied);
+    small.fill(Qt::white);
+    const QString smallPath = temporary.filePath("small.png");
+    QVERIFY(small.save(smallPath));
+    QVERIFY(canvas.load(QUrl::fromLocalFile(smallPath)));
+    QCOMPARE(canvas.maxStrokeWidth(), 7);
+    QCOMPARE(canvas.maxTextSize(), 20);
+    canvas.setTool("arrow"); canvas.adjustToolSize(120 * 100);
+    QCOMPARE(canvas.strokeWidth(), 7);
+    canvas.setTool("text"); canvas.adjustToolSize(120 * 100);
+    QCOMPARE(canvas.textSize(), 20);
 }
 
 QTEST_MAIN(ImageToolTests)

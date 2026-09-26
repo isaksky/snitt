@@ -31,6 +31,7 @@ void EditorCanvas::setTool(const QString &tool) {
     if (tool == m_tool) return;
     cancel();
     m_tool = tool;
+    m_wheelRemainder = 0;
     emit toolChanged();
 }
 
@@ -38,6 +39,31 @@ void EditorCanvas::setInk(QColor ink) {
     if (ink == m_ink) return;
     m_ink = ink;
     emit inkChanged();
+    update();
+}
+
+int EditorCanvas::maxStrokeWidth() const {
+    // Stroke: 1..min(64, shortest image edge / 8), with a 1 px floor.
+    return hasImage() ? qMax(1, qMin(64, qMin(imageWidth(), imageHeight()) / 8)) : 64;
+}
+
+int EditorCanvas::maxTextSize() const {
+    // Text: 8..min(144, shortest image edge / 3), with an 8 px floor.
+    return hasImage() ? qMax(8, qMin(144, qMin(imageWidth(), imageHeight()) / 3)) : 144;
+}
+
+void EditorCanvas::adjustToolSize(qreal wheelDelta) {
+    if (!hasImage() || m_arranging || (m_tool != "rect" && m_tool != "arrow" && m_tool != "text")) return;
+    m_wheelRemainder += wheelDelta;
+    const int steps = int(m_wheelRemainder / 120);
+    if (!steps) return;
+    m_wheelRemainder -= steps * 120;
+    if (m_tool == "text") {
+        m_textSize = qBound(8, m_textSize + steps, maxTextSize());
+    } else {
+        m_strokeWidth = qBound(1, m_strokeWidth + steps, maxStrokeWidth());
+    }
+    emit sizeChanged();
     update();
 }
 
@@ -92,12 +118,15 @@ void EditorCanvas::paint(QPainter *p) {
         p->setBrush(Qt::NoBrush);
         p->drawRect(area);
     } else {
-        ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink);
+        ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink, m_strokeWidth);
     }
 }
 
 void EditorCanvas::changed() {
     cancel();
+    m_strokeWidth = qBound(1, m_strokeWidth, maxStrokeWidth());
+    m_textSize = qBound(8, m_textSize, maxTextSize());
+    emit sizeChanged();
     emit imageChanged();
     emit imageRectChanged();
     update();
@@ -185,7 +214,7 @@ void EditorCanvas::end(qreal x, qreal y) {
     } else if (m_tool == "erase") {
         m_document.erase(QRectF(m_start, m_end), m_start);
     } else {
-        m_document.annotate(m_tool, m_start, m_end, m_ink);
+        m_document.annotate(m_tool, m_start, m_end, m_ink, m_strokeWidth);
     }
     changed();
 }
@@ -197,8 +226,8 @@ bool EditorCanvas::cancel() {
     return wasDragging;
 }
 
-void EditorCanvas::addText(qreal x, qreal y, qreal width, qreal height, const QString &text) {
-    if (m_document.text(QRectF(x, y, width, height), text, m_ink)) changed();
+void EditorCanvas::addText(qreal x, qreal y, qreal width, qreal height, const QString &text, int fontSize) {
+    if (m_document.text(QRectF(x, y, width, height), text, m_ink, fontSize)) changed();
 }
 
 void EditorCanvas::clearRegions() {

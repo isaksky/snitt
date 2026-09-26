@@ -145,7 +145,7 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
 }
 
 void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
-                                   QPointF start, QPointF end, QColor color) {
+                                   QPointF start, QPointF end, QColor color, qreal strokeWidth) {
     p.setRenderHint(QPainter::Antialiasing);
     if (tool == "highlight") {
         // Source-over composition makes overlapping highlights accumulate.
@@ -154,7 +154,7 @@ void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
         p.fillRect(QRectF(start, end).normalized(), fill);
         return;
     }
-    p.setPen(QPen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setPen(QPen(color, strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
     if (tool == "rect") {
         p.drawRect(QRectF(start, end).normalized());
@@ -163,16 +163,17 @@ void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
         if (line.length() < 1) return;
         const QPointF unit = (end - start) / line.length();
         const QPointF side(-unit.y(), unit.x());
-        const qreal head = qMin(18.0, line.length() * 0.45);
+        const qreal head = qMin(qMax(18.0, strokeWidth * 4), line.length() * 0.65);
         const QPointF base = end - unit * head;
         p.drawLine(start, base);
         p.setBrush(color);
         p.setPen(Qt::NoPen);
-        p.drawPolygon(QPolygonF{end, base + side * head * 0.48, base - side * head * 0.48});
+        const qreal halfWidth = qMax(strokeWidth * 0.9, head * 0.48);
+        p.drawPolygon(QPolygonF{end, base + side * halfWidth, base - side * halfWidth});
     }
 }
 
-bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color) {
+bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth) {
     if (image().isNull() || (tool != "rect" && tool != "arrow" && tool != "highlight")
         || QLineF(start, end).length() < 3)
         return false;
@@ -181,13 +182,13 @@ bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QC
         return false;
     QImage result = image().copy();
     QPainter p(&result);
-    drawAnnotation(p, tool, start, end, color);
+    drawAnnotation(p, tool, start, end, color, strokeWidth);
     p.end();
     commit(std::move(result));
     return true;
 }
 
-bool ImageDocument::text(QRectF box, const QString &text, QColor color) {
+bool ImageDocument::text(QRectF box, const QString &text, QColor color, int fontSize) {
     if (image().isNull() || text.trimmed().isEmpty() || box.width() < 1 || box.height() < 1)
         return false;
     QImage result = image().copy();
@@ -199,7 +200,7 @@ bool ImageDocument::text(QRectF box, const QString &text, QColor color) {
 #else
     QFont font(QStringLiteral("Helvetica"));
 #endif
-    font.setPixelSize(24);
+    font.setPixelSize(fontSize);
     font.setWeight(QFont::DemiBold);
     p.setFont(font);
     p.setPen(color);

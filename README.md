@@ -195,6 +195,16 @@ the source pixels. Cut also removes annotations in the selected strip.
 Annotations are flattened when placed; use undo to correct them. History is
 limited to 50 images or 256 MiB.
 
+Use the mouse wheel over the image with Rectangle or Arrow selected to change
+stroke width, or with Text selected to change font size. The current size appears
+in the editor hint. While entering text, wheel over the image outside the text
+box to resize the whole draft; wheel inside the box scrolls its contents. Widths
+and font sizes are source-image pixels and stay selected for the next annotation.
+Stroke width ranges from 1 px to the smaller of 64 px and one-eighth of the
+image's shorter edge (at least 1 px). Text ranges from 8 px to the smaller of
+144 px and one-third of that edge (at least 8 px). Existing annotations keep
+their size.
+
 Blur is a privacy mask: the selected source pixels are completely replaced with
 an opaque neutral texture that does not depend on their original contents. Cover
 the entire sensitive area; pixels outside the selection are unchanged. The copied

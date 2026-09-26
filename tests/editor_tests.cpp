@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QToolButton>
+#include <QWheelEvent>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
@@ -34,6 +35,7 @@ private slots:
     void scaledGesturesAndClipboard();
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
+    void qmlWheelSizes();
     void qmlKeyboardCommands();
     void qmlDismissal();
     void qmlRecordingControls();
@@ -216,12 +218,24 @@ void EditorTests::makePreviewFixture() {
     QVERIFY(activeText);
     activeText->setProperty("text", "Entry baseline\nSecond line");
     QTRY_COMPARE(activeText->property("topPadding").toReal(), 0.0);
-    QTRY_VERIFY(activeText->property("height").toReal() >= activeText->property("contentHeight").toReal());
+    auto *activeFrame = window->findChild<QObject *>("annotationTextFrame");
+    QVERIFY(activeFrame);
+    QTRY_VERIFY(activeFrame->property("height").toReal() >= activeText->property("contentHeight").toReal());
     QTest::qWait(100);
     QVERIFY(window->grabWindow().save("text-entry-preview.png"));
     QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
     QTest::qWait(100);
     QVERIFY(window->grabWindow().save("text-committed-preview.png"));
+    canvas->adjustToolSize(120 * 48);
+    const QPointF largeTextPoint = canvas->imageRect().topLeft() + QPointF(450, 20) * canvas->imageScale();
+    canvas->begin(largeTextPoint.x(), largeTextPoint.y());
+    QVERIFY(window->property("editingText").toBool());
+    activeText->setProperty("text", "Large note");
+    QTest::qWait(100);
+    QVERIFY(window->grabWindow().save("text-entry-large-preview.png"));
+    QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
+    QTest::qWait(100);
+    QVERIFY(window->grabWindow().save("text-committed-large-preview.png"));
     canvas->arrange();
     QTest::qWait(100);
     QVERIFY(window->grabWindow().save("arrangement-preview-small.png"));
@@ -269,7 +283,9 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(text);
     text->setProperty("text", "A\nB");
     QTRY_COMPARE(text->property("topPadding").toReal(), 0.0);
-    QTRY_VERIFY(text->property("height").toReal() >= text->property("contentHeight").toReal());
+    auto *textFrame = window->findChild<QObject *>("annotationTextFrame");
+    QVERIFY(textFrame);
+    QTRY_VERIFY(textFrame->property("height").toReal() >= text->property("contentHeight").toReal());
     QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
     QVERIFY(!window->property("editingText").toBool());
     QVERIFY(canvas->canUndo());
@@ -303,6 +319,76 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(window->property("visible").toBool());
     QVERIFY(!window->property("shortcutsOn").toBool());
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+}
+
+void EditorTests::qmlWheelSizes() {
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QImage image(480, 360, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QTemporaryDir dir;
+    const QString path = dir.filePath("wheel.png");
+    QVERIFY(image.save(path));
+    Backend backend;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(canvas->hasImage());
+    window->show();
+    QTRY_VERIFY(window->isVisible());
+    const auto wheelAt = [window](QPointF local, int delta) {
+        QWheelEvent event(local, window->mapToGlobal(local.toPoint()), {}, {0, delta},
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(window, &event);
+        QCoreApplication::processEvents();
+    };
+    const auto point = [canvas](QPointF source) {
+        return canvas->imageRect().topLeft() + source * canvas->imageScale();
+    };
+    canvas->setTool("rect");
+    wheelAt(point({100, 250}), 120);
+    QCOMPARE(canvas->strokeWidth(), 5);
+    canvas->setTool("arrow");
+    wheelAt(point({100, 250}), -120);
+    QCOMPARE(canvas->strokeWidth(), 4);
+    canvas->setTool("text");
+    wheelAt(point({100, 250}), 120);
+    QCOMPARE(canvas->textSize(), 25);
+    canvas->begin(point({180, 180}).x(), point({180, 180}).y());
+    auto *text = window->findChild<QObject *>("annotationText");
+    QVERIFY(text);
+    text->setProperty("text", QString(30, 'A').replace("A", "A\n"));
+    auto *textFrame = window->findChild<QObject *>("annotationTextFrame");
+    QVERIFY(textFrame);
+    QTRY_VERIFY(text->property("contentHeight").toReal() > textFrame->property("height").toReal());
+    const QPointF inside(textFrame->property("x").toReal() + 20,
+                         textFrame->property("y").toReal() + textFrame->property("height").toReal() / 2);
+    auto *flickable = textFrame->property("contentItem").value<QObject *>();
+    QVERIFY(flickable);
+    const qreal scrollStart = flickable->property("contentY").toReal();
+    wheelAt(inside, scrollStart > 0 ? 120 : -120);
+    QCOMPARE(canvas->textSize(), 25);
+    QTRY_VERIFY(flickable->property("contentY").toReal() != scrollStart);
+    wheelAt(inside, scrollStart > 0 ? -120 : 120);
+    QCOMPARE(canvas->textSize(), 25);
+    wheelAt(inside, 12000);
+    wheelAt(inside, 120);
+    wheelAt(inside, -12000);
+    wheelAt(inside, -120);
+    QCOMPARE(canvas->textSize(), 25); // Scroll limits never resize the note.
+    wheelAt(point({20, 300}), 120);
+    QCOMPARE(canvas->textSize(), 26);
+    QCOMPARE(text->property("text").toString(), QString(30, 'A').replace("A", "A\n"));
+    QVERIFY(text->property("activeFocus").toBool());
 }
 
 void EditorTests::qmlKeyboardCommands() {

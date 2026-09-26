@@ -28,18 +28,18 @@ ApplicationWindow {
     readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
-    readonly property string hint: editingText ? "Type your note · " + commandKey + "Enter to place · Esc to cancel"
+    readonly property string hint: editingText ? "Text · " + canvas.textSize + " px · Wheel outside note to resize · " + commandKey + "Enter to place · Esc to cancel"
         : canvas.tool === "cut" ? "Drag sideways to remove a column · drag up or down to remove a row"
-        : canvas.tool === "rect" ? "Drag to draw a rectangle"
+        : canvas.tool === "rect" ? "Rectangle · " + canvas.strokeWidth + " px · Wheel to resize · Drag to draw"
         : canvas.tool === "highlight" ? "Drag to highlight an area"
-        : canvas.tool === "arrow" ? "Drag from the tail to the arrow tip"
+        : canvas.tool === "arrow" ? "Arrow · " + canvas.strokeWidth + " px · Wheel to resize · Drag from tail to tip"
         : canvas.tool === "blur" ? "Drag to hide an area with an opaque pixelated blur"
         : canvas.tool === "erase" ? "Drag to fill an area with the color where you started"
-        : "Click on the image to place text"
+        : "Text · " + canvas.textSize + " px · Wheel to resize · Click to place"
 
     function commitText() {
         if (!editingText) return
-        canvas.addText(textX, textY, textWidth, canvas.imageHeight - textY, textInput.text)
+        canvas.addText(textX, textY, textWidth, canvas.imageHeight - textY, textInput.text, canvas.textSize)
         editingText = false
         textInput.text = ""
         canvas.forceActiveFocus()
@@ -494,7 +494,7 @@ ApplicationWindow {
         onTextRequested: (x, y) => {
             win.textWidth = Math.min(360, canvas.imageWidth)
             win.textX = Math.min(x, canvas.imageWidth - win.textWidth)
-            win.textY = Math.max(0, Math.min(y, canvas.imageHeight - 32))
+            win.textY = Math.max(0, Math.min(y, canvas.imageHeight - Math.max(32, canvas.textSize * 1.5)))
             win.editingText = true
             textInput.text = ""
             textInput.forceActiveFocus()
@@ -511,45 +511,67 @@ ApplicationWindow {
             onPositionChanged: mouse => { if (pressed) canvas.move(mouse.x, mouse.y) }
             onReleased: mouse => canvas.end(mouse.x, mouse.y)
             onCanceled: canvas.cancel()
+            onWheel: wheel => {
+                // TextArea handles its own scrolling, including at scroll limits.
+                if (win.editingText && wheel.x >= textFrame.x && wheel.x < textFrame.x + textFrame.width
+                        && wheel.y >= textFrame.y && wheel.y < textFrame.y + textFrame.height) {
+                    wheel.accepted = true
+                    return
+                }
+                if (canvas.arranging || (canvas.tool !== "rect" && canvas.tool !== "arrow" && canvas.tool !== "text")) {
+                    wheel.accepted = false
+                    return
+                }
+                canvas.adjustToolSize(wheel.angleDelta.y || wheel.pixelDelta.y * 8)
+                wheel.accepted = true
+            }
         }
-        TextArea {
-            id: textInput
-            objectName: "annotationText"
+        ScrollView {
+            id: textFrame
+            objectName: "annotationTextFrame"
             visible: win.editingText
             x: canvas.imageRect.x + win.textX * canvas.imageScale
             y: canvas.imageRect.y + win.textY * canvas.imageScale
             width: win.textWidth * canvas.imageScale
-            height: Math.min(Math.max(36 * canvas.imageScale, contentHeight + topPadding + bottomPadding),
+            height: Math.min(Math.max(canvas.textSize * 1.5 * canvas.imageScale,
+                                      textInput.contentHeight + textInput.topPadding + textInput.bottomPadding),
                              (canvas.imageHeight - win.textY) * canvas.imageScale)
             clip: true
-            padding: 0
-            topPadding: 0
-            bottomPadding: 0
-            leftPadding: 0
-            rightPadding: 0
-            topInset: 0
-            bottomInset: 0
-            leftInset: 0
-            rightInset: 0
-            font.family: Qt.platform.os === "windows" ? "Segoe UI" : "Helvetica"
-            font.pixelSize: Math.max(1, 24 * canvas.imageScale)
-            font.weight: Font.DemiBold
-            color: canvas.ink
-            selectionColor: "#42655b"
-            wrapMode: TextEdit.WordWrap
-            selectByMouse: true
-            Accessible.name: "Annotation text"
             background: Rectangle { color: "#dd181b21"; border.color: "#9ba5b5"; radius: 2 }
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Escape) {
-                    win.editingText = false
-                    textInput.text = ""
-                    canvas.forceActiveFocus()
-                    event.accepted = true
-                } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                           && (event.modifiers & Qt.ControlModifier)) {
-                    win.commitText()
-                    event.accepted = true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            TextArea {
+                id: textInput
+                objectName: "annotationText"
+                width: textFrame.availableWidth
+                padding: 0
+                topPadding: 0
+                bottomPadding: 0
+                leftPadding: 0
+                rightPadding: 0
+                topInset: 0
+                bottomInset: 0
+                leftInset: 0
+                rightInset: 0
+                font.family: Qt.platform.os === "windows" ? "Segoe UI" : "Helvetica"
+                font.pixelSize: Math.max(1, Math.round(canvas.textSize * canvas.imageScale))
+                font.weight: Font.DemiBold
+                color: canvas.ink
+                selectionColor: "#42655b"
+                wrapMode: TextEdit.WordWrap
+                selectByMouse: true
+                Accessible.name: "Annotation text"
+                background: null
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Escape) {
+                        win.editingText = false
+                        textInput.text = ""
+                        canvas.forceActiveFocus()
+                        event.accepted = true
+                    } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                               && (event.modifiers & Qt.ControlModifier)) {
+                        win.commitText()
+                        event.accepted = true
+                    }
                 }
             }
         }

@@ -15,6 +15,10 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(qreal imageScale READ imageScale NOTIFY imageRectChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
+    Q_PROPERTY(int strokeWidth READ strokeWidth NOTIFY sizeChanged)
+    Q_PROPERTY(int textSize READ textSize NOTIFY sizeChanged)
+    Q_PROPERTY(int maxStrokeWidth READ maxStrokeWidth NOTIFY sizeChanged)
+    Q_PROPERTY(int maxTextSize READ maxTextSize NOTIFY sizeChanged)
     Q_PROPERTY(bool arranging READ arranging NOTIFY arrangementChanged)
     Q_PROPERTY(int regionCount READ regionCount NOTIFY arrangementChanged)
     Q_PROPERTY(int columns READ columns WRITE setColumns NOTIFY arrangementChanged)
@@ -32,6 +36,10 @@ public:
     void setTool(const QString &tool);
     QColor ink() const { return m_ink; }
     void setInk(QColor ink);
+    int strokeWidth() const { return m_strokeWidth; }
+    int textSize() const { return m_textSize; }
+    int maxStrokeWidth() const;
+    int maxTextSize() const;
     void paint(QPainter *painter) override;
     bool arranging() const { return m_arranging; }
     int regionCount() const { return m_regions.size(); }
@@ -53,12 +61,14 @@ public:
     Q_INVOKABLE void move(qreal x, qreal y);
     Q_INVOKABLE void end(qreal x, qreal y);
     Q_INVOKABLE bool cancel();
-    Q_INVOKABLE void addText(qreal x, qreal y, qreal width, qreal height, const QString &text);
+    Q_INVOKABLE void adjustToolSize(qreal wheelDelta);
+    Q_INVOKABLE void addText(qreal x, qreal y, qreal width, qreal height, const QString &text, int fontSize = 24);
 signals:
     void imageChanged();
     void imageRectChanged();
     void toolChanged();
     void inkChanged();
+    void sizeChanged();
     void error(const QString &message);
     void textRequested(qreal x, qreal y);
     void arrangementChanged();
@@ -73,6 +83,9 @@ private:
     ImageDocument m_document;
     QString m_tool = QStringLiteral("rect");
     QColor m_ink = QColor("#ef4444");
+    int m_strokeWidth = 4;
+    int m_textSize = 24;
+    qreal m_wheelRemainder = 0;
     bool m_dragging = false;
     QPointF m_start, m_end;
     QList<QImage> m_regions;
