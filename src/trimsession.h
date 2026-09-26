@@ -44,6 +44,7 @@ protected:
 private:
     void generateThumbnails();
     void nextWindowsThumbnail();
+    bool stopThumbnails();
     void exportFinished(bool success, const QString &detail);
     void validateOutput();
     void replaceOutput();

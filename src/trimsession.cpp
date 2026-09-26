@@ -167,6 +167,21 @@ void TrimSession::nextWindowsThumbnail() {
 #endif
 }
 
+bool TrimSession::stopThumbnails() {
+#ifdef Q_OS_WIN
+    m_nextThumb = thumbnailCount;
+    // The finished callback normally launches the next frame. Block it while
+    // stopping this worker so it cannot reopen the source during replacement.
+    const QSignalBlocker blocked(&m_thumbProcess);
+    if (m_thumbProcess.state() == QProcess::NotRunning) return true;
+    m_thumbProcess.kill();
+    return m_thumbProcess.waitForFinished(5000)
+        || m_thumbProcess.state() == QProcess::NotRunning;
+#else
+    return true;
+#endif
+}
+
 void TrimSession::keepOriginal() {
     if (m_busy) { cancelExport(); return; }
     if (m_path.isEmpty()) return;
@@ -184,6 +199,11 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
         return;
     }
     if (startMs == 0 && endMs >= m_duration - 1) { keepOriginal(); return; }
+    if (!stopThumbnails()) {
+        m_problem = QStringLiteral("Could not stop the preview worker. Your original recording is unchanged.");
+        emit changed();
+        return;
+    }
     m_startMs = startMs;
     m_endMs = endMs;
     m_problem.clear();
@@ -277,6 +297,10 @@ void TrimSession::validateOutput() {
 }
 
 void TrimSession::replaceOutput() {
+    if (!stopThumbnails()) {
+        fail(QStringLiteral("Could not stop the preview worker. Your original recording is unchanged."));
+        return;
+    }
     QString replacementProblem;
     if (!replaceFile(m_tempOutput, m_path, &replacementProblem)) {
         fail(QStringLiteral("Could not replace the original recording. %1")
@@ -333,7 +357,7 @@ void TrimSession::removeTemporaryOutput() {
 
 void TrimSession::clear() {
     ++m_generation;
-    if (m_thumbProcess.state() != QProcess::NotRunning) m_thumbProcess.kill();
+    stopThumbnails();
     removeTemporaryOutput();
     m_thumbDir.reset();
     m_path.clear();
