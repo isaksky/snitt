@@ -36,4 +36,5 @@ make -j"$JOBS"
 # metadata even when an older development bundle already exists.
 if [ "$(uname -s)" = Darwin ]; then
     cp "$ROOT/platform/macos/Info.plist" "$ROOT/build/xshot.app/Contents/Info.plist"
+    "$ROOT/bin/build-thumbnail-helper-macos"
 fi

@@ -47,6 +47,7 @@ def verify_bundle(bundle):
         raise RuntimeError("Bundled SVG image plugin is missing")
     for relative in ("Resources/qml/QtMultimedia/qmldir",
                      "PlugIns/multimedia/libdarwinmediaplugin.dylib",
+                     "MacOS/ffmpeg-thumbnails",
                      "Frameworks/QtMultimedia.framework/Versions/A/QtMultimedia",
                      "Frameworks/QtQuickTimeline.framework/Versions/A/QtQuickTimeline",
                      "Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees"):
@@ -198,6 +199,24 @@ def add_notices(payload, packages, cache, dependencies):
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
     copy_file(ROOT / "src/OMACUT-LICENSE", licenses / "omacut/LICENSE")
+    # This decoder is an independent, statically linked LGPL executable built
+    # from the pinned source in bin/build-thumbnail-helper-macos. Keep its full
+    # corresponding source alongside the release archive.
+    ffmpeg_source = ROOT / "build/tools/ffmpeg-thumbnail/ffmpeg-7.1.3.tar.xz"
+    ffmpeg_root = ROOT / "build/tools/ffmpeg-thumbnail/ffmpeg-7.1.3"
+    ffmpeg_sha256 = "f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe"
+    if not ffmpeg_source.is_file() or digest(ffmpeg_source) != ffmpeg_sha256:
+        raise RuntimeError("Pinned FFmpeg thumbnail helper source is missing or invalid")
+    ffmpeg_notices = licenses / "ffmpeg-7.1.3"
+    copy_file(ffmpeg_source, ffmpeg_notices / ffmpeg_source.name)
+    for name in ("LICENSE.md", "COPYING.LGPLv2.1"):
+        copy_file(ffmpeg_root / name, ffmpeg_notices / name)
+    (ffmpeg_notices / "BUILD.txt").write_text(
+        "The bundled ffmpeg-thumbnails executable is built by "
+        "bin/build-thumbnail-helper-macos from the enclosed source archive. "
+        "That script records the exact configure flags and disables GPL, "
+        "nonfree, hardware decoding, network, and external libraries.\n"
+    )
     for package, files in sorted(packages.items()):
         name = package.parent.name
         destination = licenses / f"{name}-{package.name}"
@@ -221,6 +240,11 @@ def add_notices(payload, packages, cache, dependencies):
             archive_notices(archive, destination / "upstream")
             record.update({"source_url": url, "source_sha256": sha256})
         inventory.append(record)
+    inventory.append({"package": "ffmpeg-thumbnail-helper", "version": "7.1.3",
+                      "binaries": ["Contents/MacOS/ffmpeg-thumbnails"],
+                      "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
+                      "source_sha256": ffmpeg_sha256,
+                      "license": "LGPL-2.1-or-later"})
     (payload / "DEPENDENCIES.json").write_text(json.dumps({"packages": inventory, "linkage": dependencies}, indent=2) + "\n")
     (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and Homebrew runtime libraries.
 Their exact versions, bundled binaries, and link dependencies are listed in
@@ -247,14 +271,19 @@ Qt's installed SBOMs identify additional component source locations.
 Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
 licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
 
+The bundled ffmpeg-thumbnails decoder is an independent LGPL FFmpeg executable.
+Its complete corresponding source archive and license are in licenses/ffmpeg-7.1.3/.
+It is used only to generate recording-review filmstrip JPEGs; no user-installed
+FFmpeg package is required on macOS. Source: https://ffmpeg.org/
+
 The recording trim filmstrip and time formatter are adapted from omacut under
 the MIT license in licenses/omacut/LICENSE. Source: https://github.com/omacom/omacut
 
 Portions of this software are copyright The FreeType Project
 (https://freetype.org/). All rights reserved.
 
-macOS recording uses ScreenCaptureKit; FFmpeg is not an application runtime
-dependency or part of this archive.
+macOS recording uses ScreenCaptureKit; the bundled FFmpeg helper is used for
+thumbnail decoding, not screen capture or trimmed-video export.
 """)
 
 
@@ -294,7 +323,8 @@ Move xshot.app into your Applications folder, then open it. xshot remains in the
 menu bar. Use Ctrl+Print Screen (F13 on Mac) to select a region.
 Grant Screen & System Audio Recording permission to xshot when macOS requests it.
 For login startup, add xshot in System Settings > General > Login Items.
-Video recording uses macOS ScreenCaptureKit and needs no FFmpeg installation.
+Video recording uses macOS ScreenCaptureKit. A small thumbnail decoder is
+bundled; no separate FFmpeg installation is needed.
 xshot's windows are automatically excluded from the recorded video.
 
 This release is signed with a persistent local development certificate. It is

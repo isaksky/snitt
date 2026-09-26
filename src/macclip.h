@@ -8,11 +8,6 @@ class QTimer;
 
 // Native AVFoundation helpers keep FFmpeg out of the macOS app runtime.
 bool macProbeClip(const QString &path, qint64 *durationMs, int *width, int *height);
-void macGenerateClipThumbnails(const QString &path, const QString &directory,
-                               qint64 startMs, qint64 endMs,
-                               QObject *receiver, quint64 generation,
-                               std::function<void(int, const QString &, quint64)> ready);
-
 class MacClipExport {
 public:
     MacClipExport();

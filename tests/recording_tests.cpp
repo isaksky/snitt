@@ -32,9 +32,7 @@ private slots:
     void trimThumbnailsFollowWindow();
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
-#ifdef Q_OS_WIN
-    void trimWindowsThumbnailsResumeAfterCancelAndFailure();
-#endif
+    void trimThumbnailsResumeAfterCancelAndFailure();
 #ifdef Q_OS_MACOS
     void nativeTrimProgressAndReset();
     void cancellationTimeoutDiscards();
@@ -241,8 +239,7 @@ void RecordingTests::trimReplacementFailurePreservesOriginal() {
     QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
 }
 
-#ifdef Q_OS_WIN
-void RecordingTests::trimWindowsThumbnailsResumeAfterCancelAndFailure() {
+void RecordingTests::trimThumbnailsResumeAfterCancelAndFailure() {
     if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -319,7 +316,6 @@ void RecordingTests::trimWindowsThumbnailsResumeAfterCancelAndFailure() {
     for (const QString &url : trim.thumbnails())
         QCOMPARE(QFileInfo(QUrl(url).toLocalFile()).absolutePath(), thumbnailDirectory);
 }
-#endif
 
 #ifdef Q_OS_MACOS
 void RecordingTests::nativeTrimProgressAndReset() {

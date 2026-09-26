@@ -3,11 +3,8 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
 #include <QFileInfo>
-#include <QCoreApplication>
-#include <QMetaObject>
 #include <QPointer>
 #include <QTimer>
-#include <algorithm>
 #include <cmath>
 
 bool macProbeClip(const QString &path, qint64 *durationMs, int *width, int *height) {
@@ -22,50 +19,6 @@ bool macProbeClip(const QString &path, qint64 *durationMs, int *width, int *heig
     if (width) *width = qRound(size.width);
     if (height) *height = qRound(size.height);
     return true;
-}
-
-void macGenerateClipThumbnails(const QString &path, const QString &directory,
-                               qint64 startMs, qint64 endMs,
-                               QObject *receiver, quint64 generation,
-                               std::function<void(int, const QString &, quint64)> ready) {
-    QPointer<QObject> guard(receiver);
-    const QString clipPath = path;
-    const QString targetDirectory = directory;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        @autoreleasepool {
-            AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:clipPath.toNSString()] options:nil];
-            AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-            generator.appliesPreferredTrackTransform = YES;
-            generator.maximumSize = CGSizeMake(180, 110);
-            // Filmstrip samples may use the nearest decoded frame. Exact edge
-            // positions are checked on export, while zero tolerance here can
-            // force a long full decode for every thumbnail.
-            const double windowSeconds = double(endMs - startMs) / 1000.0;
-            const double tolerance = std::min(0.2, windowSeconds / 24.0);
-            generator.requestedTimeToleranceBefore = CMTimeMakeWithSeconds(tolerance, 600);
-            generator.requestedTimeToleranceAfter = CMTimeMakeWithSeconds(tolerance, 600);
-            for (int index = 0; index < 12; ++index) {
-                const double seconds = double(startMs) / 1000.0
-                    + windowSeconds * (index + 0.5) / 12.0;
-                NSError *error = nil;
-                CGImageRef frame = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(seconds, 600)
-                                                        actualTime:nil error:&error];
-                QString filename;
-                if (frame) {
-                    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:frame];
-                    NSData *jpeg = [bitmap representationUsingType:NSBitmapImageFileTypeJPEG
-                                                        properties:@{NSImageCompressionFactor: @0.8}];
-                    filename = QStringLiteral("%1/%2.jpg").arg(targetDirectory).arg(index);
-                    if (![jpeg writeToFile:filename.toNSString() atomically:YES]) filename.clear();
-                    CGImageRelease(frame);
-                }
-                Q_UNUSED(error);
-                QMetaObject::invokeMethod(QCoreApplication::instance(), [=] {
-                    if (guard) ready(index, filename, generation);
-                }, Qt::QueuedConnection);
-            }
-        }
-    });
 }
 
 MacClipExport::MacClipExport() = default;

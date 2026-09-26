@@ -25,8 +25,10 @@ brew install qtdeclarative qtmultimedia  # development dependencies, if needed
 
 This builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
 LaunchAgent at `~/Library/LaunchAgents/local.xshot.plist`, and starts xshot in the
-background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit and
-does not need FFmpeg at runtime.
+background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit.
+The first build fetches and compiles a small LGPL FFmpeg helper for prompt video
+filmstrip thumbnails. It is bundled with the app, so no separate FFmpeg install
+is needed to use xshot.
 Re-run the same command to update; use `./bin/uninstall` to remove the app and login
 entry.
 

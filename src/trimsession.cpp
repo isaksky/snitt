@@ -1,6 +1,7 @@
 #include "trimsession.h"
 
 #include "videorecorder.h"
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -23,9 +24,17 @@
 
 namespace {
 constexpr int thumbnailCount = 12;
-#ifdef Q_OS_WIN
 QString timestamp(qint64 ms) { return QString::number(double(ms) / 1000.0, 'f', 6); }
+
+QString thumbnailToolPath() {
+#ifdef Q_OS_MACOS
+    // Release bundles carry a small software-only decoder, independent of the
+    // cold CoreMedia service that can delay native video decoding on macOS.
+    const QString bundled = QCoreApplication::applicationDirPath() + "/ffmpeg-thumbnails";
+    if (QFileInfo(bundled).isExecutable()) return bundled;
 #endif
+    return recording::toolPath("ffmpeg");
+}
 
 struct ClipInfo { qint64 duration = 0; int width = 0; int height = 0; };
 
@@ -49,8 +58,16 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
         const QString file = m_thumbDir->filePath(QString::number(index) + ".jpg");
         if (status == QProcess::NormalExit && code == 0 && QFileInfo(file).size() > 0)
             m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
+        else if (m_problem.isEmpty())
+            m_problem = QStringLiteral("Some filmstrip frames could not be decoded.");
         emit changed();
-        nextWindowsThumbnail();
+        nextThumbnail();
+    });
+    connect(&m_thumbProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_path.isEmpty() || m_busy) return;
+        m_nextThumb = thumbnailCount;
+        m_problem = QStringLiteral("Could not start the thumbnail decoder.");
+        emit changed();
     });
     connect(&m_exportProcess, &QProcess::readyReadStandardOutput, this, [this] {
         m_progressBuffer += m_exportProcess.readAllStandardOutput();
@@ -159,6 +176,7 @@ void TrimSession::setThumbnailWindow(qint64 startMs, qint64 endMs) {
     }
     m_thumbnailStartMs = start;
     m_thumbnailEndMs = end;
+    m_problem.clear();
     m_thumbnails = QStringList(thumbnailCount, QString());
     m_thumbDir = std::make_unique<QTemporaryDir>();
     emit changed();
@@ -167,38 +185,29 @@ void TrimSession::setThumbnailWindow(qint64 startMs, qint64 endMs) {
 
 void TrimSession::generateThumbnails() {
     if (!m_thumbDir || !m_thumbDir->isValid() || m_duration <= 0) return;
-#ifdef Q_OS_MACOS
-    macGenerateClipThumbnails(m_path, m_thumbDir->path(), m_thumbnailStartMs,
-        m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration, this, m_generation,
-        [this](int index, const QString &file, quint64 generation) {
-            if (generation != m_generation || index < 0 || index >= m_thumbnails.size()) return;
-            if (!file.isEmpty()) m_thumbnails[index] = QUrl::fromLocalFile(file).toString();
-            emit changed();
-        });
-#else
     m_nextThumb = 0;
-    nextWindowsThumbnail();
-#endif
+    nextThumbnail();
 }
 
-void TrimSession::nextWindowsThumbnail() {
-#ifdef Q_OS_WIN
+void TrimSession::nextThumbnail() {
     while (m_nextThumb < m_thumbnails.size() && !m_thumbnails.at(m_nextThumb).isEmpty())
         ++m_nextThumb;
     if (m_path.isEmpty() || m_busy || m_nextThumb >= thumbnailCount || !m_thumbDir) return;
-    const QString ffmpeg = recording::toolPath("ffmpeg");
-    if (ffmpeg.isEmpty()) return;
+    const QString ffmpeg = thumbnailToolPath();
+    if (ffmpeg.isEmpty()) {
+        m_problem = QStringLiteral("The thumbnail decoder is unavailable.");
+        emit changed();
+        return;
+    }
     const qint64 windowEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
     const qint64 time = m_thumbnailStartMs
         + qRound64(double(windowEnd - m_thumbnailStartMs) * (m_nextThumb + 0.5) / thumbnailCount);
     m_thumbProcess.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y",
         "-ss", timestamp(time), "-i", m_path, "-frames:v", "1", "-vf", "scale=-1:90",
         "-vcodec", "mjpeg", m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg")});
-#endif
 }
 
 bool TrimSession::stopThumbnails() {
-#ifdef Q_OS_WIN
     m_nextThumb = thumbnailCount;
     // The finished callback normally launches the next frame. Block it while
     // stopping this worker so it cannot reopen the source during replacement.
@@ -207,23 +216,18 @@ bool TrimSession::stopThumbnails() {
     m_thumbProcess.kill();
     return m_thumbProcess.waitForFinished(5000)
         || m_thumbProcess.state() == QProcess::NotRunning;
-#else
-    return true;
-#endif
 }
 
 void TrimSession::resumeThumbnails() {
-#ifdef Q_OS_WIN
     if (m_path.isEmpty() || m_busy || !m_thumbDir || !m_thumbDir->isValid()
         || m_thumbProcess.state() != QProcess::NotRunning) return;
     for (int index = 0; index < m_thumbnails.size(); ++index) {
         if (m_thumbnails.at(index).isEmpty()) {
             m_nextThumb = index;
-            nextWindowsThumbnail();
+            nextThumbnail();
             return;
         }
     }
-#endif
 }
 
 void TrimSession::keepOriginal() {
@@ -280,6 +284,7 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
                 m_busy = m_canceling = false;
                 m_progress = 0;
                 emit changed();
+                resumeThumbnails();
                 return;
             }
             m_macExport.reset();

@@ -44,7 +44,7 @@ protected:
     virtual bool replaceFile(const QString &temporary, const QString &original, QString *problem);
 private:
     void generateThumbnails();
-    void nextWindowsThumbnail();
+    void nextThumbnail();
     bool stopThumbnails();
     void resumeThumbnails();
     void exportFinished(bool success, const QString &detail);
