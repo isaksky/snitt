@@ -23,6 +23,7 @@ private slots:
     void replayedAnnotationsAndExportPolicy();
     void replayedEditsKeepOperationOrder();
     void fractionalCutsKeepPrivacyMasksAligned();
+    void eraseReplayKeepsExactSample();
     void annotationPreviewDoesNotSoftenOnRelease();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
@@ -450,6 +451,67 @@ void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {
     QCOMPARE(cleanCopy, secretCopy);
     QCOMPARE(cleanSaved, secretSaved);
     QCOMPARE(cleanCopy.size(), QSize(1199, 720));
+}
+
+void ImageToolTests::eraseReplayKeepsExactSample() {
+    for (const bool transparent : {false, true}) {
+        QImage source(80, 60, QImage::Format_ARGB32_Premultiplied);
+        source.fill(transparent ? Qt::transparent : Qt::white);
+        ImageDocument doc;
+        doc.reset(source);
+        QVERIFY(doc.annotate("rect", {10.25, 10}, {30.25, 40},
+                             transparent ? QColor(255, 0, 0, 127) : Qt::red, 1));
+        const QRgb sample = doc.image().pixel(10, 20);
+        QVERIFY(sample != source.pixel(10, 20));
+        QVERIFY(doc.erase(QRectF(10.2, 20, 49.8, 20), {10.2, 20}));
+        QCOMPARE(doc.image().pixel(50, 30), sample);
+        for (const qreal scale : {1.0, 1.25, 1.5, 3.0}) {
+            const QImage rendered = doc.render(scale);
+            QCOMPARE(rendered.pixel(qRound(50 * scale), qRound(30 * scale)), sample);
+        }
+        const QImage erased = doc.render(3);
+        doc.undo(); doc.redo();
+        QCOMPARE(doc.render(3), erased);
+        QVERIFY(doc.annotate("arrow", {2, 50}, {70, 50}, Qt::blue, 2));
+        QCOMPARE(doc.render(3).pixel(150, 90), sample);
+        QCOMPARE(doc.render(doc.exportScale()).pixel(150, 90), sample);
+
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString sourcePath = temporary.filePath("source.png");
+        QVERIFY(source.save(sourcePath));
+        EditorCanvas canvas;
+        canvas.setWidth(272); canvas.setHeight(212); // Three display pixels per image pixel.
+        QVERIFY(canvas.load(QUrl::fromLocalFile(sourcePath)));
+        const auto point = [&](QPointF imagePoint) {
+            return canvas.imageRect().topLeft() + imagePoint * canvas.imageScale();
+        };
+        canvas.setTool("rect");
+        canvas.setInk(transparent ? QColor(255, 0, 0, 127) : QColor(Qt::red));
+        canvas.adjustToolSize(-360);
+        const QPointF rectFrom = point({10.25, 10}), rectTo = point({30.25, 40});
+        canvas.begin(rectFrom.x(), rectFrom.y()); canvas.end(rectTo.x(), rectTo.y());
+        canvas.setTool("erase");
+        const QPointF eraseFrom = point({10.2, 20}), eraseTo = point({60, 40});
+        canvas.begin(eraseFrom.x(), eraseFrom.y()); canvas.move(eraseTo.x(), eraseTo.y());
+        const auto snapshot = [&]() {
+            QImage frame(272, 212, QImage::Format_ARGB32_Premultiplied);
+            frame.fill(Qt::transparent);
+            QPainter painter(&frame); canvas.paint(&painter);
+            return frame;
+        };
+        const QRgb live = snapshot().pixel(point({50, 30}).toPoint());
+        canvas.end(eraseTo.x(), eraseTo.y());
+        const QRgb committed = snapshot().pixel(point({50, 30}).toPoint());
+        QCOMPARE(live, committed);
+        QVERIFY(canvas.copy());
+        const QImage copied = QGuiApplication::clipboard()->image();
+        QCOMPARE(copied.pixel(150, 90), sample);
+        const QString savedPath = canvas.saveTo(temporary.path());
+        QVERIFY(!savedPath.isEmpty());
+        QCOMPARE(QImage(savedPath).convertToFormat(QImage::Format_ARGB32_Premultiplied)
+                     .pixel(150, 90), sample);
+    }
 }
 
 void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {

@@ -117,7 +117,9 @@ void EditorCanvas::paint(QPainter *p) {
             const int y = qBound(0, int(std::floor(m_start.y())), imageHeight() - 1);
             p->save();
             p->setCompositionMode(QPainter::CompositionMode_Source);
-            p->fillRect(area, m_document.image().pixelColor(x, y));
+            QImage sample(1, 1, QImage::Format_ARGB32_Premultiplied);
+            sample.setPixel(0, 0, m_document.image().pixel(x, y));
+            p->drawImage(QRectF(area), sample);
             p->restore();
         }
         p->setPen(QPen(QColor("#172331"), 1.5 / imageScale(), Qt::DashLine));

@@ -11,6 +11,13 @@ QRect selectedPixels(QRectF area, const QSize &size) {
     return area.normalized().intersected(QRectF(QPointF(0, 0), size)).toAlignedRect();
 }
 
+void fillWithSample(QImage &image, const QRect &area, QRgb sampledPixel) {
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
+        std::fill(row + area.left(), row + area.right() + 1, sampledPixel);
+    }
+}
+
 const QImage &privacyTexture() {
     // This opaque pattern never uses screenshot pixels. Blurring the source
     // would retain information about the contents the user meant to hide.
@@ -217,7 +224,12 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                 switch (op.kind) {
                 case Operation::Cut: replay.cut(op.vertical, op.start, op.end); break;
                 case Operation::Blur: replay.blur(op.area); break;
-                case Operation::Erase: replay.erase(op.area, op.samplePosition); break;
+                case Operation::Erase: {
+                    QImage frame = replay.image().copy();
+                    fillWithSample(frame, selectedPixels(op.area, frame.size()), op.sampledPixel);
+                    replay.commit(std::move(frame), &op);
+                    break;
+                }
                 case Operation::Annotation:
                     replay.annotate(op.tool, op.from, op.to, op.color, op.strokeWidth); break;
                 case Operation::Text: replay.text(op.area, op.text, op.color, op.fontSize); break;
@@ -328,12 +340,10 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
     const int sampleY = int(qBound(0.0, std::floor(samplePosition.y()), double(image().height() - 1)));
     const QRgb sampledPixel = image().pixel(sampleX, sampleY);
     QImage result = image().copy();
-    for (int y = pixels.top(); y <= pixels.bottom(); ++y) {
-        auto *row = reinterpret_cast<QRgb *>(result.scanLine(y));
-        // Copy the stored pixel exactly, including its alpha and premultiplication.
-        std::fill(row + pixels.left(), row + pixels.right() + 1, sampledPixel);
-    }
-    Operation op; op.kind = Operation::Erase; op.area = pixels; op.samplePosition = samplePosition;
+    // Copy the stored pixel exactly, including its alpha and premultiplication.
+    fillWithSample(result, pixels, sampledPixel);
+    Operation op; op.kind = Operation::Erase; op.area = pixels;
+    op.sampledPixel = sampledPixel;
     commit(std::move(result), &op);
     return true;
 }

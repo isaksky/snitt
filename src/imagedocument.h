@@ -36,7 +36,7 @@ private:
         bool vertical = false;
         int start = 0, end = 0;
         QRectF area;
-        QPointF samplePosition;
+        QRgb sampledPixel = 0;
         QString tool, text;
         QPointF from, to;
         QColor color;
