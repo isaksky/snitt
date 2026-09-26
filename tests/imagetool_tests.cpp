@@ -22,6 +22,7 @@ private slots:
     void annotationSizingAndPreview();
     void replayedAnnotationsAndExportPolicy();
     void replayedEditsKeepOperationOrder();
+    void fractionalCutsKeepPrivacyMasksAligned();
     void annotationPreviewDoesNotSoftenOnRelease();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
@@ -365,6 +366,90 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(clean.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
     QVERIFY(changed.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
     QCOMPARE(clean.render(1.5), changed.render(1.5));
+}
+
+void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {
+    QImage white(800, 480, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    QImage secret = white;
+    for (int y = 10; y < 30; ++y)
+        for (int x = 10; x < 30; ++x) secret.setPixelColor(x, y, Qt::black);
+
+    for (const bool vertical : {true, false}) {
+        for (const bool repeated : {false, true}) {
+            for (const bool erase : {false, true}) {
+                ImageDocument clean, changed;
+                clean.reset(white); changed.reset(secret);
+                auto editBoth = [&](auto edit) { QVERIFY(edit(clean)); QVERIFY(edit(changed)); };
+                editBoth([&](ImageDocument &doc) { return doc.cut(vertical, 1, 2); });
+                if (repeated)
+                    editBoth([&](ImageDocument &doc) { return doc.cut(vertical, 3, 4); });
+                const int origin = repeated ? 8 : 9;
+                const QRectF area = vertical ? QRectF(origin, 10, 20, 20)
+                                             : QRectF(10, origin, 20, 20);
+                if (erase)
+                    editBoth([&](ImageDocument &doc) { return doc.erase(area, {0, 0}); });
+                else
+                    editBoth([&](ImageDocument &doc) { return doc.blur(area); });
+                editBoth([&](ImageDocument &doc) {
+                    return doc.annotate("arrow", {300, 300}, {350, 300}, Qt::red, 2);
+                });
+                QCOMPARE(clean.image(), changed.image());
+                for (const qreal scale : {1.25, 1.5, 2.5}) {
+                    const QImage first = clean.render(scale), second = changed.render(scale);
+                    QCOMPARE(first, second);
+                    QCOMPARE(first.size(), QSize(qRound(clean.image().width() * scale),
+                                                 qRound(clean.image().height() * scale)));
+                    QImage previewA(first.size(), first.format()), previewB(first.size(), first.format());
+                    previewA.fill(Qt::transparent); previewB.fill(Qt::transparent);
+                    QPainter a(&previewA), b(&previewB);
+                    a.scale(scale, scale); b.scale(scale, scale);
+                    clean.paint(a, scale); changed.paint(b, scale);
+                    a.end(); b.end();
+                    QCOMPARE(previewA, previewB);
+                }
+                clean.undo(); changed.undo();
+                QCOMPARE(clean.render(1.5), changed.render(1.5));
+                clean.redo(); changed.redo();
+                QCOMPARE(clean.render(clean.exportScale()), changed.render(changed.exportScale()));
+            }
+        }
+    }
+
+    // Exercise the actual Copy and Save export paths, not only the document API.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString whitePath = temporary.filePath("white.png");
+    const QString secretPath = temporary.filePath("secret.png");
+    QVERIFY(white.save(whitePath)); QVERIFY(secret.save(secretPath));
+    const auto exported = [&](const QString &source, QImage &copy, QImage &saved) {
+        EditorCanvas canvas;
+        canvas.setWidth(832); canvas.setHeight(512); // Natural-size gesture mapping.
+        QVERIFY(canvas.load(QUrl::fromLocalFile(source)));
+        const auto drag = [&](const QString &tool, QPointF from, QPointF to) {
+            canvas.setTool(tool);
+            const auto point = [&](QPointF imagePoint) {
+                return canvas.imageRect().topLeft() + imagePoint * canvas.imageScale();
+            };
+            const QPointF start = point(from), end = point(to);
+            canvas.begin(start.x(), start.y()); canvas.end(end.x(), end.y());
+        };
+        drag("cut", {1, 40}, {2, 40});
+        drag("blur", {9, 10}, {29, 30});
+        drag("arrow", {300, 300}, {350, 300});
+        QVERIFY(canvas.copy());
+        copy = QGuiApplication::clipboard()->image();
+        const QString path = canvas.saveTo(temporary.path());
+        QVERIFY(!path.isEmpty());
+        saved = QImage(path);
+        QVERIFY(!saved.isNull());
+    };
+    QImage cleanCopy, cleanSaved, secretCopy, secretSaved;
+    exported(whitePath, cleanCopy, cleanSaved);
+    exported(secretPath, secretCopy, secretSaved);
+    QCOMPARE(cleanCopy, secretCopy);
+    QCOMPARE(cleanSaved, secretSaved);
+    QCOMPARE(cleanCopy.size(), QSize(1199, 720));
 }
 
 void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {

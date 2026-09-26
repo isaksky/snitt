@@ -185,67 +185,57 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     const auto scaledSize = [&](QSize size) {
         return QSize(qMax(1, qRound(size.width() * scale)), qMax(1, qRound(size.height() * scale)));
     };
-    QImage result(scaledSize(m_source.size()), QImage::Format_ARGB32_Premultiplied);
-    if (result.isNull()) return {};
-    result.fill(Qt::transparent);
-    {
-        QPainter p(&result);
-        // Interpolating source pixels before a later cut or privacy edit would
-        // blend removed pixels into its boundary. Use exact pixels in that case.
-        bool replacesPixels = false;
-        for (int i = 0; i < operationCount; ++i) {
-            const auto &op = m_operationHistory[m_index][i];
-            if (op.kind == Operation::Cut || op.kind == Operation::Blur || op.kind == Operation::Erase) {
-                replacesPixels = true;
+    const auto &ops = m_operationHistory[m_index];
+    int lastRasterEdit = -1;
+    for (int i = 0; i < operationCount; ++i)
+        if (ops[i].kind == Operation::Cut || ops[i].kind == Operation::Blur
+            || ops[i].kind == Operation::Erase) lastRasterEdit = i;
+
+    // Cuts have integer boundaries in the document, but fractional replay scales
+    // do not. Cropping an already scaled image rounds away a different number of
+    // pixels than the document cut, shifting every later privacy edit. Start
+    // from the exact native frame after the last raster edit instead: no removed
+    // or masked source pixel can survive a later resampling boundary.
+    QImage base = m_source;
+    if (lastRasterEdit >= 0) {
+        const int prefixCount = lastRasterEdit + 1;
+        bool found = false;
+        for (int j = m_index; j >= 0; --j) {
+            if (m_operationHistory[j].size() == prefixCount) {
+                base = m_history[j];
+                found = true;
                 break;
             }
         }
-        p.setRenderHint(QPainter::SmoothPixmapTransform, !replacesPixels);
-        p.drawImage(QRect(QPoint(), result.size()), m_source);
-    }
-    QSize naturalSize = m_source.size();
-    for (int i = 0; i < operationCount; ++i) {
-        const auto &op = m_operationHistory[m_index][i];
-        if (op.kind == Operation::Cut) {
-            // Floor/ceil exclude every upscaled pixel touching the removed
-            // source strip, including at fractional preview/export scales.
-            const int length = op.vertical ? result.width() : result.height();
-            const int start = qBound(0, int(std::floor(op.start * scale)), length);
-            const int end = qBound(start, int(std::ceil(op.end * scale)), length);
-            QImage next(result.width() - (op.vertical ? end - start : 0),
-                        result.height() - (op.vertical ? 0 : end - start), result.format());
-            if (next.isNull()) return {};
-            next.fill(Qt::transparent);
-            QPainter p(&next);
-            if (op.vertical) {
-                p.drawImage(QPoint(0, 0), result, QRect(0, 0, start, result.height()));
-                p.drawImage(QPoint(start, 0), result, QRect(end, 0, result.width() - end, result.height()));
-            } else {
-                p.drawImage(QPoint(0, 0), result, QRect(0, 0, result.width(), start));
-                p.drawImage(QPoint(0, start), result, QRect(0, end, result.width(), result.height() - end));
+        if (!found) {
+            // Undo history can discard old frames while keeping the operation
+            // list. Reconstruct the rare missing prefix at native resolution.
+            ImageDocument replay;
+            replay.reset(m_source);
+            for (int i = 0; i < prefixCount; ++i) {
+                const auto &op = ops[i];
+                switch (op.kind) {
+                case Operation::Cut: replay.cut(op.vertical, op.start, op.end); break;
+                case Operation::Blur: replay.blur(op.area); break;
+                case Operation::Erase: replay.erase(op.area, op.samplePosition); break;
+                case Operation::Annotation:
+                    replay.annotate(op.tool, op.from, op.to, op.color, op.strokeWidth); break;
+                case Operation::Text: replay.text(op.area, op.text, op.color, op.fontSize); break;
+                }
             }
-            p.end();
-            result = std::move(next);
-            if (op.vertical) naturalSize.rwidth() -= op.end - op.start;
-            else naturalSize.rheight() -= op.end - op.start;
-            continue;
+            base = replay.image();
         }
-        QColor eraseSample;
-        if (op.kind == Operation::Erase) {
-            const int x = qBound(0, qRound((std::floor(op.samplePosition.x()) + 0.5) * scale), result.width() - 1);
-            const int y = qBound(0, qRound((std::floor(op.samplePosition.y()) + 0.5) * scale), result.height() - 1);
-            eraseSample = result.pixelColor(x, y);
-        }
+    }
+    QImage result = base.scaled(scaledSize(base.size()), Qt::IgnoreAspectRatio,
+                                lastRasterEdit >= 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
+    if (result.isNull()) return {};
+    for (int i = lastRasterEdit + 1; i < operationCount; ++i) {
+        const auto &op = ops[i];
         QPainter p(&result);
         p.scale(scale, scale);
-        if (op.kind == Operation::Blur) {
-            drawPrivacyMask(p, selectedPixels(op.area, naturalSize));
-        } else if (op.kind == Operation::Erase) {
-            p.setCompositionMode(QPainter::CompositionMode_Source);
-            p.fillRect(selectedPixels(op.area, naturalSize), eraseSample);
-        } else if (op.kind == Operation::Annotation) {
+        if (op.kind == Operation::Annotation)
             drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
-        } else if (op.kind == Operation::Text) drawText(p, op);
+        else if (op.kind == Operation::Text) drawText(p, op);
     }
     return result;
 }
