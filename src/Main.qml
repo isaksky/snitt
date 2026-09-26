@@ -519,9 +519,14 @@ ApplicationWindow {
             x: canvas.imageRect.x + win.textX * canvas.imageScale
             y: canvas.imageRect.y + win.textY * canvas.imageScale
             width: win.textWidth * canvas.imageScale
-            height: Math.min(Math.max(36 * canvas.imageScale, implicitHeight),
+            height: Math.min(Math.max(36 * canvas.imageScale, contentHeight + topPadding + bottomPadding),
                              (canvas.imageHeight - win.textY) * canvas.imageScale)
+            clip: true
             padding: 0
+            topPadding: 0
+            bottomPadding: 0
+            leftPadding: 0
+            rightPadding: 0
             topInset: 0
             bottomInset: 0
             leftInset: 0
