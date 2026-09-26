@@ -87,25 +87,59 @@ scaling. A region currently stays within one monitor.
 
 ## Multiple regions
 
-Start a capture and press **M**, or choose **Multiple regions** in the editor.
-Drag each rectangle in the order you want it to appear. Numbered selections stay
-on the frozen screen; click one to remove it, or use Backspace to remove the last.
-**Enter** finishes selecting and opens the arrangement preview; Escape cancels the capture.
+The workflow has four phases: **Capture → Arrange → Annotate (optional) → Copy and finish**.
+Use **Enter** to advance through selection and arrangement, and **C** to copy the
+finished image. You can skip annotation and copy directly from Arrange.
 
-The editor shows **Arrange → Annotate (optional)** with the current phase highlighted
-and a toolbar specific to that phase. Arrange defaults to two columns. Press **+** or **−** to change the column
-count (one to six, limited by the number of regions), or use the **Columns** buttons.
-Drag tiles to reorder them, or select a tile and use **Move left**, **Move right**,
-or **Remove**.
-Original pixels are kept without resizing or cropping, with 24-pixel neutral
-spacing. Numbers and selection outlines appear only in the preview.
-Choose **Continue to annotate → (Enter)** to use the drawing tools, or **Copy & finish (C)**
-to finish directly. Enter advances from selection to arrangement, then to annotation; it does not
-copy or finish an edited screenshot.
-Choose **← Back to arrange** to revise the layout. After editing, this asks you to
-**Keep editing** or **Discard edits & arrange** before resetting annotations and cuts; the
-original regions are retained until the session is finished. Captures are limited
-to 24 regions and 256 MiB, and each rectangle stays within one monitor.
+### Phase 1: Capture
+
+- Start a capture with **Ctrl+Print Screen** (**Control+F13** on macOS), then press
+  **M**, or choose **Multiple (M)** in the editor.
+- Drag rectangles on the frozen desktop. Selections remain highlighted and
+  numbered in the order you draw them.
+- Click a selection to remove it, or press **Backspace/Delete** to remove the latest.
+- Press **Enter** to finish selecting and open Arrange. **Esc** cancels the capture.
+
+All regions come from the same frozen desktop; this phase does not collect new
+shots after scrolling or changing windows. Captures are limited to 24 regions and
+256 MiB, and each rectangle stays within one monitor.
+
+### Phase 2: Arrange
+
+The editor highlights **Arrange** in its **Arrange → Annotate (optional)** indicator
+and shows layout controls. Drawing tools are hidden during this phase.
+
+- Regions start in a two-column grid. Use **+ / −** or the **Columns** buttons to
+  choose one to six columns, limited by the number of regions.
+- Drag tiles to reorder them, or select a tile and use **← / →** or the
+  **Move left / Move right** buttons. **Backspace/Delete** or **Remove** removes it.
+- Original pixels are preserved without resizing or cropping, with 24-pixel
+  neutral spacing. Numbers and selection outlines are preview guides only.
+- Choose **Continue to annotate → (Enter)** for Phase 3, or **Copy & finish (C)**
+  to go directly to Phase 4.
+
+### Phase 3: Annotate — optional
+
+The indicator highlights **Annotate**, and drawing tools replace the layout
+controls. Tile numbers and selection outlines disappear; you now edit one combined image.
+
+- Use the normal drawing, text, blur, smart erase, and cut tools.
+- Choose **← Back to arrange** to revise the layout. If edits exist, choose
+  **Keep editing** to preserve them or **Discard edits & arrange** to reset
+  annotations and cuts. The captured regions are kept.
+- Press **C** or choose **Copy & finish (C)** when ready. While typing an annotation,
+  **C** types text; place the text with **Command/Ctrl+Enter** before using the shortcut.
+
+Enter does not copy or finish an edited screenshot. While typing an annotation,
+Enter adds a line.
+
+### Phase 4: Copy and finish
+
+- From Arrange or Annotate, **Copy & finish (C)** copies the full-resolution
+  combined image to the clipboard.
+- The editor closes and the session's editing history and original regions are cleared.
+- Preview numbers and selection outlines are not included in the copied image.
+- xshot stays running in the menu bar or system tray, ready for the next capture.
 
 ## Recording
 
