@@ -52,7 +52,7 @@ public:
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();
-    Q_INVOKABLE bool beginProtectedRecording(QObject *indicator, QObject *controls);
+    Q_INVOKABLE bool beginProtectedRecording(QObject *indicator, QObject *controls, QObject *outline = nullptr);
     Q_INVOKABLE bool protectRecordingControls(QObject *window);
     Q_INVOKABLE bool revealFile(const QString &path) const { return recording::revealSavedFile(path); }
 signals:

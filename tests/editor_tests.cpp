@@ -7,6 +7,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QApplication>
 #include <QScreen>
@@ -29,6 +30,9 @@
 #include "globalhotkey.h"
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
+#elif defined(Q_OS_MACOS)
+#include <Carbon/Carbon.h>
+#include <CoreGraphics/CoreGraphics.h>
 #endif
 #include "imagedocument.h"
 #include "editorcanvas.h"
@@ -49,6 +53,7 @@ private slots:
     void qmlKeyboardCommands();
     void qmlDismissal();
     void qmlRecordingControls();
+    void qmlRecordingHotkeyStop_data();
     void qmlRecordingHotkeyStop();
     void qmlRecordingReview();
     void qmlTrimBarZoomMapping();
@@ -1130,6 +1135,7 @@ void EditorTests::qmlRecordingControls() {
     QString error;
     connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
     QSignalSpy saved(&backend, &Backend::recordingSaved);
+    QSignalSpy canceled(&backend, &Backend::recordingCanceled);
     const auto cleanup = qScopeGuard([&backend] {
         const QString ownClip = backend.recordingPath();
         if (backend.recording()) {
@@ -1153,6 +1159,8 @@ void EditorTests::qmlRecordingControls() {
     auto *review = window->findChild<QQuickWindow *>("recordingReviewWindow");
     QVERIFY(controls);
     QVERIFY(indicator);
+    auto *outline = window->findChild<QQuickWindow *>("recordingOutline");
+    QVERIFY(outline);
     QVERIFY(review);
     QVERIFY(!window->isVisible()); QVERIFY(!controls->isVisible());
 
@@ -1226,6 +1234,25 @@ void EditorTests::qmlRecordingControls() {
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 1000);
+    QTRY_VERIFY(outline->isVisible());
+    QCOMPARE(outline->geometry(), backend.recordingRegion().adjusted(-3, -3, 3, 3));
+    QVERIFY(outline->flags() & Qt::WindowTransparentForInput);
+    QVERIFY(outline->flags() & Qt::WindowDoesNotAcceptFocus);
+#ifdef Q_OS_WIN
+    DWORD affinity = 0;
+    QVERIFY(GetWindowDisplayAffinity(reinterpret_cast<HWND>(outline->winId()), &affinity));
+    QCOMPARE(affinity, DWORD(0x00000011));
+#endif
+    QImage outlinePreview;
+    QTRY_VERIFY(!(outlinePreview = outline->grabWindow()).isNull());
+    QVERIFY(outlinePreview.save("recording-outline.png"));
+    QCOMPARE(outlinePreview.pixelColor(1, 1), QColor("#ef4444"));
+    QCOMPARE(outlinePreview.pixelColor(outlinePreview.width() / 2, outlinePreview.height() / 2).alpha(), 0);
+    QTest::qWait(200); // Let the window server retire the startup indicator before the desktop preview.
+    const QRect previewArea = backend.recordingRegion().adjusted(-6, -6, 6, 6);
+    const QPixmap regionPreview = QGuiApplication::primaryScreen()->grabWindow(0,
+        previewArea.x(), previewArea.y(), previewArea.width(), previewArea.height());
+    QVERIFY(regionPreview.save("recording-region-preview.png"));
     QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1 || !error.isEmpty(), 6000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QImage preview;
@@ -1235,6 +1262,14 @@ void EditorTests::qmlRecordingControls() {
     QTRY_VERIFY(controls->isActive());
     QGuiApplication::clipboard()->setText("waiting for recording");
     QTest::keySequence(controls, QKeySequence(QKeySequence::Copy));
+    QTest::keyClick(controls, Qt::Key_Escape);
+    QTest::qWait(100);
+    QVERIFY(backend.recording());
+    QVERIFY(!backend.finishingRecording());
+    QVERIFY(controls->isVisible());
+    QVERIFY(canceled.isEmpty());
+    QVERIFY(saved.isEmpty());
+    backend.finishRecording();
     QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(saved.size(), 1);
@@ -1260,14 +1295,19 @@ void EditorTests::qmlRecordingControls() {
     const qsizetype stride = qsizetype(width) * height * 3;
     QVERIFY(pixels.size() >= stride && stride > 0);
     for (qsizetype offset = 0; offset + stride <= pixels.size(); offset += stride) {
-        const qsizetype center = offset + (qsizetype(height / 2) * width + width / 2) * 3;
-        const QColor actual{uchar(pixels[center]), uchar(pixels[center + 1]), uchar(pixels[center + 2])};
-        QVERIFY2(qAbs(actual.red() - 0x12) <= 16, qPrintable(actual.name()));
-        QVERIFY2(qAbs(actual.green() - 0x34) <= 16, qPrintable(actual.name()));
-        QVERIFY2(qAbs(actual.blue() - 0x56) <= 16, qPrintable(actual.name()));
+        // Check the capture edges as well as its center: the outside border must not leak into the video.
+        for (const QPoint point : {QPoint(0, 0), QPoint(width - 1, 0), QPoint(0, height - 1),
+                                   QPoint(width - 1, height - 1), QPoint(width / 2, height / 2)}) {
+            const qsizetype sample = offset + (qsizetype(point.y()) * width + point.x()) * 3;
+            const QColor actual{uchar(pixels[sample]), uchar(pixels[sample + 1]), uchar(pixels[sample + 2])};
+            QVERIFY2(qAbs(actual.red() - 0x12) <= 16, qPrintable(actual.name()));
+            QVERIFY2(qAbs(actual.green() - 0x34) <= 16, qPrintable(actual.name()));
+            QVERIFY2(qAbs(actual.blue() - 0x56) <= 16, qPrintable(actual.name()));
+        }
     }
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
+    QTRY_VERIFY(!outline->isVisible());
     QVERIFY(!window->isVisible());
     QTRY_VERIFY(review->isVisible());
     QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
@@ -1279,10 +1319,21 @@ void EditorTests::qmlRecordingControls() {
 #endif
 }
 
+void EditorTests::qmlRecordingHotkeyStop_data() {
+    QTest::addColumn<bool>("duringStartup");
+    QTest::newRow("startup") << true;
+#ifdef Q_OS_MACOS
+    QTest::newRow("native-dispatch") << false;
+#else
+    QTest::newRow("native-keypress") << false;
+#endif
+}
+
 void EditorTests::qmlRecordingHotkeyStop() {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
-        QSKIP("Recording hotkey requires an interactive desktop");
+        QSKIP("Recording controls require an interactive desktop");
+    QFETCH(bool, duringStartup);
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend;
@@ -1311,7 +1362,13 @@ void EditorTests::qmlRecordingHotkeyStop() {
     auto *review = window->findChild<QQuickWindow *>("recordingReviewWindow");
     QVERIFY(controls);
     QVERIFY(review);
-    QGuiApplication::clipboard()->setText("keep clipboard during hotkey stop");
+    GlobalHotkey hotkey;
+    QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
+    QSignalSpy activated(&hotkey, &GlobalHotkey::activated);
+    connect(&hotkey, &GlobalHotkey::activated, window, [window] {
+        QMetaObject::invokeMethod(window, "hotkeyCapture");
+    });
+    QGuiApplication::clipboard()->setText("keep clipboard during recording");
     backend.capture(false, true);
     RegionSelector *selector = nullptr;
     const QRect display = QGuiApplication::primaryScreen()->geometry();
@@ -1332,12 +1389,39 @@ void EditorTests::qmlRecordingHotkeyStop() {
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, origin + QPoint(240, 160));
     QVERIFY(backend.recording());
     QVERIFY(backend.startingRecording());
-    QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture"));
-    QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture")); // Repeated press is idempotent.
+    if (duringStartup) {
+        QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture"));
+        QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture"));
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1, 6000);
+#ifdef Q_OS_WIN
+        INPUT input[4]{};
+        for (auto &key : input) key.type = INPUT_KEYBOARD;
+        input[0].ki.wVk = VK_CONTROL;
+        input[1].ki.wVk = VK_SNAPSHOT;
+        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+#else
+        // Quartz-synthesized keys do not trigger Carbon hotkeys on this macOS VM.
+        // Exercise the registered native handler through the Carbon event queue.
+        EventRef event = nullptr;
+        QCOMPARE(CreateEvent(nullptr, kEventClassKeyboard, kEventHotKeyPressed,
+                             GetCurrentEventTime(), kEventAttributeNone, &event), OSStatus(noErr));
+        const EventHotKeyID id{0x58534854, 1};
+        QCOMPARE(SetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,
+                                   sizeof(id), &id), OSStatus(noErr));
+        QCOMPARE(PostEventToQueue(GetMainEventQueue(), event, kEventPriorityStandard), OSStatus(noErr));
+        ReleaseEvent(event);
+#endif
+        QTRY_COMPARE_WITH_TIMEOUT(activated.size(), 1, 3000);
+    }
     QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !error.isEmpty(), 20000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(saved.size(), 1);
-    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard during hotkey stop"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard during recording"));
     QVERIFY(!backend.recording());
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());

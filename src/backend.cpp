@@ -105,13 +105,14 @@ bool Backend::windowsExclusionSupported() const {
 #endif
 }
 
-bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls) {
+bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls, QObject *outline) {
 #ifdef Q_OS_WIN
     if (!m_pendingRecording) return false;
     QString problem;
     if (!windowsExclusionSupported())
         problem = QStringLiteral("Video recording needs Windows 10 version 2004 or later so xshot's controls can be excluded from the captured screen.");
-    else if (!protectRecordingControls(indicator) || !protectRecordingControls(controls))
+    else if (!protectRecordingControls(indicator) || !protectRecordingControls(controls)
+             || (outline && !protectRecordingControls(outline)))
         problem = QStringLiteral("Could not exclude xshot's recording controls from the captured screen. Recording was canceled; try again after updating Windows or your display driver.");
     if (!problem.isEmpty()) {
         m_pendingRecording = false;
@@ -127,6 +128,7 @@ bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls) {
 #else
     Q_UNUSED(indicator);
     Q_UNUSED(controls);
+    Q_UNUSED(outline);
     return false;
 #endif
 }
@@ -160,7 +162,18 @@ QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const
                          available.right() - diameter + 1);
     const int y = qBound(available.top(), qRound(region.center().y() - diameter / 2.0),
                          available.bottom() - diameter + 1);
-    return {x, y, diameter, diameter};
+    QRect indicator(x, y, diameter, diameter);
+    const QRect controls = controlsGeometry(available);
+    if (indicator.intersects(controls)) {
+        const int belowControls = controls.bottom() + 9;
+        if (belowControls + diameter - 1 <= available.bottom())
+            indicator.moveTop(belowControls);
+        else if (controls.left() - diameter - 8 >= available.left())
+            indicator.moveLeft(controls.left() - diameter - 8);
+        else if (controls.right() + diameter + 9 <= available.right())
+            indicator.moveLeft(controls.right() + 9);
+    }
+    return indicator;
 }
 
 void Backend::capture(bool multiple, bool video) {

@@ -147,6 +147,40 @@ ApplicationWindow {
     }
 
     Window {
+        id: recordingOutline
+        objectName: "recordingOutline"
+        title: "xshot — Recording region"
+        transientParent: null
+        readonly property int outlineWidth: 3
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            | Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus
+        color: "transparent"
+        visible: backend.recording
+        opacity: backend.recordingProtectionPending ? 0 : 1
+        onVisibleChanged: if (visible) {
+            const area = backend.recordingRegion
+            for (const candidate of Qt.application.screens) {
+                if (area.x >= candidate.virtualX && area.x < candidate.virtualX + candidate.width
+                        && area.y >= candidate.virtualY && area.y < candidate.virtualY + candidate.height) {
+                    screen = candidate
+                    break
+                }
+            }
+            x = area.x - outlineWidth
+            y = area.y - outlineWidth
+            width = area.width + 2 * outlineWidth
+            height = area.height + 2 * outlineWidth
+            raise()
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.color: "#ef4444"
+            border.width: recordingOutline.outlineWidth
+        }
+    }
+
+    Window {
         id: startupIndicator
         objectName: "recordingStartupIndicator"
         property bool completing: false
@@ -176,7 +210,7 @@ ApplicationWindow {
             y = placement.y
             raise()
             if (Qt.platform.os === "windows")
-                Qt.callLater(() => backend.beginProtectedRecording(startupIndicator, recordingWindow))
+                Qt.callLater(() => backend.beginProtectedRecording(startupIndicator, recordingWindow, recordingOutline))
         }
         Timer {
             id: completionTimer
@@ -278,8 +312,6 @@ ApplicationWindow {
                     Accessible.name: "Cancel recording"
                     enabled: !backend.finishingRecording
                     onClicked: backend.cancelRecording()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Cancel and discard recording (Esc)"
                 }
                 PrimaryButton {
                     objectName: "recordingStopButton"
@@ -287,13 +319,9 @@ ApplicationWindow {
                     Accessible.name: "Stop and save recording"
                     enabled: !backend.startingRecording && !backend.finishingRecording
                     onClicked: backend.finishRecording()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Stop and save (Ctrl+Print Screen or " + win.commandKey + "C)"
                 }
             }
         }
-        Shortcut { sequences: [StandardKey.Copy]; enabled: recordingWindow.visible && !backend.startingRecording && !backend.finishingRecording; onActivated: backend.finishRecording() }
-        Shortcut { sequence: "Escape"; enabled: recordingWindow.visible && !backend.finishingRecording; onActivated: backend.cancelRecording() }
     }
 
     Window {
@@ -497,10 +525,20 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 ActionButton {
+                    id: reviewPlayButton
                     objectName: "recordingReviewPlayButton"
+                    highlighted: true
+                    font.weight: Font.DemiBold
                     text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia || reviewPlayer.priming ? "Loading…"
                         : reviewPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
                     enabled: reviewWindow.canEdit && reviewPlayer.duration > 0 && !reviewPlayer.priming
+                    contentItem: Text {
+                        text: reviewPlayButton.text
+                        font: reviewPlayButton.font
+                        color: reviewPlayButton.enabled ? "#162a40" : "#9ba5b5"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                     onClicked: reviewWindow.togglePlay()
                 }
                 Label {
@@ -701,7 +739,7 @@ ApplicationWindow {
 
     component ActionButton: Button {
         id: actionControl
-        property color textColor: checked ? "#91bff0" : "#dfe5ed"
+        property color textColor: highlighted ? "#162a40" : checked ? "#91bff0" : "#dfe5ed"
         flat: true
         font.pixelSize: 13
         leftPadding: text === "" ? 8 : 12
@@ -719,9 +757,11 @@ ApplicationWindow {
         palette.buttonText: enabled ? textColor : "#8f99a8"
         background: Rectangle {
             radius: 7
-            color: parent.checked ? "#283b50" : parent.down ? "#394149"
-                : parent.hovered ? "#2a2e35" : "transparent"
-            border.width: parent.checked ? 1 : 0
+            color: actionControl.highlighted ? (!actionControl.enabled ? "#30343b"
+                : actionControl.down ? "#73a8df" : actionControl.hovered ? "#b4d4f5" : "#91bff0")
+                : actionControl.checked ? "#283b50" : actionControl.down ? "#394149"
+                : actionControl.hovered ? "#2a2e35" : "transparent"
+            border.width: actionControl.checked ? 1 : 0
             border.color: "#6994bf"
         }
     }
