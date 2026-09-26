@@ -46,6 +46,7 @@ private:
     QPushButton *m_singleButton = nullptr;
     QPushButton *m_multipleButton = nullptr;
     QPushButton *m_videoButton = nullptr;
+    QPushButton *m_cancelButton = nullptr;
     QPushButton *m_arrangeButton = nullptr;
     QList<QToolButton *> m_removeButtons;
     QImage m_image;

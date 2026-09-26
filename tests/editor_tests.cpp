@@ -1089,10 +1089,16 @@ void EditorTests::captureToolbarInteraction() {
     auto *single = selector.findChild<QPushButton *>("singleCaptureButton");
     auto *multiple = selector.findChild<QPushButton *>("multipleCaptureButton");
     auto *video = selector.findChild<QPushButton *>("videoCaptureButton");
+    auto *cancel = selector.findChild<QPushButton *>("cancelCaptureButton");
     auto *arrange = selector.findChild<QPushButton *>("arrangeCaptureButton");
     auto *instruction = selector.findChild<QLabel *>("captureInstruction");
     auto *count = selector.findChild<QLabel *>("captureCount");
-    QVERIFY(toolbar && single && multiple && video && arrange && instruction && count);
+    QVERIFY(toolbar && single && multiple && video && cancel && arrange && instruction && count);
+    QCOMPARE(single->text(), QString("Region")); // No selector-local shortcut is bound.
+    QCOMPARE(multiple->text(), QString("Multiple (M)"));
+    QCOMPARE(video->text(), QString("Video (V)"));
+    QCOMPARE(cancel->text(), QString("Cancel (Esc)"));
+    QCOMPARE(arrange->text(), QString("Arrange (Enter)"));
     connect(&selector, &RegionSelector::multipleRequested, &selector, [&] { selector.setSelections(true, {}, 0); });
     connect(&selector, &RegionSelector::singleRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(false); });
     QSignalSpy added(&selector, &RegionSelector::regionAdded);
@@ -1154,6 +1160,8 @@ void EditorTests::captureToolbarInteraction() {
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     selector.resize(400, 300);
     QCoreApplication::processEvents();
+    QCOMPARE(cancel->text(), QString("Esc"));
+    QCOMPARE(cancel->accessibleName(), QString("Cancel selection (Esc)"));
     QVERIFY(selector.grab().save("capture-toolbar-compact.png"));
     for (auto *control : toolbar->findChildren<QPushButton *>())
         QVERIFY(toolbar->rect().contains(control->geometry()));

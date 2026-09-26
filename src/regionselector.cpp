@@ -70,8 +70,8 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
         return control;
     };
     m_singleButton = button("Region", "singleCaptureButton");
-    m_multipleButton = button("Multiple", "multipleCaptureButton");
-    m_videoButton = button("Video", "videoCaptureButton");
+    m_multipleButton = button("Multiple (M)", "multipleCaptureButton");
+    m_videoButton = button("Video (V)", "videoCaptureButton");
     m_singleButton->setIcon(toolbarIcon("square-dashed"));
     m_multipleButton->setIcon(toolbarIcon("copy"));
     m_videoButton->setIcon(toolbarIcon("video"));
@@ -84,9 +84,10 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
         modes->addWidget(control);
     }
     modes->addStretch();
-    auto *cancel = button("Cancel", "cancelCaptureButton");
-    cancel->setToolTip("Cancel selection (Esc)");
-    modes->addWidget(cancel);
+    m_cancelButton = button("Cancel (Esc)", "cancelCaptureButton");
+    m_cancelButton->setAccessibleName("Cancel selection (Esc)");
+    m_cancelButton->setToolTip("Cancel selection (Esc)");
+    modes->addWidget(m_cancelButton);
     layout->addLayout(modes);
     auto *actions = new QHBoxLayout;
     actions->setSpacing(8);
@@ -98,7 +99,7 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     m_count->setObjectName("captureCount");
     m_count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     actions->addWidget(m_count);
-    m_arrangeButton = button("Arrange →", "arrangeCaptureButton");
+    m_arrangeButton = button("Arrange (Enter)", "arrangeCaptureButton");
     m_arrangeButton->setToolTip("Continue to Arrange (Enter)");
     auto policy = m_arrangeButton->sizePolicy();
     policy.setRetainSizeWhenHidden(true);
@@ -111,7 +112,7 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     m_noticeLabel->setAlignment(Qt::AlignCenter);
     m_noticeLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_noticeLabel->setStyleSheet("color: #f1d4a2; background: #1b1e23; border-radius: 6px; padding: 10px;");
-    connect(cancel, &QPushButton::clicked, this, &RegionSelector::canceled);
+    connect(m_cancelButton, &QPushButton::clicked, this, &RegionSelector::canceled);
     connect(m_arrangeButton, &QPushButton::clicked, this, &RegionSelector::accepted);
     connect(m_singleButton, &QPushButton::clicked, this, [this] {
         if (m_multiple || m_video) { m_dragging = false; emit singleRequested(); }
@@ -146,6 +147,7 @@ void RegionSelector::updateToolbar() {
 void RegionSelector::layoutControls() {
     if (!m_toolbar) return;
     const bool compact = width() < 560;
+    m_cancelButton->setText(compact ? "Esc" : "Cancel (Esc)");
     QFont font = m_toolbar->font();
     font.setPixelSize(compact ? 12 : 14);
     m_toolbar->setFont(font);

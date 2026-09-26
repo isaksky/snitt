@@ -724,15 +724,15 @@ ApplicationWindow {
             font.pixelSize: 14
             Layout.alignment: Qt.AlignHCenter
         }
-        PrimaryButton { text: "Capture region"; Layout.alignment: Qt.AlignHCenter; onClicked: win.capture(); ToolTip.visible: hovered; ToolTip.text: "Capture a screen region (" + win.commandKey + "N)" }
+        PrimaryButton { text: "Capture region (" + win.commandKey + "N)"; Layout.alignment: Qt.AlignHCenter; onClicked: win.capture(); ToolTip.visible: hovered; ToolTip.text: "Capture a screen region (" + win.commandKey + "N)" }
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            ActionButton { text: "Open image"; onClicked: openDialog.open(); ToolTip.visible: hovered; ToolTip.text: "Open image (" + win.commandKey + "O)" }
+            ActionButton { text: "Open image (" + win.commandKey + "O)"; onClicked: openDialog.open(); ToolTip.visible: hovered; ToolTip.text: "Open image (" + win.commandKey + "O)" }
             Label { text: "or"; color: "#9ba5b5" }
-            ActionButton { text: "Paste image"; onClicked: win.pasteImage(); ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)" }
+            ActionButton { text: "Paste image (" + win.commandKey + "V)"; onClicked: win.pasteImage(); ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.commandKey + "V)" }
         }
-        ActionButton { text: "Multiple regions"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureMultiple(); ToolTip.visible: hovered; ToolTip.text: "Capture multiple regions (M)" }
-        ActionButton { text: "Record region"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureVideo(); ToolTip.visible: hovered; ToolTip.text: "Record a region (V)" }
+        ActionButton { text: "Multiple regions (M)"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureMultiple(); ToolTip.visible: hovered; ToolTip.text: "Capture multiple regions (M)" }
+        ActionButton { text: "Record region (V)"; Layout.alignment: Qt.AlignHCenter; onClicked: win.captureVideo(); ToolTip.visible: hovered; ToolTip.text: "Record a region (V)" }
     }
 
     footer: Rectangle {
