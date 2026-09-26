@@ -57,10 +57,14 @@ ApplicationWindow {
         canvas.forceActiveFocus()
     }
     function capture() { startCapture(false, false) }
+    function hotkeyCapture() {
+        if (backend.recording) { backend.stopRecordingFromHotkey(); return }
+        capture()
+    }
     function captureMultiple() { startCapture(true, false) }
     function captureVideo() { startCapture(false, true) }
     function startCapture(multiple, video) {
-        if (backend.recording) { recordingWindow.controlsHidden = false; recordingWindow.raise(); recordingWindow.requestActivate(); return }
+        if (backend.recording) return
         if (backend.capturing) return
         captureErrorDialog.close()
         commitText()
@@ -131,7 +135,6 @@ ApplicationWindow {
         function onRecordingCanceled() { if (win.restoreAfterCapture) win.showEditor() }
         function onRecordingChanged() {
             if (!backend.recording) {
-                recordingWindow.controlsHidden = false
                 startupIndicator.completing = false
             }
         }
@@ -222,15 +225,16 @@ ApplicationWindow {
     Window {
         id: recordingWindow
         objectName: "recordingWindow"
-        property bool controlsHidden: false
         title: "xshot — Recording"
         transientParent: null
-        width: 440; height: 130
-        minimumWidth: 440; maximumWidth: 440
-        minimumHeight: 130; maximumHeight: 130
-        flags: Qt.Tool | Qt.WindowStaysOnTopHint
-        color: "#1b1e23"
-        visible: backend.recording && !controlsHidden
+        width: backend.recordingControlsGeometry.width
+        height: backend.recordingControlsGeometry.height
+        x: backend.recordingControlsGeometry.x
+        y: backend.recordingControlsGeometry.y
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        color: "transparent"
+        Material.theme: Material.Dark
+        visible: backend.recording
         opacity: backend.recordingProtectionPending ? 0 : 1
         onVisibleChanged: if (visible) {
             const area = backend.recordingRegion
@@ -241,48 +245,47 @@ ApplicationWindow {
                     break
                 }
             }
-            const desktop = Qt.rect(screen.virtualX, screen.virtualY, screen.width, screen.height)
-            const bottom = desktop.y + desktop.height - 40
-            const right = desktop.x + desktop.width - 8
-            x = Math.max(desktop.x + 8, Math.min(area.x, right - width))
-            y = Math.max(desktop.y + 32, Math.min(area.y, bottom - height))
-            if (area.y + area.height + height + 8 <= bottom) y = area.y + area.height + 8
-            else if (area.y - height - 8 >= desktop.y + 32) y = area.y - height - 8
-            else if (area.x + area.width + width + 8 <= right) x = area.x + area.width + 8
-            else if (area.x - width - 8 >= desktop.x + 8) x = area.x - width - 8
+            const placement = backend.recordingControlsGeometry
+            x = placement.x
+            y = placement.y
             raise()
-            requestActivate()
         }
         onClosing: close => { close.accepted = false; if (!backend.finishingRecording) backend.cancelRecording() }
-        ColumnLayout {
-            anchors.fill: parent; anchors.margins: 16; spacing: 12
+        Rectangle {
+            anchors.fill: parent
+            radius: 12
+            color: "#ee1b1e23"
+            border.color: "#6994bf"
+            border.width: 1
             RowLayout {
-                Layout.fillWidth: true
+                anchors.fill: parent
+                anchors.leftMargin: 12; anchors.rightMargin: 8
+                spacing: 6
                 Label {
-                    text: backend.finishingRecording ? "Saving recording…"
-                        : backend.startingRecording ? "Starting recording…"
+                    Layout.fillWidth: true
+                    text: backend.finishingRecording ? "Saving…"
+                        : backend.startingRecording ? "Starting…"
                         : "Recording · " + Math.floor(backend.recordingElapsed / 60) + ":"
                             + ("0" + (backend.recordingElapsed % 60)).slice(-2)
-                    color: "#f0f3f7"; font.pixelSize: 18; font.weight: Font.DemiBold
+                    color: "#f0f3f7"; font.pixelSize: 13; font.weight: Font.DemiBold
                 }
-                Item { Layout.fillWidth: true }
                 ActionButton {
-                    text: "Hide"
+                    objectName: "recordingCancelButton"
+                    text: "Cancel"
+                    Accessible.name: "Cancel recording"
                     enabled: !backend.finishingRecording
-                    onClicked: recordingWindow.controlsHidden = true
+                    onClicked: backend.cancelRecording()
                     ToolTip.visible: hovered
-                    ToolTip.text: "Ctrl+Print Screen brings recording controls back"
+                    ToolTip.text: "Cancel and discard recording (Esc)"
                 }
-            }
-            RowLayout {
-                Item { Layout.fillWidth: true }
-                ActionButton { text: "Cancel"; enabled: !backend.finishingRecording; onClicked: backend.cancelRecording(); ToolTip.visible: hovered; ToolTip.text: "Cancel recording (Esc)" }
                 PrimaryButton {
-                    text: "Stop recording"
+                    objectName: "recordingStopButton"
+                    text: "Stop"
+                    Accessible.name: "Stop and save recording"
                     enabled: !backend.startingRecording && !backend.finishingRecording
                     onClicked: backend.finishRecording()
                     ToolTip.visible: hovered
-                    ToolTip.text: "Save the recording and reveal it in Finder or Explorer (" + win.commandKey + "C)"
+                    ToolTip.text: "Stop and save (Ctrl+Print Screen or " + win.commandKey + "C)"
                 }
             }
         }

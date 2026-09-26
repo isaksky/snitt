@@ -160,12 +160,13 @@ Enter adds a line.
 Start a capture with **Ctrl+Print Screen**, press **V**, then drag one region to
 start recording. **Record video (V)** in the editor also opens this picker.
 Video mode selects one rectangle on one monitor; **M** is unavailable in this mode.
-The recording controls show elapsed time. Choose **Stop recording**, or press
-**Command/Ctrl+C** while those controls are active, to save the clip and reveal it
-selected in Finder or Explorer. The clipboard keeps its previous contents.
-**Escape** cancels the recording and removes that clip.
-Use **Hide** to move the controls out of the way; **Ctrl+Print Screen** brings
-them back while recording. Windows excludes the controls from captured video.
+The compact recording strip sits at the top center of the selected display and
+shows elapsed time. Choose **Stop**, press **Ctrl+Print Screen** again, or press
+**Command/Ctrl+C** while the strip is active to save the clip and reveal it
+selected in Finder or Explorer. Repeated shortcut presses while it is saving do
+not start another capture. The clipboard keeps its previous contents.
+Choose **Cancel**, or press **Escape** while the strip is active, to discard the clip.
+Windows excludes the strip from captured video.
 On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
 the startup indicator and controls; they can remain over the selected region.
 

@@ -22,6 +22,11 @@ Backend::Backend(QObject *parent) : QObject(parent) {
     connect(&m_recorder, &Recorder::changed, this, &Backend::recordingChanged);
     connect(&m_recorder, &Recorder::processStarted, this, &Backend::recordingProcessStarted);
     connect(&m_recorder, &Recorder::ready, this, &Backend::recordingReady);
+    connect(&m_recorder, &Recorder::ready, this, [this] {
+        if (!m_stopWhenReady) return;
+        m_stopWhenReady = false;
+        m_recorder.finish();
+    });
     connect(&m_recorder, &Recorder::elapsedChanged, this, &Backend::recordingElapsedChanged);
     connect(&m_recorder, &Recorder::canceled, this, &Backend::recordingCanceled);
     connect(&m_recorder, &Recorder::error, this, &Backend::error);
@@ -123,10 +128,25 @@ bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls) {
 }
 
 void Backend::cancelRecording() {
+    m_stopWhenReady = false;
     if (!m_pendingRecording) { m_recorder.cancel(); return; }
     m_pendingRecording = false;
     emit recordingChanged();
     emit recordingCanceled();
+}
+
+void Backend::stopRecordingFromHotkey() {
+    if (!recording() || finishingRecording()) return;
+    if (startingRecording()) { m_stopWhenReady = true; return; }
+    m_recorder.finish();
+}
+
+QRect Backend::controlsGeometry(const QRect &available) {
+    const int width = qMin(340, qMax(1, available.width()));
+    const int height = qMin(58, qMax(1, available.height()));
+    const int x = available.x() + (available.width() - width) / 2;
+    const int y = available.y() + qMin(12, available.height() - height);
+    return {x, y, width, height};
 }
 
 QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available) {
@@ -275,13 +295,18 @@ void Backend::updateSelections() {
 
 void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     if (!m_capturing || !m_video) return;
+    m_stopWhenReady = false;
     recording::Source source;
     m_recordingRegion = area.toAlignedRect().translated(selector->geometry().topLeft());
-    if (auto *screen = QGuiApplication::screenAt(m_recordingRegion.center()))
+    if (auto *screen = QGuiApplication::screenAt(m_recordingRegion.center())) {
         m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, screen->geometry(),
                                                           screen->availableGeometry());
-    else m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, selector->geometry(),
-                                                           selector->geometry());
+        m_recordingControlsGeometry = controlsGeometry(screen->availableGeometry());
+    } else {
+        m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, selector->geometry(),
+                                                         selector->geometry());
+        m_recordingControlsGeometry = controlsGeometry(selector->geometry());
+    }
 #ifdef Q_OS_MACOS
     source.platform = recording::Platform::Mac;
     source.relativeRegion = QRectF(area.x() / selector->width(), area.y() / selector->height(),

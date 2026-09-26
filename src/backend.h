@@ -28,6 +28,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString recordingPath READ recordingPath NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingRegion READ recordingRegion NOTIFY recordingChanged)
     Q_PROPERTY(QRect recordingIndicatorGeometry READ recordingIndicatorGeometry NOTIFY recordingChanged)
+    Q_PROPERTY(QRect recordingControlsGeometry READ recordingControlsGeometry NOTIFY recordingChanged)
     Q_PROPERTY(bool recordingProtectionPending READ recordingProtectionPending NOTIFY recordingChanged)
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -41,9 +42,12 @@ public:
     QString recordingPath() const { return m_recorder.path(); }
     QRect recordingRegion() const { return m_recordingRegion; }
     QRect recordingIndicatorGeometry() const { return m_recordingIndicatorGeometry; }
+    QRect recordingControlsGeometry() const { return m_recordingControlsGeometry; }
     static QRect indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available);
+    static QRect controlsGeometry(const QRect &available);
     Q_INVOKABLE void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
+    Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();
     Q_INVOKABLE bool beginProtectedRecording(QObject *indicator, QObject *controls);
     Q_INVOKABLE bool protectRecordingControls(QObject *window);
@@ -85,6 +89,8 @@ private:
 #endif
     QRect m_recordingRegion;
     QRect m_recordingIndicatorGeometry;
+    QRect m_recordingControlsGeometry;
+    bool m_stopWhenReady = false;
     QTemporaryDir m_temp;
     QProcess m_process;
     bool m_capturing = false;

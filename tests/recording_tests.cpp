@@ -47,6 +47,9 @@ void RecordingTests::indicatorPlacement() {
     // must not double the visual diameter or move it to pixel coordinates.
     QCOMPARE(Backend::indicatorGeometry(QRect(800, 500, 20, 20), QRect(0, 0, 1728, 1117),
                                         QRect(0, 25, 1728, 1092)).size(), QSize(372, 372));
+    QCOMPARE(Backend::controlsGeometry(workArea), QRect(790, 36, 340, 58));
+    QCOMPARE(Backend::controlsGeometry(secondaryWork), QRect(-810, -228, 340, 58));
+    QCOMPARE(Backend::controlsGeometry(QRect(-40, 20, 180, 40)), QRect(-40, 20, 180, 40));
 }
 
 void RecordingTests::recordingArguments() {

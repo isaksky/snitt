@@ -43,6 +43,7 @@ private slots:
     void qmlKeyboardCommands();
     void qmlDismissal();
     void qmlRecordingControls();
+    void qmlRecordingHotkeyStop();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void captureToolbarInteraction();
@@ -997,6 +998,14 @@ void EditorTests::qmlRecordingControls() {
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QVERIFY(backend.recording());
     QVERIFY(!window->isVisible());
+    const QRect overlayExpected = Backend::controlsGeometry(QGuiApplication::primaryScreen()->availableGeometry());
+    QCOMPARE(controls->size(), overlayExpected.size());
+    QVERIFY(qAbs(controls->x() - overlayExpected.x()) <= 1);
+    QVERIFY(qAbs(controls->y() - overlayExpected.y()) <= 1);
+    QVERIFY(controls->flags() & Qt::FramelessWindowHint);
+    auto *stop = controls->findChild<QObject *>("recordingStopButton");
+    QVERIFY(stop);
+    QCOMPARE(stop->property("text").toString(), QString("Stop"));
     QTRY_VERIFY_WITH_TIMEOUT(!backend.startingRecording() || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 1000);
@@ -1044,6 +1053,77 @@ void EditorTests::qmlRecordingControls() {
     QTRY_VERIFY(!controls->isVisible());
     QVERIFY(!window->isVisible());
     QTest::qWait(250); // Let Finder/Explorer select the completed file before cleanup.
+    QVERIFY(QFile::remove(path));
+#else
+    QSKIP("Screen recording requires macOS or Windows");
+#endif
+}
+
+void EditorTests::qmlRecordingHotkeyStop() {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+        QSKIP("Recording hotkey requires an interactive desktop");
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend;
+    QString error;
+    connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
+    QSignalSpy saved(&backend, &Backend::recordingSaved);
+    const auto cleanup = qScopeGuard([&backend] {
+        const QString clip = backend.recordingPath();
+        if (backend.recording()) {
+            backend.cancelRecording();
+            QElapsedTimer timeout; timeout.start();
+            while (backend.recording() && timeout.elapsed() < 5000) QTest::qWait(20);
+        }
+        if (!clip.isEmpty() && !backend.recording()) QFile::remove(clip);
+    });
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *controls = window->findChild<QQuickWindow *>("recordingWindow");
+    QVERIFY(controls);
+    QGuiApplication::clipboard()->setText("keep clipboard during hotkey stop");
+    backend.capture(false, true);
+    RegionSelector *selector = nullptr;
+    const QRect display = QGuiApplication::primaryScreen()->geometry();
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            auto *candidate = qobject_cast<RegionSelector *>(widget);
+            if (candidate && candidate->isVisible() && candidate->geometry().contains(display.center())) {
+                selector = candidate; return true;
+            }
+        }
+        return false;
+    })() || !error.isEmpty(), 10000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(selector);
+    const QPoint origin = display.center() - selector->geometry().topLeft();
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, origin);
+    QTest::mouseMove(selector, origin + QPoint(240, 160));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, origin + QPoint(240, 160));
+    QVERIFY(backend.recording());
+    QVERIFY(backend.startingRecording());
+    QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture"));
+    QVERIFY(QMetaObject::invokeMethod(window, "hotkeyCapture")); // Repeated press is idempotent.
+    QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !error.isEmpty(), 20000);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(saved.size(), 1);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard during hotkey stop"));
+    QVERIFY(!backend.recording());
+    QTRY_VERIFY(!controls->isVisible());
+    QVERIFY(!window->isVisible());
+    for (QWidget *widget : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<RegionSelector *>(widget) || !widget->isVisible());
+    const QString path = saved.first().first().toString();
+    QVERIFY(QFileInfo(path).size() > 0);
+    QTest::qWait(250);
     QVERIFY(QFile::remove(path));
 #else
     QSKIP("Screen recording requires macOS or Windows");

@@ -36,8 +36,9 @@ bool AppService::sendCommand(const QStringList &arguments) {
 AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
     : QObject(parent), m_window(window) {
     auto capture = [this] { QMetaObject::invokeMethod(m_window, "capture"); };
+    auto hotkeyCapture = [this] { QMetaObject::invokeMethod(m_window, "hotkeyCapture"); };
     auto show = [this] { QMetaObject::invokeMethod(m_window, "showEditor"); };
-    connect(&m_hotkey, &GlobalHotkey::activated, this, capture);
+    connect(&m_hotkey, &GlobalHotkey::activated, this, hotkeyCapture);
     m_menu.addAction(QStringLiteral("Capture region"), this, capture);
     m_menu.addAction(QStringLiteral("Open editor"), this, show);
     m_menu.addSeparator();
