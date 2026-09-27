@@ -82,8 +82,34 @@ QStringList splitAlternatives(const QString &value) {
     return result;
 }
 
-QString displaySequence(const QString &portable) {
-    const QKeySequence sequence = QKeySequence::fromString(portable, QKeySequence::PortableText);
+// INI names describe physical modifiers. Qt normally swaps Control/Meta on
+// macOS, so translate only at the settings boundary; every consumer then uses
+// ordinary Qt sequences, including native hotkey registration and hint text.
+QKeySequence qtSequence(const QString &configured) {
+    QKeySequence sequence = QKeySequence::fromString(configured, QKeySequence::PortableText);
+#ifdef Q_OS_MACOS
+    if (sequence.count() == 1) {
+        const auto combination = sequence[0];
+        const auto configuredModifiers = combination.keyboardModifiers();
+        auto qtModifiers = configuredModifiers & ~(Qt::ControlModifier | Qt::MetaModifier);
+        if (configuredModifiers.testFlag(Qt::ControlModifier)) qtModifiers |= Qt::MetaModifier;
+        if (configuredModifiers.testFlag(Qt::MetaModifier)) qtModifiers |= Qt::ControlModifier;
+        sequence = QKeySequence(QKeyCombination(qtModifiers, combination.key()));
+    }
+#endif
+    return sequence;
+}
+
+QString iniString(QString value) {
+    value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    value.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    value.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    value.replace(QLatin1Char('\t'), QStringLiteral("\\t"));
+    return QLatin1Char('"') + value + QLatin1Char('"');
+}
+
+QString displaySequence(const QKeySequence &sequence) {
     QString text = sequence.toString(QKeySequence::NativeText);
 #ifdef Q_OS_MACOS
     if (sequence.count() == 1 && sequence[0].key() == Qt::Key_Print)
@@ -153,10 +179,7 @@ AppSettings::Candidate AppSettings::defaults() const {
     Candidate candidate;
     for (const auto &definition : shortcutDefinitions) {
         const QStringList alternatives = splitAlternatives(defaultSequence(definition));
-        candidate.shortcuts.insert(QString::fromLatin1(definition.name), alternatives);
-        QStringList labels;
-        for (const QString &alternative : alternatives) labels.append(displaySequence(alternative));
-        candidate.hints.insert(QString::fromLatin1(definition.name), labels.join(QStringLiteral(" / ")));
+        candidate.configuredShortcuts.insert(QString::fromLatin1(definition.name), alternatives);
     }
     candidate.goodColor = QColor(QStringLiteral("#22c55e"));
     candidate.badColor = QColor(QStringLiteral("#ef4444"));
@@ -174,12 +197,12 @@ QString AppSettings::initialIni() const {
         "[Shortcuts]\n");
     for (const auto &definition : shortcutDefinitions) {
         const QString key = QString::fromLatin1(definition.name);
-        contents += key + QLatin1Char('=') + initial.shortcuts.value(key).toStringList().join(QLatin1Char('|')) + QLatin1Char('\n');
+        contents += key + QLatin1Char('=') + initial.configuredShortcuts.value(key).toStringList().join(QLatin1Char('|')) + QLatin1Char('\n');
     }
     contents += QStringLiteral("\n[Colors]\ngood=#22c55e\nbad=#ef4444\n\n[Save]\npicturesRoot=");
-    contents += QDir::fromNativeSeparators(initial.picturesRoot);
+    contents += iniString(QDir::fromNativeSeparators(initial.picturesRoot));
     contents += QStringLiteral("\nvideosRoot=");
-    contents += QDir::fromNativeSeparators(initial.videosRoot);
+    contents += iniString(QDir::fromNativeSeparators(initial.videosRoot));
     contents += QLatin1Char('\n');
     return contents;
 }
@@ -278,10 +301,24 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
     QSettings input(snapshotPath, QSettings::IniFormat);
     input.setFallbacksEnabled(false);
     input.sync();
+    // QSettings parses sections lazily. Read every section before checking
+    // status so malformed unused sections cannot slip through a reload.
+    input.allKeys();
     if (input.status() != QSettings::NoError) {
         if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; xshot is keeping the last valid settings.")
             .arg(QDir::toNativeSeparators(m_paths.settingsFile));
         return false;
+    }
+
+    QStringList knownKeys{QStringLiteral("Colors/good"), QStringLiteral("Colors/bad"),
+                          QStringLiteral("Save/picturesRoot"), QStringLiteral("Save/videosRoot")};
+    for (const auto &definition : shortcutDefinitions)
+        knownKeys.append(QStringLiteral("Shortcuts/") + QString::fromLatin1(definition.name));
+    for (const QString &key : knownKeys) {
+        if (input.contains(key) && input.value(key).metaType() != QMetaType::fromType<QString>()) {
+            if (error) *error = QStringLiteral("%1 must be one text value. Quote values containing commas or semicolons with double quotes; use | between shortcut alternatives.").arg(key);
+            return false;
+        }
     }
 
     for (const auto &definition : shortcutDefinitions) {
@@ -290,8 +327,7 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
         if (!input.contains(settingsKey)) continue;
         const QString raw = input.value(settingsKey).toString();
         if (raw.trimmed().isEmpty() && key != QStringLiteral("globalCapture")) {
-            candidate->shortcuts.insert(key, QStringList{});
-            candidate->hints.insert(key, QString());
+            candidate->configuredShortcuts.insert(key, QStringList{});
             continue;
         }
         const QStringList alternatives = splitAlternatives(raw);
@@ -299,10 +335,7 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
             if (error) *error = QStringLiteral("Shortcuts/%1 cannot be empty because it controls global capture and recording stop.").arg(key);
             return false;
         }
-        QStringList labels;
-        for (const QString &alternative : alternatives) labels.append(displaySequence(alternative));
-        candidate->shortcuts.insert(key, alternatives);
-        candidate->hints.insert(key, labels.join(QStringLiteral(" / ")));
+        candidate->configuredShortcuts.insert(key, alternatives);
     }
 
     const QString good = input.contains(QStringLiteral("Colors/good"))
@@ -327,7 +360,7 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
     candidate->videosRoot = normalizedRoot(
         input.value(QStringLiteral("Save/videosRoot")).toString(), m_paths.defaultVideosRoot, error, QStringLiteral("videosRoot"));
     if (candidate->videosRoot.isEmpty()) return false;
-    return validateShortcuts(candidate->shortcuts, error);
+    return validateShortcuts(candidate->configuredShortcuts, error);
 }
 
 bool AppSettings::validateShortcuts(const QVariantMap &shortcuts, QString *error) const {
@@ -385,8 +418,19 @@ bool AppSettings::validateShortcuts(const QVariantMap &shortcuts, QString *error
 }
 
 void AppSettings::publish(const Candidate &candidate) {
-    m_shortcuts = candidate.shortcuts;
-    m_shortcutHints = candidate.hints;
+    m_shortcuts.clear();
+    m_shortcutHints.clear();
+    for (auto it = candidate.configuredShortcuts.cbegin(); it != candidate.configuredShortcuts.cend(); ++it) {
+        QStringList sequences;
+        QStringList labels;
+        for (const QString &configured : it.value().toStringList()) {
+            const QKeySequence sequence = qtSequence(configured);
+            sequences.append(sequence.toString(QKeySequence::PortableText));
+            labels.append(displaySequence(sequence));
+        }
+        m_shortcuts.insert(it.key(), sequences);
+        m_shortcutHints.insert(it.key(), labels.join(QStringLiteral(" / ")));
+    }
     m_goodColor = candidate.goodColor;
     m_badColor = candidate.badColor;
     m_picturesRoot = candidate.picturesRoot;
@@ -404,8 +448,8 @@ bool AppSettings::reloadNow() {
         return false;
     }
     if (m_hotkey) {
-        const QString shortcut = candidate.shortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
-        if (!m_hotkey->setShortcut(QKeySequence::fromString(shortcut, QKeySequence::PortableText), &error)) {
+        const QString shortcut = candidate.configuredShortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
+        if (!m_hotkey->setShortcut(qtSequence(shortcut), &error)) {
             const QString message = QStringLiteral("Could not activate Shortcuts/globalCapture (%1): %2. The previous capture shortcut and all other settings remain active.")
                 .arg(shortcut, error);
             setError(message);
@@ -425,15 +469,16 @@ void AppSettings::attachGlobalHotkey(GlobalHotkey *hotkey) {
     m_hotkey = hotkey;
     if (!m_hotkey) return;
     const QString wanted = m_shortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
+    const QString wantedHint = m_shortcutHints.value(QStringLiteral("globalCapture")).toString();
     QString error;
     if (m_hotkey->setShortcut(QKeySequence::fromString(wanted, QKeySequence::PortableText), &error)) return;
     Candidate fallback = defaults();
     QString fallbackError;
-    const QString safe = fallback.shortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
-    m_hotkey->setShortcut(QKeySequence::fromString(safe, QKeySequence::PortableText), &fallbackError);
+    const QString safe = fallback.configuredShortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
+    m_hotkey->setShortcut(qtSequence(safe), &fallbackError);
     publish(fallback);
     const QString message = QStringLiteral("The configured capture shortcut (%1) could not be registered: %2. xshot restored its default shortcut; correct Shortcuts/globalCapture in %3.")
-        .arg(wanted, error, QDir::toNativeSeparators(m_paths.settingsFile));
+        .arg(wantedHint, error, QDir::toNativeSeparators(m_paths.settingsFile));
     setError(message);
     emit reloadFailed(message);
 }

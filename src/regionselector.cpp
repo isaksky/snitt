@@ -13,6 +13,10 @@
 #include <cmath>
 
 namespace {
+QString actionHint(const QString &action, const QString &hint) {
+    return hint.isEmpty() ? action : QStringLiteral("%1 (%2)").arg(action, hint);
+}
+
 QIcon toolbarIcon(const QString &name) {
     QSvgRenderer svg(QStringLiteral(":/icons/") + name + QStringLiteral(".svg"));
     QIcon icon;
@@ -138,14 +142,6 @@ void RegionSelector::updateToolbar() {
     m_singleButton->setChecked(!m_multiple && !m_video);
     m_multipleButton->setChecked(m_multiple && !m_video);
     m_multipleButton->setEnabled(!m_video);
-    const QString multipleHint = shortcutHint(QStringLiteral("regionMultiple"), QStringLiteral("M"));
-    const QString videoHint = shortcutHint(QStringLiteral("regionVideo"), QStringLiteral("V"));
-    const QString cancelHint = shortcutHint(QStringLiteral("regionCancel"), QStringLiteral("Escape"));
-    m_multipleButton->setText(QStringLiteral("Multiple (%1)").arg(multipleHint));
-    m_videoButton->setText(QStringLiteral("Video (%1)").arg(videoHint));
-    m_multipleButton->setToolTip(QStringLiteral("Select multiple regions (%1)").arg(multipleHint));
-    m_videoButton->setToolTip(QStringLiteral("Record a region (%1)").arg(videoHint));
-    m_cancelButton->setAccessibleName(QStringLiteral("Cancel selection (%1)").arg(cancelHint));
     m_videoButton->setChecked(m_video);
     m_instruction->setText(m_video ? "Drag to record." : m_multiple ? "Drag to add regions." : "Drag to capture.");
     m_count->setText(m_multiple && !m_video ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
@@ -159,19 +155,57 @@ void RegionSelector::updateToolbar() {
 void RegionSelector::layoutControls() {
     if (!m_toolbar) return;
     const bool compact = width() < 560;
-    const QString cancelHint = shortcutHint(QStringLiteral("regionCancel"), QStringLiteral("Escape"));
-    const QString arrangeHint = shortcutHint(QStringLiteral("regionArrange"), QStringLiteral("Enter"));
-    m_cancelButton->setText(compact ? cancelHint : QStringLiteral("Cancel (%1)").arg(cancelHint));
     QFont font = m_toolbar->font();
     font.setPixelSize(compact ? 12 : 14);
     m_toolbar->setFont(font);
     // Stylesheet-backed controls can keep a resolved font of their own.
     for (auto *control : m_toolbar->findChildren<QWidget *>()) control->setFont(font);
     m_count->setFixedWidth(compact ? 64 : 86);
-    m_arrangeButton->setText(QStringLiteral("Arrange (%1)").arg(arrangeHint));
-    m_arrangeButton->setToolTip(QStringLiteral("Continue to Arrange (%1)").arg(arrangeHint));
     m_arrangeButton->setFixedWidth(compact ? 132 : 164);
+    const auto setHint = [this, compact](QPushButton *control, const QString &action,
+                                       const QString &description, const QString &name,
+                                       const QString &fallback) {
+        const QString hint = shortcutHint(name, fallback);
+        const QString firstHint = hint.section(QStringLiteral(" / "), 0, 0);
+        // Keep alternatives discoverable without making the compact toolbar wider.
+        control->setText(compact && control == m_cancelButton && !firstHint.isEmpty()
+            ? firstHint : actionHint(action, firstHint));
+        control->setToolTip(actionHint(description, hint));
+        control->setAccessibleName(control->toolTip());
+    };
+    setHint(m_multipleButton, QStringLiteral("Multiple"), QStringLiteral("Select multiple regions"),
+            QStringLiteral("regionMultiple"), QStringLiteral("M"));
+    setHint(m_videoButton, QStringLiteral("Video"), QStringLiteral("Record a region"),
+            QStringLiteral("regionVideo"), QStringLiteral("V"));
+    setHint(m_cancelButton, QStringLiteral("Cancel"), QStringLiteral("Cancel selection"),
+            QStringLiteral("regionCancel"), QStringLiteral("Escape"));
+    setHint(m_arrangeButton, QStringLiteral("Arrange"), QStringLiteral("Continue to Arrange"),
+            QStringLiteral("regionArrange"), QStringLiteral("Enter"));
+    if (m_arrangeButton->fontMetrics().horizontalAdvance(m_arrangeButton->text()) + 22 > m_arrangeButton->width())
+        m_arrangeButton->setText(QStringLiteral("Arrange"));
     const int panelWidth = qMin(760, qMax(1, width() - 24));
+    const QList<QPair<QPushButton *, QString>> modeLabels = {
+        {m_multipleButton, QStringLiteral("Multiple")},
+        {m_videoButton, QStringLiteral("Video")},
+        {m_cancelButton, QStringLiteral("Cancel")}};
+    // Long custom bindings may still need to live only in the tooltip. Drop the
+    // widest hint first while preserving each action's label and the panel size.
+    for (int attempt = 0; attempt < modeLabels.size(); ++attempt) {
+        int requiredWidth = 24 + 3 * 4;
+        for (auto *control : {m_singleButton, m_multipleButton, m_videoButton, m_cancelButton})
+            requiredWidth += control->sizeHint().width();
+        if (requiredWidth <= panelWidth) break;
+        QPushButton *widest = nullptr;
+        QString label;
+        int mostSaved = 0;
+        for (const auto &mode : modeLabels) {
+            const auto metrics = mode.first->fontMetrics();
+            const int saved = metrics.horizontalAdvance(mode.first->text()) - metrics.horizontalAdvance(mode.second);
+            if (saved > mostSaved) { widest = mode.first; label = mode.second; mostSaved = saved; }
+        }
+        if (!widest) break;
+        widest->setText(label);
+    }
     m_toolbar->setGeometry((width() - panelWidth) / 2, 24, panelWidth, 104);
     m_noticeLabel->setGeometry(m_toolbar->x(), m_toolbar->geometry().bottom() + 8,
                                panelWidth, m_noticeLabel->heightForWidth(panelWidth));
@@ -188,8 +222,7 @@ void RegionSelector::layoutControls() {
 
 QString RegionSelector::shortcutHint(const QString &name, const QString &fallback) const {
     if (!m_settings) return fallback;
-    const QString hint = m_settings->shortcutHints().value(name).toString();
-    return hint.isEmpty() ? fallback : hint;
+    return m_settings->shortcutHints().value(name).toString();
 }
 
 bool RegionSelector::matchesShortcut(const QKeyEvent *event, const QString &name) const {

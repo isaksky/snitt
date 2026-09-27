@@ -50,8 +50,8 @@ signals:
     void reloaded();
 private:
     struct Candidate {
-        QVariantMap shortcuts;
-        QVariantMap hints;
+        // Keep INI modifier names here; publish converts them to Qt semantics.
+        QVariantMap configuredShortcuts;
         QColor goodColor;
         QColor badColor;
         QString picturesRoot;

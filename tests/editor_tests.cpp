@@ -70,6 +70,7 @@ private slots:
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void captureToolbarInteraction();
+    void settingsRegionToolbarHintsLive();
     void gridArrangementPreservesPixels();
     void desktopMultipleCapture();
     void windowsHotkeyRegistration();
@@ -79,6 +80,11 @@ private slots:
     void settingsReloadsAtomicEditsAndRecovers();
     void settingsRejectConflictsAndRollbackNativeHotkey();
     void settingsUpdateEditorShortcutsHintsAndColorsLive();
+    void settingsShortcutAlternativesAndDisable();
+    void settingsRejectMalformedAndNonScalarValues();
+    void settingsPathsRoundTripSpecialCharacters();
+    void macSettingsUseCommandActions();
+    void macSettingsNativeShortcutAgreement();
 #ifdef Q_OS_WIN
     void windowsRecordingOverlayExclusionFailure();
 #endif
@@ -1047,7 +1053,9 @@ void EditorTests::qmlKeyboardCommands() {
     QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
     auto *dialog = window->findChild<QObject *>("rearrangeDialog");
     QVERIFY(dialog);
-    QTRY_VERIFY(dialog->property("visible").toBool());
+    // Material sets visible before its enter transition finishes. Wait for the
+    // opening transition before sending a synthetic button click.
+    QTRY_VERIFY(dialog->property("opened").toBool());
     QVERIFY(!canvas->arranging());
     auto *keepButton = visualItem(window->contentItem(), "keepEditingButton");
     QVERIFY(keepButton);
@@ -1058,7 +1066,7 @@ void EditorTests::qmlKeyboardCommands() {
     QVERIFY(canvas->copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), annotatedGrid);
     QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
-    QTRY_VERIFY(dialog->property("visible").toBool());
+    QTRY_VERIFY(dialog->property("opened").toBool());
     auto *discardButton = visualItem(window->contentItem(), "discardEditsButton");
     QVERIFY(discardButton);
     QVERIFY(QMetaObject::invokeMethod(discardButton, "clicked"));
@@ -1780,8 +1788,12 @@ void EditorTests::captureToolbarInteraction() {
     QCOMPARE(single->text(), QString("Region")); // No selector-local shortcut is bound.
     QCOMPARE(multiple->text(), QString("Multiple (M)"));
     QCOMPARE(video->text(), QString("Video (V)"));
-    QCOMPARE(cancel->text(), QString("Cancel (Esc)"));
-    QCOMPARE(arrange->text(), QString("Arrange (Return / Enter)"));
+    QCOMPARE(cancel->text(), QString("Cancel (%1)").arg(QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText)));
+    QCOMPARE(arrange->text(), QString("Arrange (%1)")
+        .arg(QKeySequence(Qt::Key_Return).toString(QKeySequence::NativeText)));
+    QCOMPARE(arrange->toolTip(), QString("Continue to Arrange (%1 / %2)")
+        .arg(QKeySequence(Qt::Key_Return).toString(QKeySequence::NativeText),
+             QKeySequence(Qt::Key_Enter).toString(QKeySequence::NativeText)));
     connect(&selector, &RegionSelector::multipleRequested, &selector, [&] { selector.setSelections(true, {}, 0); });
     connect(&selector, &RegionSelector::singleRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(false); });
     QSignalSpy added(&selector, &RegionSelector::regionAdded);
@@ -1843,8 +1855,9 @@ void EditorTests::captureToolbarInteraction() {
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     selector.resize(400, 300);
     QCoreApplication::processEvents();
-    QCOMPARE(cancel->text(), QString("Esc"));
-    QCOMPARE(cancel->accessibleName(), QString("Cancel selection (Esc)"));
+    QCOMPARE(cancel->text(), QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText));
+    QCOMPARE(cancel->accessibleName(), QString("Cancel selection (%1)")
+        .arg(QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText)));
     QVERIFY(selector.grab().save("capture-toolbar-compact.png"));
     for (auto *control : toolbar->findChildren<QPushButton *>())
         QVERIFY(toolbar->rect().contains(control->geometry()));
@@ -1853,7 +1866,96 @@ void EditorTests::captureToolbarInteraction() {
     QCoreApplication::processEvents();
     QVERIFY(instruction->width() >= instruction->fontMetrics().horizontalAdvance(instruction->text()));
     for (auto *control : toolbar->findChildren<QPushButton *>())
-        QVERIFY(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20);
+        QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20,
+                 qPrintable(control->objectName() + ": " + control->text()));
+}
+
+void EditorTests::settingsRegionToolbarHintsLive() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    const QByteArray defaults = readBytes(paths.settingsFile);
+    RegionSelector selector(pattern(), QRect(0, 0, 860, 560), &settings);
+    selector.setSelections(true, {}, 1);
+    selector.show();
+    QCoreApplication::processEvents();
+    auto *toolbar = selector.findChild<QWidget *>("captureToolbar");
+    QVERIFY(toolbar);
+    struct Action {
+        const char *key;
+        const char *objectName;
+        const char *label;
+        const char *description;
+        const char *defaultKeys;
+        const char *customKeys;
+    };
+    const Action actions[] = {
+        {"regionMultiple", "multipleCaptureButton", "Multiple", "Select multiple regions", "M", "F6|F7"},
+        {"regionVideo", "videoCaptureButton", "Video", "Record a region", "V", "F8|F9"},
+        {"regionCancel", "cancelCaptureButton", "Cancel", "Cancel selection", "Escape", "F10|F11"},
+        {"regionArrange", "arrangeCaptureButton", "Arrange", "Continue to Arrange", "Return|Enter", "F12|F13"}
+    };
+    const QRect originalBounds = toolbar->geometry();
+    QByteArray changed = defaults;
+    for (const auto &action : actions)
+        changed.replace(QByteArray(action.key) + '=' + action.defaultKeys + '\n',
+                        QByteArray(action.key) + '=' + action.customKeys + '\n');
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    QCoreApplication::processEvents();
+    QCOMPARE(toolbar->geometry(), originalBounds);
+    for (const auto &action : actions) {
+        auto *control = selector.findChild<QPushButton *>(action.objectName);
+        QVERIFY(control);
+        const QString hints = settings.shortcutHints().value(action.key).toString();
+        QCOMPARE(control->text(), QString("%1 (%2)").arg(action.label, hints.section(" / ", 0, 0)));
+        QCOMPARE(control->toolTip(), QString("%1 (%2)").arg(action.description, hints));
+        QCOMPARE(control->accessibleName(), control->toolTip());
+    }
+
+    // Even a single configured alternative can be wider than a compact button.
+    for (const auto &action : actions) {
+        const QByteArray longKeys = "Ctrl+Alt+Shift+" + QByteArray(action.customKeys).replace("|", "|Ctrl+Alt+Shift+");
+        changed.replace(QByteArray(action.key) + '=' + action.customKeys + '\n',
+                        QByteArray(action.key) + '=' + longKeys + '\n');
+    }
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    selector.resize(400, 300);
+    QCoreApplication::processEvents();
+    QCOMPARE(toolbar->width(), 376);
+    for (auto *control : toolbar->findChildren<QPushButton *>()) {
+        QVERIFY(toolbar->rect().contains(control->geometry()));
+        QVERIFY2(control->width() >= control->minimumSizeHint().width(), qPrintable(control->objectName()));
+        QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20,
+                 qPrintable(control->objectName() + ": " + control->text()));
+    }
+    for (const auto &action : actions) {
+        auto *control = selector.findChild<QPushButton *>(action.objectName);
+        const QString hints = settings.shortcutHints().value(action.key).toString();
+        QCOMPARE(control->toolTip(), QString("%1 (%2)").arg(action.description, hints));
+        QCOMPARE(control->accessibleName(), control->toolTip());
+    }
+
+    changed = defaults;
+    for (const auto &action : actions)
+        changed.replace(QByteArray(action.key) + '=' + action.defaultKeys + '\n', QByteArray(action.key) + "=\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    QCoreApplication::processEvents();
+    for (const auto &action : actions) {
+        auto *control = selector.findChild<QPushButton *>(action.objectName);
+        QCOMPARE(control->text(), QString(action.label));
+        QCOMPARE(control->toolTip(), QString(action.description));
+        QCOMPARE(control->accessibleName(), control->toolTip());
+    }
+    QSignalSpy canceled(&selector, &RegionSelector::canceled);
+    QSignalSpy accepted(&selector, &RegionSelector::accepted);
+    QTest::keyClick(&selector, Qt::Key_Escape);
+    QTest::keyClick(&selector, Qt::Key_Return);
+    QCOMPARE(canceled.size(), 0);
+    QCOMPARE(accepted.size(), 0);
 }
 
 void EditorTests::gridArrangementPreservesPixels() {
@@ -2186,10 +2288,10 @@ void EditorTests::settingsReloadsAtomicEditsAndRecovers() {
     valid = readBytes(paths.settingsFile);
     valid.replace("good=#335577", "good=#386ab3");
     valid.replace("toolPixelate=P\n", "toolPixelate=Shift+P\n");
-    valid.replace("picturesRoot=" + QDir::fromNativeSeparators(paths.defaultPicturesRoot).toUtf8(),
-                  "picturesRoot=" + QDir(directory.filePath("Pictures/custom")).absolutePath().toUtf8());
-    valid.replace("videosRoot=" + QDir::fromNativeSeparators(paths.defaultVideosRoot).toUtf8(),
-                  "videosRoot=" + QDir(directory.filePath("Clips/custom")).absolutePath().toUtf8());
+    valid.replace("picturesRoot=\"" + QDir::fromNativeSeparators(paths.defaultPicturesRoot).toUtf8() + "\"",
+                  "picturesRoot=\"" + QDir(directory.filePath("Pictures/custom")).absolutePath().toUtf8() + "\"");
+    valid.replace("videosRoot=\"" + QDir::fromNativeSeparators(paths.defaultVideosRoot).toUtf8() + "\"",
+                  "videosRoot=\"" + QDir(directory.filePath("Clips/custom")).absolutePath().toUtf8() + "\"");
     QVERIFY(atomicWrite(paths.settingsFile, valid));
     QTRY_COMPARE_WITH_TIMEOUT(settings.goodColor(), QColor("#386ab3"), 3000);
     QCOMPARE(settings.shortcuts().value("toolPixelate").toStringList(), QStringList{"Shift+P"});
@@ -2255,7 +2357,14 @@ void EditorTests::settingsRejectConflictsAndRollbackNativeHotkey() {
     if (oldSequence.isEmpty()) QSKIP("No free native modifier+function-key shortcut for rollback test");
     QByteArray nativeCandidate = readBytes(paths.settingsFile);
     nativeCandidate.replace("toolPixelate=R\n", "toolPixelate=P\n");
-    nativeCandidate.replace("globalCapture=Ctrl+Print", "globalCapture=" + oldSequence.toString(QKeySequence::PortableText).toUtf8());
+    const auto iniSequence = [](const QKeySequence &sequence) {
+        QString portable = sequence.toString(QKeySequence::PortableText);
+#ifdef Q_OS_MACOS
+        portable.replace(QStringLiteral("Ctrl+"), QStringLiteral("Meta+"));
+#endif
+        return portable.toUtf8();
+    };
+    nativeCandidate.replace("globalCapture=Ctrl+Print", "globalCapture=" + iniSequence(oldSequence));
     QVERIFY(atomicWrite(paths.settingsFile, nativeCandidate));
     QVERIFY(settings.reloadNow());
     settings.attachGlobalHotkey(&active);
@@ -2270,8 +2379,8 @@ void EditorTests::settingsRejectConflictsAndRollbackNativeHotkey() {
     if (occupiedSequence.isEmpty()) QSKIP("No second free native modifier+function-key shortcut for rollback test");
     const QByteArray conflictingCandidate = nativeCandidate;
     QByteArray blocked = conflictingCandidate;
-    blocked.replace("globalCapture=" + oldSequence.toString(QKeySequence::PortableText).toUtf8(),
-                    "globalCapture=" + occupiedSequence.toString(QKeySequence::PortableText).toUtf8());
+    blocked.replace("globalCapture=" + iniSequence(oldSequence),
+                    "globalCapture=" + iniSequence(occupiedSequence));
     QVERIFY(atomicWrite(paths.settingsFile, blocked));
     QVERIFY(!settings.reloadNow());
     QCOMPARE(active.shortcut(), oldSequence);
@@ -2327,6 +2436,285 @@ void EditorTests::settingsUpdateEditorShortcutsHintsAndColorsLive() {
     QCOMPARE(canvas->tool(), QString("rect"));
     QTest::keySequence(window, QKeySequence(QStringLiteral("Shift+Alt+P")));
     QTRY_COMPARE(canvas->tool(), QString("blur"));
+}
+
+void EditorTests::settingsShortcutAlternativesAndDisable() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    const QByteArray defaults = readBytes(paths.settingsFile);
+    QByteArray changed = defaults;
+    changed.replace("toolPixelate=P\n", "toolPixelate=F6|F7\n");
+    changed.replace("reviewCancel=Escape\n", "reviewCancel=F8|F9\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    const QString imagePath = directory.filePath("input.png");
+    QVERIFY(pattern().save(imagePath));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend(&settings);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &settings);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(imagePath));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(window->isVisible() && canvas->hasImage());
+    window->requestActivate();
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    for (Qt::Key key : {Qt::Key_F6, Qt::Key_F7}) {
+        canvas->setTool("rect");
+        QTest::keyClick(window, key);
+        QTRY_COMPARE_WITH_TIMEOUT(canvas->tool(), QString("blur"), 1000);
+    }
+
+    changed.replace("toolPixelate=F6|F7\n", "toolPixelate=\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    canvas->setTool("rect");
+    for (Qt::Key key : {Qt::Key_P, Qt::Key_F6, Qt::Key_F7}) QTest::keyClick(window, key);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->tool(), QString("rect"));
+    QVERIFY(settings.shortcutHints().value("toolPixelate").toString().isEmpty());
+    changed.replace("toolPixelate=\n", "toolPixelate=F10|F11\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    for (Qt::Key key : {Qt::Key_F10, Qt::Key_F11}) {
+        canvas->setTool("rect");
+        QTest::keyClick(window, key);
+        QTRY_COMPARE_WITH_TIMEOUT(canvas->tool(), QString("blur"), 1000);
+    }
+
+    // Exercise the review window's real shortcut delivery without a movie or export.
+    auto *review = window->findChild<QQuickWindow *>("recordingReviewWindow");
+    QVERIFY(review);
+    review->show();
+    review->requestActivate();
+    QTRY_VERIFY(review->isActive());
+    for (Qt::Key key : {Qt::Key_F8, Qt::Key_F9}) {
+        review->setProperty("preparingExport", true);
+        QTest::keyClick(review, key);
+        QTRY_VERIFY_WITH_TIMEOUT(!review->property("preparingExport").toBool(), 1000);
+    }
+    changed.replace("reviewCancel=F8|F9\n", "reviewCancel=\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    review->setProperty("preparingExport", true);
+    for (Qt::Key key : {Qt::Key_Escape, Qt::Key_F8, Qt::Key_F9}) QTest::keyClick(review, key);
+    QCoreApplication::processEvents();
+    QVERIFY(review->property("preparingExport").toBool());
+    changed.replace("reviewCancel=\n", "reviewCancel=F10|F11\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    for (Qt::Key key : {Qt::Key_F10, Qt::Key_F11}) {
+        review->setProperty("preparingExport", true);
+        QTest::keyClick(review, key);
+        QTRY_VERIFY_WITH_TIMEOUT(!review->property("preparingExport").toBool(), 1000);
+    }
+    review->hide();
+}
+
+void EditorTests::macSettingsUseCommandActions() {
+#ifndef Q_OS_MACOS
+    QSKIP("macOS maps Qt Control to the physical Command modifier");
+#else
+    QVERIFY(!QCoreApplication::testAttribute(Qt::AA_MacDontSwapCtrlAndMeta));
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    const QList<QPair<QString, QKeySequence>> standards{
+        {"capture", QKeySequence(QKeySequence::New)}, {"openImage", QKeySequence(QKeySequence::Open)},
+        {"pasteImage", QKeySequence(QKeySequence::Paste)}, {"undo", QKeySequence(QKeySequence::Undo)},
+        // The offscreen QPA has generic StandardKey defaults, so spell macOS Redo explicitly.
+        {"redo", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z)}};
+    for (const auto &standard : standards) {
+        const QKeySequence actual(settings.shortcuts().value(standard.first).toStringList().first());
+        QCOMPARE(actual, QKeySequence(standard.second));
+        QCOMPARE(settings.shortcutHints().value(standard.first).toString(),
+                 actual.toString(QKeySequence::NativeText));
+    }
+    QVERIFY(readBytes(paths.settingsFile).contains("pasteImage=Meta+V\n"));
+    const QString imagePath = directory.filePath("input.png");
+    QVERIFY(pattern().save(imagePath));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend(&settings);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &settings);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(imagePath));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(window->isVisible() && canvas->hasImage());
+    window->requestActivate();
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QImage replacement(24, 18, QImage::Format_RGB32);
+    replacement.fill(Qt::yellow);
+    QGuiApplication::clipboard()->setImage(replacement);
+    QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
+    QTRY_COMPARE(canvas->imageWidth(), 24);
+    canvas->addText(2, 2, 20, 15, "Undo");
+    QVERIFY(canvas->canUndo());
+    QTest::keySequence(window, QKeySequence(QKeySequence::Undo));
+    QTRY_VERIFY(!canvas->canUndo());
+    QTest::keySequence(window, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z));
+    QTRY_VERIFY(canvas->canUndo());
+
+    // Qt's normal text editing also continues to use Command.
+    canvas->setTool("text");
+    const QPointF point = canvas->imageRect().center();
+    canvas->begin(point.x(), point.y());
+    QVERIFY(window->property("editingText").toBool());
+    auto *annotation = window->findChild<QObject *>("annotationText");
+    QVERIFY(annotation);
+    for (const char key : QByteArray("original")) QTest::keyClick(window, key);
+    QTest::keySequence(window, QKeySequence(QKeySequence::SelectAll));
+    QGuiApplication::clipboard()->setText("replacement");
+    QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
+    QTRY_COMPARE(annotation->property("text").toString(), QString("replacement"));
+    QTest::keyClick(window, Qt::Key_Escape);
+
+    QByteArray changed = readBytes(paths.settingsFile);
+    changed.replace("regionMultiple=M\n", "regionMultiple=Meta+M|Ctrl+M\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    RegionSelector selector(pattern(), QRect(0, 0, 800, 600), &settings);
+    QSignalSpy multiple(&selector, &RegionSelector::multipleRequested);
+    QTest::keyClick(&selector, Qt::Key_M, Qt::ControlModifier);
+    QCOMPARE(multiple.size(), 1);
+    QTest::keyClick(&selector, Qt::Key_M, Qt::MetaModifier);
+    QCOMPARE(multiple.size(), 2);
+    changed.replace("regionMultiple=Meta+M|Ctrl+M\n", "regionMultiple=Meta+M\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    QTest::keyClick(&selector, Qt::Key_M, Qt::MetaModifier);
+    QCOMPARE(multiple.size(), 2);
+    QTest::keyClick(&selector, Qt::Key_M, Qt::ControlModifier);
+    QCOMPARE(multiple.size(), 3);
+#endif
+}
+
+void EditorTests::macSettingsNativeShortcutAgreement() {
+#ifndef Q_OS_MACOS
+    QSKIP("macOS native registration uses Carbon modifiers");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    const QByteArray defaults = readBytes(paths.settingsFile);
+    QCOMPARE(settings.shortcuts().value("globalCapture").toStringList(), QStringList{"Meta+Print"});
+    const QString defaultHint = settings.shortcutHints().value("globalCapture").toString();
+    QVERIFY(defaultHint.contains(QChar(0x2303))); // Physical Control, not Command.
+    QVERIFY(!defaultHint.contains(QChar(0x2318)));
+    GlobalHotkey hotkey;
+    const QList<QPair<QString, UInt32>> modifiers{
+        {"Ctrl", controlKey}, {"Meta", cmdKey}, {"Ctrl+Meta", controlKey | cmdKey}};
+    for (const auto &modifier : modifiers) {
+        QByteArray changed = defaults;
+        const QByteArray binding = modifier.first.toUtf8() + "+Alt+Shift+F19";
+        changed.replace("globalCapture=Ctrl+Print", "globalCapture=" + binding);
+        QVERIFY(atomicWrite(paths.settingsFile, changed));
+        QVERIFY(settings.reloadNow());
+        const QKeySequence sequence(settings.shortcuts().value("globalCapture").toStringList().first());
+        EventHotKeyRef reserved = nullptr;
+        const UInt32 nativeModifiers = modifier.second | optionKey | shiftKey;
+        const OSStatus status = RegisterEventHotKey(kVK_F19, nativeModifiers, {0x54535458, 1},
+            GetApplicationEventTarget(), 0, &reserved);
+        const auto cleanup = qScopeGuard([&] { if (reserved) UnregisterEventHotKey(reserved); });
+        if (status != noErr) QSKIP("A free native F19 combination is required");
+        QString error;
+        QVERIFY2(!hotkey.setShortcut(sequence, &error), "Qt binding must target the same physical modifier as Carbon");
+        UnregisterEventHotKey(reserved);
+        reserved = nullptr;
+        QVERIFY2(hotkey.setShortcut(sequence, &error), qPrintable(error));
+        QCOMPARE(hotkey.description(), settings.shortcutHints().value("globalCapture").toString());
+        // Conflict validation uses the same physical meaning as registration and hints.
+        changed.replace("regionMultiple=M\n", "regionMultiple=" + binding + "\n");
+        QVERIFY(atomicWrite(paths.settingsFile, changed));
+        QVERIFY(!settings.reloadNow());
+        QVERIFY(settings.lastError().contains("globalCapture"));
+        QVERIFY(settings.lastError().contains("regionMultiple"));
+    }
+#endif
+}
+
+void EditorTests::settingsRejectMalformedAndNonScalarValues() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    QByteArray valid = readBytes(paths.settingsFile);
+    valid.replace("good=#22c55e", "good=#123456");
+    valid.replace("toolPixelate=P\n", "toolPixelate=Alt+P\n");
+    QVERIFY(atomicWrite(paths.settingsFile, valid));
+    QVERIFY(settings.reloadNow());
+    const QVariantMap shortcuts = settings.shortcuts();
+    const QVariantMap hints = settings.shortcutHints();
+    const QList<QByteArray> invalidFiles{
+        "[Colors]\ngood=#112233\nmissing-equals\n",
+        "[UnusedSection]\nmissing-equals\n[Colors]\ngood=#112233\n",
+        "[Save]\npicturesRoot=/tmp/a,b\n",
+        "[Save]\nvideosRoot=@ByteArray(/tmp/video)\n",
+        "[Shortcuts]\ntoolPixelate=P, X\n",
+        "[Colors]\ngood=#112233,#445566\n"};
+    QSignalSpy published(&settings, &AppSettings::settingsChanged);
+    for (const QByteArray &invalid : invalidFiles) {
+        QVERIFY(atomicWrite(paths.settingsFile, invalid));
+        QVERIFY2(!settings.reloadNow(), invalid.constData());
+        QVERIFY(!settings.lastError().isEmpty());
+        QCOMPARE(settings.goodColor(), QColor("#123456"));
+        QCOMPARE(settings.shortcuts(), shortcuts);
+        QCOMPARE(settings.shortcutHints(), hints);
+        QCOMPARE(settings.picturesRoot(), paths.defaultPicturesRoot);
+        QCOMPARE(settings.videosRoot(), paths.defaultVideosRoot);
+        QCOMPARE(published.size(), 0);
+        QCOMPARE(readBytes(paths.settingsFile), invalid);
+    }
+    // Quoted comma paths are one literal INI value and must be honored.
+    const QString pictures = directory.filePath("pictures, with spaces");
+    const QString videos = directory.filePath("videos; with #symbols");
+    const QByteArray quoted = "[Save]\npicturesRoot=\"" + pictures.toUtf8()
+        + "\"\nvideosRoot=\"" + videos.toUtf8() + "\"\n";
+    QVERIFY(atomicWrite(paths.settingsFile, quoted));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    QCOMPARE(settings.picturesRoot(), pictures);
+    QCOMPARE(settings.videosRoot(), videos);
+}
+
+void EditorTests::settingsPathsRoundTripSpecialCharacters() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto paths = settingsPaths(directory.path());
+    paths.defaultPicturesRoot = directory.filePath("pictures, with spaces; #and=punctuation");
+    paths.defaultVideosRoot = directory.filePath("videos with \"quotes\" and \\backslash");
+    AppSettings settings(paths);
+    QVERIFY2(settings.lastError().isEmpty(), qPrintable(settings.lastError()));
+    QSettings parsed(paths.settingsFile, QSettings::IniFormat);
+    QCOMPARE(parsed.value("Save/picturesRoot").metaType(), QMetaType::fromType<QString>());
+    QCOMPARE(parsed.value("Save/picturesRoot").toString(), paths.defaultPicturesRoot);
+    QCOMPARE(parsed.value("Save/videosRoot").toString(), QDir::fromNativeSeparators(paths.defaultVideosRoot));
+    QCOMPARE(settings.picturesRoot(), QDir::fromNativeSeparators(paths.defaultPicturesRoot));
+    QCOMPARE(settings.videosRoot(), QDir::fromNativeSeparators(paths.defaultVideosRoot));
+    QVERIFY(settings.reloadNow());
+    QCOMPARE(settings.picturesRoot(), QDir::fromNativeSeparators(paths.defaultPicturesRoot));
+    QCOMPARE(settings.videosRoot(), QDir::fromNativeSeparators(paths.defaultVideosRoot));
 }
 
 QTEST_MAIN(EditorTests)

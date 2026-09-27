@@ -104,10 +104,11 @@ UInt32 macKey(int key) {
 
 UInt32 macModifiers(Qt::KeyboardModifiers modifiers) {
     UInt32 native = 0;
-    if (modifiers.testFlag(Qt::ControlModifier)) native |= controlKey;
+    // Qt maps Control to physical Command and Meta to physical Control on macOS.
+    if (modifiers.testFlag(Qt::ControlModifier)) native |= cmdKey;
     if (modifiers.testFlag(Qt::AltModifier)) native |= optionKey;
     if (modifiers.testFlag(Qt::ShiftModifier)) native |= shiftKey;
-    if (modifiers.testFlag(Qt::MetaModifier)) native |= cmdKey;
+    if (modifiers.testFlag(Qt::MetaModifier)) native |= controlKey;
     return native;
 }
 #endif
@@ -144,7 +145,11 @@ GlobalHotkey::GlobalHotkey(QObject *parent) : QObject(parent), m_state(new State
         m_state->error = static_cast<unsigned long>(-1);
 #endif
     QString ignored;
-    setShortcut(QKeySequence::fromString(QStringLiteral("Ctrl+Print"), QKeySequence::PortableText), &ignored);
+#ifdef Q_OS_MACOS
+    setShortcut(QKeySequence(Qt::META | Qt::Key_Print), &ignored); // Physical Control+F13.
+#else
+    setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Print), &ignored);
+#endif
 }
 
 GlobalHotkey::~GlobalHotkey() {

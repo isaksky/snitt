@@ -612,17 +612,17 @@ ApplicationWindow {
                 }
             }
         }
-        Shortcut { sequence: win.shortcuts.reviewPlayPause[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.togglePlay() }
-        Shortcut { sequence: win.shortcuts.reviewSeekBackward[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-1) }
-        Shortcut { sequence: win.shortcuts.reviewSeekForward[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(1) }
-        Shortcut { sequence: win.shortcuts.reviewSeekBackwardFar[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-5) }
-        Shortcut { sequence: win.shortcuts.reviewSeekForwardFar[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(5) }
-        Shortcut { sequence: win.shortcuts.reviewToggleZoom[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: trimBar.toggleZoom() }
-        Shortcut { sequence: win.shortcuts.reviewMarkStart[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
+        Shortcut { sequences: win.shortcuts.reviewPlayPause; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.togglePlay() }
+        Shortcut { sequences: win.shortcuts.reviewSeekBackward; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-1) }
+        Shortcut { sequences: win.shortcuts.reviewSeekForward; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(1) }
+        Shortcut { sequences: win.shortcuts.reviewSeekBackwardFar; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-5) }
+        Shortcut { sequences: win.shortcuts.reviewSeekForwardFar; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(5) }
+        Shortcut { sequences: win.shortcuts.reviewToggleZoom; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: trimBar.toggleZoom() }
+        Shortcut { sequences: win.shortcuts.reviewMarkStart; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
             trimBar.startSec = Math.min(trimBar.playheadSec, trimBar.endSec - 0.1) } }
-        Shortcut { sequence: win.shortcuts.reviewMarkEnd[0]; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
+        Shortcut { sequences: win.shortcuts.reviewMarkEnd; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
             trimBar.endSec = Math.max(trimBar.playheadSec, trimBar.startSec + 0.1) } }
-        Shortcut { objectName: "recordingReviewEscapeShortcut"; sequence: win.shortcuts.reviewCancel[0]; enabled: reviewWindow.visible; onActivated: {
+        Shortcut { objectName: "recordingReviewEscapeShortcut"; sequences: win.shortcuts.reviewCancel; enabled: reviewWindow.visible; onActivated: {
             if (backend.trim.busy || reviewWindow.preparingExport) {
                 reviewWindow.cancelExport()
             } else backend.trim.keepOriginal()
@@ -706,38 +706,38 @@ ApplicationWindow {
         onAccepted: { win.commitText(); canvas.load(selectedFile) }
     }
 
-    Shortcut { sequence: win.shortcuts.toolCut[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("cut") }
-    Shortcut { sequence: win.shortcuts.toolRectangle[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("rect") }
-    Shortcut { sequence: win.shortcuts.toolHighlight[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("highlight") }
-    Shortcut { sequence: win.shortcuts.toolText[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("text") }
-    Shortcut { sequence: win.shortcuts.toolArrow[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("arrow") }
-    Shortcut { sequence: win.shortcuts.toolPixelate[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("blur") }
-    Shortcut { sequence: win.shortcuts.toolErase[0]; enabled: win.annotationShortcuts; onActivated: win.chooseTool("erase") }
-    Shortcut { sequence: win.shortcuts.goodMode[0]; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("good") }
-    Shortcut { sequence: win.shortcuts.badMode[0]; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("bad") }
-    Shortcut { sequence: win.shortcuts.captureVideo[0]; enabled: win.shortcutsOn; onActivated: win.captureVideo() }
-    Shortcut { sequence: win.shortcuts.captureMultiple[0]; enabled: win.shortcutsOn; onActivated: win.captureMultiple() }
+    Shortcut { sequences: win.shortcuts.toolCut; enabled: win.annotationShortcuts; onActivated: win.chooseTool("cut") }
+    Shortcut { sequences: win.shortcuts.toolRectangle; enabled: win.annotationShortcuts; onActivated: win.chooseTool("rect") }
+    Shortcut { sequences: win.shortcuts.toolHighlight; enabled: win.annotationShortcuts; onActivated: win.chooseTool("highlight") }
+    Shortcut { sequences: win.shortcuts.toolText; enabled: win.annotationShortcuts; onActivated: win.chooseTool("text") }
+    Shortcut { sequences: win.shortcuts.toolArrow; enabled: win.annotationShortcuts; onActivated: win.chooseTool("arrow") }
+    Shortcut { sequences: win.shortcuts.toolPixelate; enabled: win.annotationShortcuts; onActivated: win.chooseTool("blur") }
+    Shortcut { sequences: win.shortcuts.toolErase; enabled: win.annotationShortcuts; onActivated: win.chooseTool("erase") }
+    Shortcut { sequences: win.shortcuts.goodMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("good") }
+    Shortcut { sequences: win.shortcuts.badMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("bad") }
+    Shortcut { sequences: win.shortcuts.captureVideo; enabled: win.shortcutsOn; onActivated: win.captureVideo() }
+    Shortcut { sequences: win.shortcuts.captureMultiple; enabled: win.shortcutsOn; onActivated: win.captureMultiple() }
     Shortcut { sequences: win.shortcuts.arrange; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.annotate() }
     Shortcut { sequences: win.shortcuts.columnsMore; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns++ }
-    Shortcut { sequence: win.shortcuts.columnsLess[0]; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns-- }
-    Shortcut { sequence: win.shortcuts.undo[0]; enabled: win.annotationShortcuts; onActivated: canvas.undo() }
-    Shortcut { sequence: win.shortcuts.redo[0]; enabled: win.annotationShortcuts; onActivated: canvas.redo() }
+    Shortcut { sequences: win.shortcuts.columnsLess; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns-- }
+    Shortcut { sequences: win.shortcuts.undo; enabled: win.annotationShortcuts; onActivated: canvas.undo() }
+    Shortcut { sequences: win.shortcuts.redo; enabled: win.annotationShortcuts; onActivated: canvas.redo() }
     Shortcut { sequences: win.shortcuts.removeRegion; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.removeRegion(canvas.selectedRegion) }
-    Shortcut { sequence: win.shortcuts.moveRegionLeft[0]; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
-    Shortcut { sequence: win.shortcuts.moveRegionRight[0]; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
-    Shortcut { sequence: win.shortcuts.openImage[0]; enabled: win.shortcutsOn; onActivated: openDialog.open() }
-    Shortcut { sequence: win.shortcuts.capture[0]; enabled: win.shortcutsOn; onActivated: win.capture() }
-    Shortcut { sequence: win.shortcuts.pasteImage[0]; enabled: win.shortcutsOn; onActivated: win.pasteImage() }
+    Shortcut { sequences: win.shortcuts.moveRegionLeft; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
+    Shortcut { sequences: win.shortcuts.moveRegionRight; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
+    Shortcut { sequences: win.shortcuts.openImage; enabled: win.shortcutsOn; onActivated: openDialog.open() }
+    Shortcut { sequences: win.shortcuts.capture; enabled: win.shortcutsOn; onActivated: win.capture() }
+    Shortcut { sequences: win.shortcuts.pasteImage; enabled: win.shortcutsOn; onActivated: win.pasteImage() }
     Shortcut {
-        sequence: win.shortcuts.copyClose[0]; enabled: win.shortcutsOn && canvas.hasImage
+        sequences: win.shortcuts.copyClose; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.finish()
     }
     Shortcut {
-        sequence: win.shortcuts.saveClose[0]; enabled: win.shortcutsOn && canvas.hasImage
+        sequences: win.shortcuts.saveClose; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.saveAndClose()
     }
     Shortcut {
-        sequence: win.shortcuts.dismiss[0]; enabled: win.shortcutsOn
+        sequences: win.shortcuts.dismiss; enabled: win.shortcutsOn
         onActivated: if (!canvas.cancel()) win.dismissEditor()
     }
 
@@ -986,6 +986,25 @@ ApplicationWindow {
                         Layout.preferredHeight: implicitHeight
                         Layout.alignment: Qt.AlignHCenter
 
+                        function labelColor(ink, selected) {
+                            function luminance(value) {
+                                function linear(channel) {
+                                    return channel <= 0.04045 ? channel / 12.92
+                                        : Math.pow((channel + 0.055) / 1.055, 2.4)
+                                }
+                                return 0.2126 * linear(value.r) + 0.7152 * linear(value.g) + 0.0722 * linear(value.b)
+                            }
+                            const foreground = Qt.lighter(ink, 1.6)
+                            const background = selected ? Qt.darker(ink, 1.8) : color
+                            const foregroundLuminance = luminance(foreground)
+                            const backgroundLuminance = luminance(background)
+                            const contrast = (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+                                / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+                            if (contrast >= 4.5) return foreground
+                            // Keep arbitrary configured inks readable against either segment.
+                            return backgroundLuminance > 0.18 ? "#000000" : "#ffffff"
+                        }
+
                         Rectangle {
                             id: selectedModeSegment
                             x: canvas.colorMode === "good" ? 1 : modeSegmentedControl.width / 2
@@ -1011,11 +1030,18 @@ ApplicationWindow {
                                 font.pixelSize: 12
                                 leftPadding: 6
                                 rightPadding: 6
-                                background: Rectangle { color: "transparent" }
+                                background: Rectangle {
+                                    color: "transparent"
+                                    radius: 6
+                                    border.width: goodModeButton.visualFocus ? 1 : 0
+                                    border.color: goodModeButton.textColor
+                                }
                                 Accessible.name: "Good mode"
                                 ToolTip.visible: hovered
                                 ToolTip.text: "Good mode (" + win.keys.goodMode + ")"
-                                textColor: Qt.lighter(canvas.goodColor, 1.6)
+                                textColor: modeSegmentedControl.labelColor(canvas.goodColor, checked)
+                                Material.foreground: textColor
+                                Material.accent: textColor
                                 checked: canvas.colorMode === "good"
                                 enabled: canvas.hasImage
                                 focusPolicy: Qt.TabFocus
@@ -1033,11 +1059,18 @@ ApplicationWindow {
                                 font.pixelSize: 12
                                 leftPadding: 6
                                 rightPadding: 6
-                                background: Rectangle { color: "transparent" }
+                                background: Rectangle {
+                                    color: "transparent"
+                                    radius: 6
+                                    border.width: badModeButton.visualFocus ? 1 : 0
+                                    border.color: badModeButton.textColor
+                                }
                                 Accessible.name: "Bad mode"
                                 ToolTip.visible: hovered
                                 ToolTip.text: "Bad mode (" + win.keys.badMode + ")"
-                                textColor: Qt.lighter(canvas.badColor, 1.6)
+                                textColor: modeSegmentedControl.labelColor(canvas.badColor, checked)
+                                Material.foreground: textColor
+                                Material.accent: textColor
                                 checked: canvas.colorMode === "bad"
                                 enabled: canvas.hasImage
                                 focusPolicy: Qt.TabFocus
