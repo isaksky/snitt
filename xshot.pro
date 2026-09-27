@@ -21,8 +21,6 @@ macx {
     HEADERS += src/macrecorder.h
     SOURCES += src/macrecorder.mm
     QMAKE_CXXFLAGS += -fobjc-arc
-    HEADERS += src/macclip.h
-    SOURCES += src/macclip.mm
     LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation -framework AppKit
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }

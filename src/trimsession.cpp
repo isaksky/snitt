@@ -15,9 +15,6 @@
 #include <cstdio>
 #include <cstring>
 
-#ifdef Q_OS_MACOS
-#include "macclip.h"
-#endif
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #endif
@@ -26,14 +23,11 @@ namespace {
 constexpr int thumbnailCount = 12;
 QString timestamp(qint64 ms) { return QString::number(double(ms) / 1000.0, 'f', 6); }
 
-QString thumbnailToolPath() {
-#ifdef Q_OS_MACOS
-    // Release bundles carry a small software-only decoder, independent of the
-    // cold CoreMedia service that can delay native video decoding on macOS.
-    const QString bundled = QCoreApplication::applicationDirPath() + "/ffmpeg-thumbnails";
+QString mediaToolPath(const QString &tool) {
+    // Prefer the bundled tools; developer builds and Windows use PATH/Scoop.
+    const QString bundled = QCoreApplication::applicationDirPath() + "/" + tool + "-media";
     if (QFileInfo(bundled).isExecutable()) return bundled;
-#endif
-    return recording::toolPath("ffmpeg");
+    return recording::toolPath(tool);
 }
 
 struct ClipInfo { qint64 duration = 0; int width = 0; int height = 0; };
@@ -52,6 +46,11 @@ bool validClip(const ClipInfo &info) { return info.duration > 0 && info.width > 
 }
 
 TrimSession::TrimSession(QObject *parent) : QObject(parent) {
+    connect(&m_sourceProbe, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        const ClipInfo info = parseProbe(m_sourceProbe.readAllStandardOutput());
+        if (!m_busy && status == QProcess::NormalExit && code == 0 && validClip(info))
+            setDuration(info.duration);
+    });
     connect(&m_thumbProcess, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         const int index = m_nextThumb;
         if (!m_thumbDir || m_path.isEmpty() || index < 0 || index >= m_thumbnails.size()) return;
@@ -127,7 +126,9 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
             fail(QStringLiteral("The trimmed MP4 could not be verified. Your original recording is unchanged."));
             return;
         }
-        if (info.duration < m_endMs - m_startMs - 100 || info.duration > m_endMs - m_startMs + 150) {
+        // Stream copy can retain reordered packets beyond the requested end.
+        // Allow a small tail, but reject large timing errors before replacement.
+        if (info.duration < m_endMs - m_startMs - 100 || info.duration > m_endMs - m_startMs + 250) {
             fail(QStringLiteral("The trimmed MP4 duration did not match the selected range. Your original recording is unchanged."));
             return;
         }
@@ -140,11 +141,7 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
 }
 
 TrimSession::~TrimSession() {
-    ++m_generation;
-#ifdef Q_OS_MACOS
-    m_macExport.reset();
-#endif
-    for (QProcess *process : {&m_exportProcess, &m_probeProcess, &m_thumbProcess}) {
+    for (QProcess *process : {&m_exportProcess, &m_probeProcess, &m_sourceProbe, &m_thumbProcess}) {
         process->disconnect(this);
         if (process->state() != QProcess::NotRunning) {
             process->kill();
@@ -165,13 +162,12 @@ void TrimSession::open(const QString &path) {
     m_thumbnailEndMs = 0;
     m_thumbnails = QStringList(thumbnailCount, QString());
     m_thumbDir = std::make_unique<QTemporaryDir>();
-    ++m_generation;
-#ifdef Q_OS_MACOS
-    qint64 nativeDuration = 0;
-    if (macProbeClip(path, &nativeDuration, nullptr, nullptr)) m_duration = nativeDuration;
-#endif
     emit changed();
-    if (m_duration > 0) generateThumbnails();
+    // Read metadata asynchronously so filmstrip startup doesn't wait for the player.
+    const QString probe = mediaToolPath("ffprobe");
+    if (!probe.isEmpty())
+        m_sourceProbe.start(probe, {"-v", "error", "-print_format", "json", "-show_format",
+            "-show_streams", "-select_streams", "v:0", m_path});
 }
 
 void TrimSession::setDuration(qint64 milliseconds) {
@@ -188,7 +184,6 @@ void TrimSession::setThumbnailWindow(qint64 startMs, qint64 endMs) {
     const qint64 end = qBound(start + 1, endMs, m_duration);
     const qint64 currentEnd = m_thumbnailEndMs > 0 ? m_thumbnailEndMs : m_duration;
     if (start == m_thumbnailStartMs && end == currentEnd) return;
-    ++m_generation;
     if (!stopThumbnails()) {
         m_thumbnails = QStringList(thumbnailCount, QString());
         m_problem = QStringLiteral("Could not refresh the filmstrip preview.");
@@ -216,7 +211,7 @@ void TrimSession::nextThumbnail() {
     while (m_nextThumb < m_thumbnails.size() && !m_thumbnails.at(m_nextThumb).isEmpty())
         ++m_nextThumb;
     if (m_path.isEmpty() || m_busy || m_nextThumb >= thumbnailCount || !m_thumbDir) return;
-    const QString ffmpeg = thumbnailToolPath();
+    const QString ffmpeg = mediaToolPath("ffmpeg");
     if (ffmpeg.isEmpty()) {
         m_problem = QStringLiteral("The thumbnail decoder is unavailable.");
         emit changed();
@@ -247,7 +242,7 @@ void TrimSession::startThumbnailAttempt() {
          << (m_thumbnailLookbackMs > 0 ? "reverse,scale=-1:90" : "scale=-1:90")
          << "-vcodec" << "mjpeg"
          << m_thumbDir->filePath(QString::number(m_nextThumb) + ".jpg");
-    m_thumbProcess.start(thumbnailToolPath(), args);
+    m_thumbProcess.start(mediaToolPath("ffmpeg"), args);
 }
 
 bool TrimSession::retryThumbnailBeforeEof() {
@@ -268,6 +263,13 @@ bool TrimSession::retryThumbnailBeforeEof() {
 }
 
 bool TrimSession::stopThumbnails() {
+    // Both preview workers must release the source before replacement/closing.
+    const QSignalBlocker sourceBlocked(&m_sourceProbe);
+    if (m_sourceProbe.state() != QProcess::NotRunning) {
+        m_sourceProbe.kill();
+        if (!m_sourceProbe.waitForFinished(3000) && m_sourceProbe.state() != QProcess::NotRunning)
+            return false;
+    }
     m_nextThumb = thumbnailCount;
     // The finished callback normally launches the next frame. Block it while
     // stopping this worker so it cannot reopen the source during replacement.
@@ -315,62 +317,30 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
     m_startMs = startMs;
     m_endMs = endMs;
     m_problem.clear();
-#ifdef Q_OS_MACOS
-    m_progress = -1; // Native progress is unknown until AVFoundation reports a positive fraction.
-#else
     m_progress = 0;
-#endif
     m_canceling = false;
     m_busy = true;
     m_tempOutput = QFileInfo(m_path).dir().filePath(
         QStringLiteral(".xshot-trim-%1.mp4").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     emit changed();
-#ifdef Q_OS_MACOS
-    m_macExport = std::make_unique<MacClipExport>();
-    const quint64 generation = m_generation;
-    m_macExport->start(m_path, m_tempOutput, startMs, endMs, this,
-        [this, generation](double fraction) {
-            if (generation != m_generation || !m_busy || m_canceling) return;
-            const double bounded = qBound(0.01, fraction, 0.99);
-            if (bounded <= m_progress) return;
-            m_progress = bounded;
-            emit changed();
-        },
-        [this, generation](bool success, const QString &detail) {
-            if (generation != m_generation || !m_busy) return;
-            if (m_canceling) {
-                removeTemporaryOutput();
-                m_macExport.reset();
-                m_busy = m_canceling = false;
-                m_progress = 0;
-                emit changed();
-                resumeThumbnails();
-                return;
-            }
-            m_macExport.reset();
-            exportFinished(success, detail);
-        });
-#else
-    const QString ffmpeg = recording::toolPath("ffmpeg");
+    const QString ffmpeg = mediaToolPath("ffmpeg");
     if (ffmpeg.isEmpty()) {
         fail(QStringLiteral("FFmpeg is unavailable for trimming. Your original recording is unchanged."));
         return;
     }
     m_progressBuffer.clear();
-    m_exportProcess.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y",
+    // Input seeking retains required keyframe preroll. MP4 edit lists hide it
+    // during playback; reordered frames may extend the tail slightly.
+    m_exportProcess.start(ffmpeg, {"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-progress", "pipe:1", "-ss", timestamp(startMs), "-i", m_path,
-        "-t", timestamp(endMs - startMs), "-c:v", "libx264", "-preset", "veryfast",
-        "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        "-t", timestamp(endMs - startMs), "-map", "0:v:0", "-map", "0:a?",
+        "-c", "copy",
         "-movflags", "+faststart", m_tempOutput});
-#endif
 }
 
 void TrimSession::cancelExport() {
     if (!m_busy || m_canceling) return;
     m_canceling = true;
-#ifdef Q_OS_MACOS
-    if (m_macExport) m_macExport->cancel();
-#else
     if (m_exportProcess.state() != QProcess::NotRunning) m_exportProcess.kill();
     else if (m_probeProcess.state() != QProcess::NotRunning) {
         const QSignalBlocker blocked(&m_probeProcess);
@@ -385,7 +355,6 @@ void TrimSession::cancelExport() {
         m_busy = m_canceling = false;
         m_progress = 0;
     }
-#endif
     emit changed();
     resumeThumbnails();
 }
@@ -400,24 +369,13 @@ void TrimSession::exportFinished(bool success, const QString &detail) {
 }
 
 void TrimSession::validateOutput() {
-#ifdef Q_OS_MACOS
-    qint64 duration = 0;
-    int width = 0, height = 0;
-    if (!macProbeClip(m_tempOutput, &duration, &width, &height) || width < 1 || height < 1
-        || duration < m_endMs - m_startMs - 100 || duration > m_endMs - m_startMs + 150) {
-        fail(QStringLiteral("The trimmed MP4 could not be verified. Your original recording is unchanged."));
-        return;
-    }
-    replaceOutput();
-#else
-    const QString ffprobe = recording::toolPath("ffprobe");
+    const QString ffprobe = mediaToolPath("ffprobe");
     if (ffprobe.isEmpty()) {
         fail(QStringLiteral("FFprobe is unavailable. Your original recording is unchanged."));
         return;
     }
     m_probeProcess.start(ffprobe, {"-v", "error", "-print_format", "json", "-show_format",
         "-show_streams", "-select_streams", "v:0", m_tempOutput});
-#endif
 }
 
 void TrimSession::replaceOutput() {
@@ -482,7 +440,6 @@ void TrimSession::removeTemporaryOutput() {
 }
 
 void TrimSession::clear() {
-    ++m_generation;
     stopThumbnails();
     removeTemporaryOutput();
     m_thumbDir.reset();

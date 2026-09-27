@@ -28,14 +28,15 @@ private slots:
     void videoSelectorIsSingleRegion();
     void desktopRecording();
     void trimKeepsOriginalOnDismissAndInvalidRange();
-    void trimHeadAndTailAccurately();
+    void trimHeadAndTailWithStreamCopy();
+    void trimCopyProgressAndReset();
+    void trimCopiesAudioAndVideo();
     void trimThumbnailsFollowWindow();
     void trimShortClipsAtEof();
     void trimCancellationPreservesOriginal();
     void trimReplacementFailurePreservesOriginal();
     void trimThumbnailsResumeAfterCancelAndFailure();
 #ifdef Q_OS_MACOS
-    void nativeTrimProgressAndReset();
     void cancellationTimeoutDiscards();
     void interactiveCancellationTimeout();
 #endif
@@ -101,12 +102,26 @@ void RecordingTests::trimKeepsOriginalOnDismissAndInvalidRange() {
     file.close();
 }
 
-void RecordingTests::trimHeadAndTailAccurately() {
+static QStringList packetHashes(const QString &path, const QString &stream = "v:0") {
+    QProcess probe;
+    probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-show_packets",
+        "-show_data_hash", "sha256", "-select_streams", stream,
+        "-show_entries", "packet=data_hash", "-of", "json", path});
+    if (!probe.waitForFinished(15000) || probe.exitCode() != 0) return {};
+    QStringList hashes;
+    const auto packets = QJsonDocument::fromJson(probe.readAllStandardOutput()).object().value("packets").toArray();
+    for (const auto &packet : packets) hashes.append(packet.toObject().value("data_hash").toString());
+    return hashes;
+}
+
+void RecordingTests::trimHeadAndTailWithStreamCopy() {
     if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const QString path = makeFourColorClip(directory.path());
     QVERIFY2(!path.isEmpty(), "Could not make the four-color recording fixture");
+    const QStringList originalPackets = packetHashes(path);
+    QVERIFY(!originalPackets.isEmpty());
     TrimSession trim;
     QSignalSpy finalized(&trim, &TrimSession::finalized);
     trim.open(path);
@@ -117,10 +132,17 @@ void RecordingTests::trimHeadAndTailAccurately() {
     QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
     QCOMPARE(finalized.size(), 1);
     QCOMPARE(finalized.first().first().toString(), path);
+    const QStringList copiedPackets = packetHashes(path);
+    QVERIFY(!copiedPackets.isEmpty());
+    QVERIFY(copiedPackets.size() < originalPackets.size());
+    const int firstPacket = originalPackets.indexOf(copiedPackets.first());
+    QVERIFY(firstPacket >= 0);
+    QCOMPARE(copiedPackets, originalPackets.mid(firstPacket, copiedPackets.size()));
     const QByteArray decoded = clipPixels(path);
     const qsizetype frameSize = 160 * 90 * 3;
     QVERIFY(decoded.size() >= frameSize * 25);
-    QVERIFY(decoded.size() <= frameSize * 32);
+    // Stream copy retains reorder frames at the tail (up to four at 30 fps).
+    QVERIFY(decoded.size() <= frameSize * 34);
     const auto pixel = [&](qsizetype offset) {
         const qsizetype middle = offset + (45 * 160 + 80) * 3;
         return QColor(uchar(decoded[middle]), uchar(decoded[middle + 1]), uchar(decoded[middle + 2]));
@@ -132,6 +154,46 @@ void RecordingTests::trimHeadAndTailAccurately() {
     QVERIFY2(last.blue() > last.red() * 1.5 && last.blue() > last.green() * 1.5,
              qPrintable(QStringLiteral("Last frame %1 was not blue").arg(last.name())));
     QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+}
+
+void RecordingTests::trimCopiesAudioAndVideo() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the fixture");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("audio-video.mp4");
+    QProcess fixture;
+    fixture.start(recording::toolPath("ffmpeg"), {"-v", "error", "-y", "-f", "lavfi",
+        "-i", "testsrc2=size=160x90:rate=30:duration=4", "-f", "lavfi",
+        "-i", "sine=frequency=440:duration=4", "-c:v", "libx264", "-g", "120",
+        "-c:a", "aac", path});
+    QVERIFY(fixture.waitForFinished(15000));
+    QCOMPARE(fixture.exitCode(), 0);
+    // Cut between keyframes, trim that result again, then keep a short EOF tail.
+    qint64 duration = 4000;
+    for (const auto range : {QPair<qint64, qint64>(1200, 3750), {300, 1300}, {800, 1000}}) {
+        const auto video = packetHashes(path, "v:0");
+        const auto audio = packetHashes(path, "a:0");
+        QVERIFY(!video.isEmpty());
+        QVERIFY(!audio.isEmpty());
+        TrimSession trim;
+        QSignalSpy finalized(&trim, &TrimSession::finalized);
+        trim.open(path);
+        trim.setDuration(duration);
+        trim.exportRange(range.first, range.second);
+        QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
+        QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+        QCOMPARE(finalized.size(), 1);
+        for (const auto stream : {QString("v:0"), QString("a:0")}) {
+            const auto original = stream == "v:0" ? video : audio;
+            const auto copied = packetHashes(path, stream);
+            QVERIFY(!copied.isEmpty());
+            const int first = original.indexOf(copied.first());
+            QVERIFY(first >= 0);
+            QCOMPARE(copied, original.mid(first, copied.size()));
+        }
+        QVERIFY(!clipPixels(path).isEmpty());
+        duration = range.second - range.first;
+    }
 }
 
 void RecordingTests::trimThumbnailsFollowWindow() {
@@ -482,12 +544,11 @@ void RecordingTests::trimThumbnailsResumeAfterCancelAndFailure() {
         QCOMPARE(QFileInfo(QUrl(url).toLocalFile()).absolutePath(), thumbnailDirectory);
 }
 
-#ifdef Q_OS_MACOS
-void RecordingTests::nativeTrimProgressAndReset() {
+void RecordingTests::trimCopyProgressAndReset() {
     if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the video fixture");
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
-    const QString path = directory.filePath("native-progress.mp4");
+    const QString path = directory.filePath("copy-progress.mp4");
     QProcess fixture;
     fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", "testsrc2=size=2560x1440:rate=30:duration=6",
@@ -502,12 +563,13 @@ void RecordingTests::nativeTrimProgressAndReset() {
     TrimSession trim;
     QSignalSpy finalized(&trim, &TrimSession::finalized);
     trim.open(path);
+    trim.setDuration(6000);
     QVERIFY(trim.duration() >= 5900);
     const qint64 start = 500, end = trim.duration() - 500;
 
     trim.exportRange(start, end);
     QVERIFY(trim.busy());
-    QCOMPARE(trim.progress(), -1.0); // No invented percentage before AVFoundation reports one.
+    QCOMPARE(trim.progress(), 0.0);
     trim.cancelExport();
     QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
     QCOMPARE(trim.progress(), 0.0);
@@ -520,26 +582,23 @@ void RecordingTests::nativeTrimProgressAndReset() {
     connect(&trim, &TrimSession::changed, &trim, [&] {
         if (trim.busy()) observed.append(trim.progress());
     });
+    QElapsedTimer elapsed;
+    elapsed.start();
     trim.exportRange(start, end);
     QVERIFY(trim.busy());
-    QCOMPARE(trim.progress(), -1.0); // A retry starts with unknown progress again.
+    QCOMPARE(trim.progress(), 0.0);
     QTRY_VERIFY_WITH_TIMEOUT(!trim.busy() || !trim.problem().isEmpty(), 90000);
     QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
     QCOMPARE(finalized.size(), 1);
     QCOMPARE(trim.progress(), 0.0);
+    qInfo("2560x1440 copy trim and validation: %lld ms", elapsed.elapsed());
     QVERIFY(!observed.isEmpty());
-    bool sawNativeFraction = false;
-    for (const double progress : observed) {
-        QVERIFY2(progress == -1.0 || (progress >= 0.01 && progress <= 0.99),
-                 qPrintable(QStringLiteral("Invalid native progress %1").arg(progress)));
-        sawNativeFraction |= progress > 0;
-    }
-    QVERIFY2(sawNativeFraction, "The long native export did not report a determinate fraction while busy");
+    for (const double progress : observed)
+        QVERIFY(progress >= 0.0 && progress <= 1.0);
     trim.open(path);
     QCOMPARE(trim.progress(), 0.0); // The next recording starts without the last export's fraction.
     trim.keepOriginal();
 }
-#endif
 
 void RecordingTests::indicatorPlacement() {
     const QRect primary(0, 0, 1920, 1080);

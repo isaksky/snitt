@@ -15,8 +15,7 @@ HEADERS += ../src/trimsession.h
 SOURCES += ../src/trimsession.cpp
 macx {
     HEADERS += ../src/macrecorder.h
-    HEADERS += ../src/macclip.h
-    SOURCES += ../src/macrecorder.mm ../src/macclip.mm
+    SOURCES += ../src/macrecorder.mm
     QMAKE_CXXFLAGS += -fobjc-arc
     LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation -framework AppKit
 }

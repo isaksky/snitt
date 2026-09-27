@@ -34,8 +34,8 @@ selected explicitly; a newer unpinned Qt release is rejected with setup guidance
 The install command builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
 LaunchAgent at `~/Library/LaunchAgents/local.xshot.plist`, and starts xshot in the
 background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit.
-The first build also fetches and compiles a small LGPL FFmpeg thumbnail helper
-and a private Qt Multimedia playback plugin with LGPL FFmpeg libraries. This
+The first build also fetches and compiles small LGPL FFmpeg helpers for thumbnails, stream-copy trimming,
+and probing, plus a private Qt Multimedia playback plugin with LGPL FFmpeg libraries. This
 can take several minutes; later builds reuse the compiled sources. Both are
 bundled with the app, so no separate FFmpeg install is needed to use xshot.
 Re-run the same command to update; use `./bin/uninstall` to remove the app and login
@@ -184,7 +184,10 @@ After Stop, preview the video and drag the filmstrip's blue handles to choose th
 portion to keep. Space plays or pauses; Left/Right seek one second, Shift+Left/Right
 seek five seconds, and Z zooms the filmstrip to the selected range. **Save trim**
 exports the chosen range and replaces the original MP4 only after the new file
-passes validation. **Keep original**, Escape, or closing review keeps the full
+passes validation. Trimming copies the existing compressed video and audio without
+re-encoding. Cuts between keyframes can retain hidden preroll and a short extra
+tail; the export is rejected if the video duration exceeds the selection by more
+than 0.25 seconds. **Keep original**, Escape, or closing review keeps the full
 recording. Canceling an export or an export error also keeps the original. The
 final file is selected in Finder or Explorer after Keep original or a successful
 trim; previewing and trimming never change the clipboard.

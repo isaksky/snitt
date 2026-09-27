@@ -7,10 +7,6 @@
 #include <QStringList>
 #include <memory>
 
-#ifdef Q_OS_MACOS
-class MacClipExport;
-#endif
-
 // A finalized recording remains untouched until a reviewed export is validated.
 class TrimSession : public QObject {
     Q_OBJECT
@@ -63,11 +59,12 @@ private:
     QProcess m_thumbProcess;
     QProcess m_exportProcess;
     QProcess m_probeProcess;
+    QProcess m_sourceProbe;
     QByteArray m_progressBuffer;
     qint64 m_duration = 0;
     qint64 m_startMs = 0;
     qint64 m_endMs = 0;
-    double m_progress = 0; // -1 while native export has no measured fraction.
+    double m_progress = 0;
     bool m_busy = false;
     bool m_canceling = false;
     int m_nextThumb = 0;
@@ -75,8 +72,4 @@ private:
     bool m_thumbnailReachedEof = false;
     qint64 m_thumbnailStartMs = 0;
     qint64 m_thumbnailEndMs = 0;
-    quint64 m_generation = 0;
-#ifdef Q_OS_MACOS
-    std::unique_ptr<MacClipExport> m_macExport;
-#endif
 };

@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Build a small LGPL FFmpeg decoder for review thumbnails. It does not link
+# Build a small LGPL FFmpeg media helper for thumbnails and lossless trims. It does not link
 # Homebrew's GPL-enabled FFmpeg or depend on a user-installed codec package.
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo 'macOS is required.' >&2; exit 1; }
@@ -9,8 +9,8 @@ SHA256=f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe
 TOOL_DIR="$ROOT/build/tools/ffmpeg-thumbnail"
 ARCHIVE="$TOOL_DIR/ffmpeg-$VERSION.tar.xz"
 SOURCE="$TOOL_DIR/ffmpeg-$VERSION"
-HELPER="$TOOL_DIR/ffmpeg-thumbnails"
-STAMP="$TOOL_DIR/.reverse-filter-enabled"
+HELPER="$TOOL_DIR/ffmpeg-media"
+STAMP="$TOOL_DIR/.streamcopy-probe-pipe-enabled"
 mkdir -p "$TOOL_DIR"
 if [ ! -f "$ARCHIVE" ]; then
     curl --fail --location --silent --show-error \
@@ -19,24 +19,28 @@ if [ ! -f "$ARCHIVE" ]; then
 fi
 ACTUAL="$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)"
 [ "$ACTUAL" = "$SHA256" ] || { echo 'FFmpeg source checksum mismatch.' >&2; exit 1; }
-if [ ! -x "$HELPER" ] || [ ! -f "$STAMP" ]; then
+if [ ! -x "$HELPER" ] || [ ! -x "$TOOL_DIR/ffprobe-media" ] || [ ! -f "$STAMP" ]; then
     [ -d "$SOURCE" ] || tar -xf "$ARCHIVE" -C "$TOOL_DIR"
     cd "$SOURCE"
     ./configure \
         --disable-shared --enable-static --disable-everything \
         --disable-autodetect --disable-network --disable-doc --disable-debug \
-        --disable-ffprobe --disable-ffplay --disable-hwaccels \
+        --enable-ffprobe --disable-ffplay --disable-hwaccels \
         --disable-videotoolbox --disable-audiotoolbox --enable-small \
-        --enable-protocol=file --enable-demuxer=mov \
+        --enable-protocol=file,pipe --enable-demuxer=mov \
         --enable-decoder=h264,hevc --enable-parser=h264,hevc \
-        --enable-encoder=mjpeg --enable-muxer=image2 \
+        --enable-encoder=mjpeg --enable-muxer=image2,mp4 \
         --enable-filter=scale,format,reverse
-    make -j"$(sysctl -n hw.ncpu)" ffmpeg
+    make -j"$(sysctl -n hw.ncpu)" ffmpeg ffprobe
     cp ffmpeg "$HELPER"
+    cp ffprobe "$TOOL_DIR/ffprobe-media"
     touch "$STAMP"
 fi
-DEST="$ROOT/build/xshot.app/Contents/MacOS/ffmpeg-thumbnails"
-[ -d "$(dirname "$DEST")" ] || { echo 'Build xshot before copying its thumbnail helper.' >&2; exit 1; }
+DEST="$ROOT/build/xshot.app/Contents/MacOS/ffmpeg-media"
+[ -d "$(dirname "$DEST")" ] || { echo 'Build xshot before copying its media helpers.' >&2; exit 1; }
 cp "$HELPER" "$DEST"
 # macOS verifies nested executable signatures separately from the outer app.
 codesign --force --sign - "$DEST" >/dev/null
+
+cp "$TOOL_DIR/ffprobe-media" "$(dirname "$DEST")/ffprobe-media"
+codesign --force --sign - "$(dirname "$DEST")/ffprobe-media" >/dev/null

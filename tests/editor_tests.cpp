@@ -974,13 +974,22 @@ void EditorTests::qmlRecordingReview() {
     const QString clip = directory.filePath("review.mp4");
     QProcess fixture;
     fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
-        "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=3",
+        "-f", "lavfi", "-i", "testsrc2=size=2560x1440:rate=30:duration=3",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", clip});
     QVERIFY(fixture.waitForFinished(15000));
     QCOMPARE(fixture.exitCode(), 0);
     Backend backend;
     auto *trim = qobject_cast<TrimSession *>(backend.trim());
     QVERIFY(trim);
+    QElapsedTimer loadTimer;
+    loadTimer.start();
+    qint64 firstThumbMs = -1, allThumbsMs = -1;
+    connect(trim, &TrimSession::changed, trim, [&] {
+        int ready = 0;
+        for (const auto &url : trim->thumbnails()) if (!url.isEmpty()) ++ready;
+        if (ready && firstThumbMs < 0) firstThumbMs = loadTimer.elapsed();
+        if (ready == 12 && allThumbsMs < 0) allThumbsMs = loadTimer.elapsed();
+    });
     trim->open(clip);
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
@@ -1011,6 +1020,7 @@ void EditorTests::qmlRecordingReview() {
             if (qvariant_cast<QVideoFrame>(signal.first()).isValid()) return true;
         return false;
     })(), 45000);
+    const qint64 firstFrameMs = loadTimer.elapsed();
     QTRY_VERIFY(!player->property("priming").toBool());
     QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
     QVERIFY(qAbs(player->property("position").toLongLong()) < 150);
@@ -1036,6 +1046,13 @@ void EditorTests::qmlRecordingReview() {
         for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
         return true;
     })(), 45000);
+    qInfo("review load: first frame=%lld ms, first thumbnail=%lld ms, all thumbnails=%lld ms",
+          firstFrameMs, firstThumbMs, allThumbsMs);
+    if (qEnvironmentVariableIsSet("XSHOT_CHECK_LOAD_TIMES")) {
+        QVERIFY(firstFrameMs < 2000);
+        QVERIFY(firstThumbMs < 2000);
+        QVERIFY(allThumbsMs < 5000);
+    }
     const QString fullStripFirst = trim->thumbnails().first();
     bar->setProperty("startSec", 0.5);
     bar->setProperty("endSec", 2.0);
@@ -1116,6 +1133,26 @@ void EditorTests::qmlRecordingReview() {
     QCOMPARE(finalized.size(), 1);
     QCOMPARE(finalized.first().first().toString(), clip);
     QTRY_VERIFY(!review->isVisible());
+    // Reopen the copied MP4 through the real player: edit-list preroll must not
+    // leave a black preview or delay playback of a cut between keyframes.
+    firstFrames.clear();
+    QElapsedTimer copiedLoad;
+    copiedLoad.start();
+    trim->open(clip);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto &signal : firstFrames)
+            if (qvariant_cast<QVideoFrame>(signal.first()).isValid()) return true;
+        return false;
+    })(), 10000);
+    qInfo("trimmed review first frame: %lld ms", copiedLoad.elapsed());
+    if (qEnvironmentVariableIsSet("XSHOT_CHECK_LOAD_TIMES"))
+        QVERIFY(copiedLoad.elapsed() < 2000);
+    QTRY_VERIFY(!player->property("priming").toBool());
+    QVERIFY(player->property("duration").toLongLong() >= 1400);
+    QVERIFY(player->property("duration").toLongLong() <= 1750);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 500, 5000);
+    trim->keepOriginal();
 }
 
 void EditorTests::qmlRecordingControls() {

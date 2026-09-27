@@ -92,7 +92,7 @@ def verify_bundle(bundle):
     for relative in ("Resources/qml/QtMultimedia/qmldir",
                      "PlugIns/multimedia/libdarwinmediaplugin.dylib",
                      "PlugIns/multimedia/libffmpegmediaplugin.dylib",
-                     "MacOS/ffmpeg-thumbnails",
+                     "MacOS/ffmpeg-media", "MacOS/ffprobe-media",
                      "Frameworks/QtMultimedia.framework/Versions/A/QtMultimedia",
                      "Frameworks/QtQuickTimeline.framework/Versions/A/QtQuickTimeline",
                      "Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees"):
@@ -287,20 +287,20 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
     copy_file(ROOT / "src/OMACUT-LICENSE", licenses / "omacut/LICENSE")
-    # This decoder is an independent, statically linked LGPL executable built
+    # These helpers are independent, statically linked LGPL executables built
     # from the pinned source in bin/build-thumbnail-helper-macos. Keep its full
     # corresponding source alongside the release archive.
     ffmpeg_source = ROOT / "build/tools/ffmpeg-thumbnail/ffmpeg-7.1.3.tar.xz"
     ffmpeg_root = ROOT / "build/tools/ffmpeg-thumbnail/ffmpeg-7.1.3"
     ffmpeg_sha256 = "f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe"
     if not ffmpeg_source.is_file() or digest(ffmpeg_source) != ffmpeg_sha256:
-        raise RuntimeError("Pinned FFmpeg thumbnail helper source is missing or invalid")
+        raise RuntimeError("Pinned FFmpeg media helper source is missing or invalid")
     ffmpeg_notices = licenses / "ffmpeg-7.1.3"
     copy_file(ffmpeg_source, ffmpeg_notices / ffmpeg_source.name)
     for name in ("LICENSE.md", "COPYING.LGPLv2.1"):
         copy_file(ffmpeg_root / name, ffmpeg_notices / name)
     (ffmpeg_notices / "BUILD.txt").write_text(
-        "The bundled ffmpeg-thumbnails executable is built by "
+        "The bundled ffmpeg-media and ffprobe-media executables are built by "
         "bin/build-thumbnail-helper-macos from the enclosed source archive. "
         "That script records the exact configure flags and disables GPL, "
         "nonfree, hardware decoding, network, and external libraries.\n"
@@ -344,8 +344,8 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
                           "binaries": official_files,
                           "distribution": "official Qt SDK",
                           "source_packages": sorted(OFFICIAL_QT_SOURCES_6112)})
-    inventory.append({"package": "ffmpeg-thumbnail-helper", "version": "7.1.3",
-                      "binaries": ["Contents/MacOS/ffmpeg-thumbnails"],
+    inventory.append({"package": "ffmpeg-media-helpers", "version": "7.1.3",
+                      "binaries": ["Contents/MacOS/ffmpeg-media", "Contents/MacOS/ffprobe-media"],
                       "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
                       "source_sha256": ffmpeg_sha256,
                       "license": "LGPL-2.1-or-later"})
@@ -398,9 +398,9 @@ Qt's installed SBOMs identify additional component source locations.
 Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
 licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
 
-The bundled ffmpeg-thumbnails decoder is an independent LGPL FFmpeg executable.
-Its complete corresponding source archive and license are in licenses/ffmpeg-7.1.3/.
-It is used only to generate recording-review filmstrip JPEGs; no user-installed
+The bundled media helpers are independent LGPL FFmpeg executables.
+Their complete corresponding source archive and license are in licenses/ffmpeg-7.1.3/.
+They generate filmstrip JPEGs, probe metadata, and copy trimmed streams; no user-installed
 FFmpeg package is required on macOS. Source: https://ffmpeg.org/
 
 The recording preview uses a private Qt Multimedia FFmpeg plugin and five
