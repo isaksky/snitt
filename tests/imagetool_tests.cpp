@@ -31,6 +31,7 @@ private slots:
     void fractionalCutsKeepPrivacyMasksAligned();
     void eraseReplayKeepsExactSample();
     void annotationPreviewDoesNotSoftenOnRelease();
+    void annotationPreviewAfterLargeCuts();
     void earlierAnnotationsStaySharpThroughRasterEdits();
     void fractionalCutsKeepEarlierAnnotationsInsideMasks();
     void failedSavePreservesSession();
@@ -728,6 +729,68 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
     const QImage fresh = text.render(3);
     const QImage stretched = text.image().scaled(fresh.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     QVERIFY(fresh != stretched); // Export re-renders glyphs, not the flattened bitmap.
+}
+
+void ImageToolTests::annotationPreviewAfterLargeCuts() {
+    // A tiny remainder of a large capture can have a much larger preview zoom
+    // than its export scale. Budget the rendered remainder, not the old capture.
+    QImage original(3840, 2160, QImage::Format_ARGB32_Premultiplied);
+    original.fill(Qt::white);
+    ImageDocument fullSize;
+    fullSize.reset(original);
+    QVERIFY(fullSize.render(3).isNull()); // The limit still protects genuinely large output.
+    QTemporaryDir temporary;
+    const QString path = temporary.filePath("large.png");
+    QVERIFY(original.save(path));
+    EditorCanvas canvas;
+    canvas.setWidth(832); canvas.setHeight(632);
+    QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+    const auto point = [&](QPointF source) {
+        return canvas.imageRect().topLeft() + source * canvas.imageScale();
+    };
+    canvas.setTool("cut");
+    QPointF from = point({80, 30}), to = point({3840, 30});
+    canvas.begin(from.x(), from.y()); canvas.end(to.x(), to.y());
+    from = point({30, 60}); to = point({30, 2160});
+    canvas.begin(from.x(), from.y()); canvas.end(to.x(), to.y());
+    QCOMPARE(canvas.imageWidth(), 80);
+    QCOMPARE(canvas.imageHeight(), 60);
+
+    for (const int dpr : {1, 2}) {
+        const auto snapshot = [&]() {
+            QImage frame(832 * dpr, 632 * dpr, QImage::Format_ARGB32_Premultiplied);
+            frame.fill(Qt::transparent);
+            QPainter painter(&frame);
+            painter.scale(dpr, dpr);
+            canvas.paint(&painter);
+            return frame;
+        };
+        canvas.setTool("arrow");
+        from = point({5, 15}); to = point({72, 42});
+        canvas.begin(from.x(), from.y()); canvas.move(to.x(), to.y());
+        const QImage live = snapshot();
+        canvas.end(to.x(), to.y());
+        QCOMPARE(snapshot(), live);
+        canvas.undo();
+
+        canvas.addText(3, 3, 74, 40, "Sharp", 14);
+        ImageDocument reference;
+        reference.reset(original.copy(0, 0, 80, 60));
+        QVERIFY(reference.text(QRectF(3, 3, 74, 40), "Sharp", canvas.ink(), 14));
+        QImage expected(832 * dpr, 632 * dpr, QImage::Format_ARGB32_Premultiplied);
+        expected.fill(Qt::transparent);
+        {
+            QPainter painter(&expected);
+            painter.scale(dpr, dpr);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform);
+            painter.translate(canvas.imageRect().topLeft());
+            painter.scale(canvas.imageScale(), canvas.imageScale());
+            painter.setClipRect(QRectF(0, 0, 80, 60));
+            reference.paint(painter, canvas.imageScale() * dpr);
+        }
+        QCOMPARE(snapshot(), expected);
+        canvas.undo();
+    }
 }
 
 void ImageToolTests::earlierAnnotationsStaySharpThroughRasterEdits() {

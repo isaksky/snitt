@@ -4,6 +4,13 @@
         <file alias="TrimBar.qml">TrimBar.qml</file>
         <file alias="Format.js">Format.js</file>
         <file alias="settings-format.md">../docs/settings-format.md</file>
+        <file alias="icons/annotation/cut.svg">icons/annotation/cut.svg</file>
+        <file alias="icons/annotation/rectangle.svg">icons/annotation/rectangle.svg</file>
+        <file alias="icons/annotation/highlight.svg">icons/annotation/highlight.svg</file>
+        <file alias="icons/annotation/text.svg">icons/annotation/text.svg</file>
+        <file alias="icons/annotation/arrow.svg">icons/annotation/arrow.svg</file>
+        <file alias="icons/annotation/pixelate.svg">icons/annotation/pixelate.svg</file>
+        <file alias="icons/annotation/smart-erase.svg">icons/annotation/smart-erase.svg</file>
         <file alias="icons/arrow-left.svg">icons/arrow-left.svg</file>
         <file alias="icons/arrow-right.svg">icons/arrow-right.svg</file>
         <file alias="icons/check.svg">icons/check.svg</file>

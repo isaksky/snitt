@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img">
+  <title>Smart erase</title>
+  <desc>A broad pale-pink rubber eraser in a cream sleeve touches a visible slate mark. No reconstructed detail is implied.</desc>
+  <path d="M4 27H20L24 25" fill="none" stroke="#8c9bad" stroke-width="2" stroke-linecap="round"/>
+  <path d="M4 18L17 5Q18 4 19 5L28 14Q29 15 28 16L18 27H12Z" fill="#ce8b9d"/>
+  <path d="M3 17L16 4Q17 3 18 4L27 13Q28 14 27 15L17 25H11Z" fill="#f0b9c8"/>
+  <path d="M9 11L16 4Q17 3 18 4L27 13Q28 14 27 15L21 21Z" fill="#eee4cd"/>
+  <path d="M9 11L21 21L22 20L10 10Z" fill="#c9bca5"/>
+  <path d="M4 17L16 5Q17 4 18 5" fill="none" stroke="#fff3df" stroke-width="1" stroke-linejoin="round"/>
+</svg>

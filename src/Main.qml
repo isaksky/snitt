@@ -30,14 +30,14 @@ ApplicationWindow {
     readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !reviewWindow.visible && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
-    readonly property string hint: editingText ? "Text · " + canvas.textSize + " px · Wheel outside note to resize · " + commandKey + "Enter to place · Esc to cancel"
-        : canvas.tool === "cut" ? "Drag sideways to remove a column · drag up or down to remove a row"
-        : canvas.tool === "rect" ? "Rectangle · " + canvas.strokeWidth + " px · Wheel to resize · Drag to draw"
-        : canvas.tool === "highlight" ? "Drag to highlight an area"
-        : canvas.tool === "arrow" ? "Arrow · " + canvas.strokeWidth + " px · Wheel to resize · Drag from tail to tip"
-        : canvas.tool === "blur" ? "Pixelate · " + canvas.pixelBlockSize + " px blocks · Wheel to resize · Drag over an area"
-        : canvas.tool === "erase" ? "Drag to fill an area with the color where you started"
-        : "Text · " + canvas.textSize + " px · Wheel to resize · Click to place"
+    readonly property string hint: editingText ? "Text " + canvas.textSize + " px · " + commandKey + "Enter to place · Esc cancels"
+        : canvas.tool === "cut" ? "Drag ↔ to cut columns, ↕ for rows"
+        : canvas.tool === "rect" ? "Drag a box · " + canvas.strokeWidth + " px · Wheel resizes"
+        : canvas.tool === "highlight" ? "Drag to highlight"
+        : canvas.tool === "arrow" ? "Drag tail → tip · " + canvas.strokeWidth + " px · Wheel resizes"
+        : canvas.tool === "blur" ? "Drag to pixelate · " + canvas.pixelBlockSize + " px · Wheel resizes"
+        : canvas.tool === "erase" ? "Drag to fill with starting color"
+        : "Click to type · " + canvas.textSize + " px · Wheel resizes"
 
     function commitText() {
         if (!editingText) return
@@ -770,6 +770,35 @@ ApplicationWindow {
         }
     }
 
+    component ModeButton: ActionButton {
+        id: modeControl
+        property bool underlineShortcut: false
+        contentItem: Item {
+            implicitWidth: modeLabel.implicitWidth
+            implicitHeight: modeLabel.implicitHeight
+            Text {
+                id: modeLabel
+                anchors.centerIn: parent
+                text: modeControl.text
+                textFormat: Text.PlainText
+                font: modeControl.font
+                color: modeControl.enabled ? modeControl.textColor : "#8f99a8"
+                TextMetrics {
+                    id: shortcutLetter
+                    font: modeLabel.font
+                    text: modeLabel.text.charAt(0)
+                }
+                Rectangle {
+                    visible: modeControl.underlineShortcut
+                    y: Math.ceil(modeLabel.baselineOffset + 2)
+                    width: Math.ceil(shortcutLetter.advanceWidth)
+                    height: 1
+                    color: modeLabel.color
+                }
+            }
+        }
+    }
+
     component PrimaryButton: Button {
         id: primaryControl
         highlighted: true
@@ -901,57 +930,100 @@ ApplicationWindow {
                 // Keep whole groups together; only use the second row when their
                 // measured widths and breathing room no longer fit.
                 property bool singleLine: width >= annotationToolCluster.implicitWidth
-                    + modeGroup.implicitWidth + finishGroup.implicitWidth + 32
+                    + modeGroup.implicitWidth + finishGroup.implicitWidth + 180 + 48
                 implicitHeight: singleLine
                     ? Math.max(annotationToolCluster.implicitHeight, modeGroup.implicitHeight,
-                               finishGroup.implicitHeight) + 8
+                               annotationHint.height, finishGroup.implicitHeight) + 8
                     : annotationToolCluster.implicitHeight + 8
-                        + Math.max(modeGroup.implicitHeight, finishGroup.implicitHeight) + 4
+                        + Math.max(modeGroup.implicitHeight, annotationHint.height,
+                                   finishGroup.implicitHeight) + 4
 
                 RowLayout {
                     id: annotationToolCluster
                     objectName: "annotationToolCluster"
                     x: 0
-                    y: annotationToolbar.singleLine ? annotationToolbar.height - height : 0
-                    height: 40
+                    y: 0
+                    height: implicitHeight
                     spacing: 6
-                    Label {
-                        text: "xshot"
-                        font.pixelSize: 20
-                        font.weight: Font.DemiBold
-                        Layout.alignment: Qt.AlignVCenter
-                    }
                     RowLayout {
                         id: annotationToolButtons
                         objectName: "annotationToolButtons"
                         spacing: 2
                         Repeater {
-                            model: [ {label: "Cut", key: win.keys.toolCut, tool: "cut", glyph: "scissors"},
-                                     {label: "Rectangle", key: win.keys.toolRectangle, tool: "rect", glyph: "square"},
-                                     {label: "Highlight", key: win.keys.toolHighlight, tool: "highlight", glyph: "highlighter"},
-                                     {label: "Text", key: win.keys.toolText, tool: "text", glyph: "type"},
-                                     {label: "Arrow", key: win.keys.toolArrow, tool: "arrow", glyph: "move-up-right"},
-                                     {label: "Pixelate", key: win.keys.toolPixelate, tool: "blur", glyph: "grid-3x3"},
-                                     {label: "Smart erase", key: win.keys.toolErase, tool: "erase", glyph: "eraser"} ]
-                            ActionButton {
+                            model: [ {label: "Cut", key: win.keys.toolCut, tool: "cut", glyph: "cut"},
+                                     {label: "Rectangle", key: win.keys.toolRectangle, tool: "rect", glyph: "rectangle"},
+                                     {label: "Highlight", key: win.keys.toolHighlight, tool: "highlight", glyph: "highlight"},
+                                     {label: "Text", key: win.keys.toolText, tool: "text", glyph: "text"},
+                                     {label: "Arrow", key: win.keys.toolArrow, tool: "arrow", glyph: "arrow"},
+                                     {label: "Pixelate", key: win.keys.toolPixelate, tool: "blur", glyph: "pixelate"},
+                                     {label: "Smart erase", key: win.keys.toolErase, tool: "erase", glyph: "smart-erase"} ]
+                            ColumnLayout {
                                 required property var modelData
-                                objectName: "tool_" + modelData.tool
-                                text: ""
-                                icon.source: "qrc:/icons/" + modelData.glyph + ".svg"
-                                icon.width: 22
-                                icon.height: 22
-                                Accessible.name: modelData.label
-                                ToolTip.visible: hovered
-                                ToolTip.text: modelData.tool === "blur" ? "Pixelate image colors (" + modelData.key + ") · Wheel adjusts blocks"
-                                    : modelData.tool === "cut" ? "Cut: remove an image strip (" + modelData.key + ")"
-                                    : modelData.label + " (" + modelData.key + ")"
-                                checked: canvas.tool === modelData.tool
-                                enabled: canvas.hasImage && !canvas.arranging
-                                focusPolicy: Qt.TabFocus
+                                spacing: 4
                                 Layout.preferredWidth: 40
-                                Layout.preferredHeight: 40
-                                onClicked: win.chooseTool(modelData.tool)
+                                Layout.maximumWidth: 40
+                                ActionButton {
+                                    objectName: "tool_" + modelData.tool
+                                    text: ""
+                                    icon.source: "qrc:/icons/annotation/" + modelData.glyph + ".svg"
+                                    icon.width: 26
+                                    icon.height: 26
+                                    // Preserve the artwork's colors independently of Good/Bad ink.
+                                    icon.color: "transparent"
+                                    leftPadding: 7
+                                    rightPadding: 7
+                                    opacity: enabled ? 1 : 0.4
+                                    Accessible.name: modelData.label
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: modelData.tool === "blur" ? "Pixelate image colors (" + modelData.key + ") · Wheel adjusts blocks"
+                                        : modelData.tool === "cut" ? "Cut: remove an image strip (" + modelData.key + ")"
+                                        : modelData.label + " (" + modelData.key + ")"
+                                    checked: canvas.tool === modelData.tool
+                                    enabled: canvas.hasImage && !canvas.arranging
+                                    focusPolicy: Qt.TabFocus
+                                    Layout.preferredWidth: 40
+                                    Layout.preferredHeight: 40
+                                    onClicked: win.chooseTool(modelData.tool)
+                                }
+                                Label {
+                                    objectName: "shortcut_" + modelData.tool
+                                    text: modelData.key
+                                    textFormat: Text.PlainText
+                                    color: "#9ba5b5"
+                                    font.pixelSize: 12
+                                    horizontalAlignment: Text.AlignHCenter
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
                             }
+                        }
+                    }
+                    RowLayout {
+                        objectName: "historyButtons"
+                        spacing: 2
+                        Layout.leftMargin: 10
+                        Layout.alignment: Qt.AlignTop
+                        ActionButton {
+                            objectName: "undoButton"
+                            text: ""
+                            icon.source: "qrc:/icons/undo-2.svg"
+                            Accessible.name: "Undo"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Undo (" + win.keys.undo + ")"
+                            enabled: canvas.canUndo && !win.editingText
+                            focusPolicy: Qt.TabFocus
+                            onClicked: canvas.undo()
+                        }
+                        ActionButton {
+                            objectName: "redoButton"
+                            text: ""
+                            icon.source: "qrc:/icons/redo-2.svg"
+                            Accessible.name: "Redo"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Redo (" + win.keys.redo + ")"
+                            enabled: canvas.canRedo && !win.editingText
+                            focusPolicy: Qt.TabFocus
+                            onClicked: canvas.redo()
                         }
                     }
                 }
@@ -959,20 +1031,10 @@ ApplicationWindow {
                 ColumnLayout {
                     id: modeGroup
                     objectName: "modeGroup"
-                    x: annotationToolbar.singleLine
-                        ? Math.max((annotationToolbar.width - width) / 2, annotationToolCluster.width + 16)
-                        : (annotationToolbar.width - width) / 2
-                    y: annotationToolbar.singleLine ? annotationToolbar.height - height
+                    x: annotationToolbar.singleLine ? annotationToolCluster.width + 16 : 0
+                    y: annotationToolbar.singleLine ? 0
                         : annotationToolCluster.height + 8
                     spacing: 4
-                    Label {
-                        objectName: "modeHeading"
-                        text: "Mode"
-                        color: "#9ba5b5"
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
-                    }
                     Rectangle {
                         id: modeSegmentedControl
                         objectName: "modeSegmentedControl"
@@ -1020,13 +1082,11 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 1
                             spacing: 0
-                            ActionButton {
+                            ModeButton {
                                 id: goodModeButton
                                 objectName: "ink_good"
                                 text: "Good"
-                                icon.source: "qrc:/icons/check.svg"
-                                icon.width: 18
-                                icon.height: 18
+                                underlineShortcut: win.shortcuts.goodMode.indexOf("G") >= 0
                                 font.pixelSize: 12
                                 leftPadding: 6
                                 rightPadding: 6
@@ -1049,13 +1109,11 @@ ApplicationWindow {
                                 Layout.fillHeight: true
                                 onClicked: { win.commitText(); canvas.setInkMode("good") }
                             }
-                            ActionButton {
+                            ModeButton {
                                 id: badModeButton
                                 objectName: "ink_bad"
                                 text: "Bad"
-                                icon.source: "qrc:/icons/x.svg"
-                                icon.width: 18
-                                icon.height: 18
+                                underlineShortcut: win.shortcuts.badMode.indexOf("B") >= 0
                                 font.pixelSize: 12
                                 leftPadding: 6
                                 rightPadding: 6
@@ -1080,23 +1138,39 @@ ApplicationWindow {
                             }
                         }
                     }
+                    Label {
+                        objectName: "modeHeading"
+                        text: "Color Mode"
+                        color: "#9ba5b5"
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Label {
+                    id: annotationHint
+                    objectName: "annotationHint"
+                    x: modeGroup.x + modeGroup.width + 16
+                    y: modeGroup.y
+                    width: Math.max(0, finishGroup.x - x - 16)
+                    height: Math.max(40, implicitHeight)
+                    text: win.notice !== "" ? win.notice
+                        : canvas.hasImage ? win.hint : "Capture or open an image"
+                    textFormat: Text.PlainText
+                    color: win.notice !== "" ? "#91bff0" : "#8f99a8"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    verticalAlignment: Text.AlignVCenter
                 }
 
                 ColumnLayout {
                     id: finishGroup
                     objectName: "finishGroup"
                     x: annotationToolbar.width - width
-                    y: annotationToolbar.singleLine ? annotationToolbar.height - height
+                    y: annotationToolbar.singleLine ? 0
                         : annotationToolCluster.height + 8
                     spacing: 4
-                    Label {
-                        objectName: "finishHeading"
-                        text: "Finish (will close)"
-                        color: "#9ba5b5"
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
-                    }
                     RowLayout {
                         id: finishButtons
                         objectName: "finishButtons"
@@ -1118,13 +1192,22 @@ ApplicationWindow {
                             Accessible.name: "Copy image and close"
                             enabled: canvas.hasImage
                             focusPolicy: Qt.TabFocus
-                            height: 40
+                            implicitHeight: 40
+                            font.pixelSize: 13
                             topPadding: 0
                             bottomPadding: 0
                             ToolTip.visible: hovered
                             ToolTip.text: "Copy image to clipboard and close (" + win.keys.copyClose + ")"
                             onClicked: win.finish()
                         }
+                    }
+                    Label {
+                        objectName: "finishHeading"
+                        text: "Finish (will close)"
+                        color: "#9ba5b5"
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
                     }
                 }
             }
@@ -1249,46 +1332,35 @@ ApplicationWindow {
     }
 
     footer: Rectangle {
-        height: footerActions.implicitHeight + 44
+        height: canvas.hasImage ? 36 : 0
+        visible: canvas.hasImage
         color: "#1b1e23"
-        ColumnLayout {
+        RowLayout {
             anchors.fill: parent
-            anchors.margins: 12
-            spacing: 0
-            Flow {
-                id: footerActions
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 12
+            Label {
+                visible: canvas.arranging
+                text: win.notice !== "" ? win.notice
+                    : "Drag to reorder · " + win.keys.columnsMore + "/" + win.keys.columnsLess + " columns · " + win.keys.arrange + " to annotate"
+                color: win.notice !== "" ? "#91bff0" : "#8f99a8"
+                font.pixelSize: 12
+                elide: Text.ElideRight
                 Layout.fillWidth: true
-                spacing: 4
-                ActionButton { text: ""; icon.source: "qrc:/icons/square-dashed.svg"; Accessible.name: "Capture region"; ToolTip.visible: hovered; ToolTip.text: "Capture region (" + win.keys.capture + ")"; onClicked: win.capture() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/copy.svg"; Accessible.name: "Multiple regions"; ToolTip.visible: hovered; ToolTip.text: "Multiple regions (" + win.keys.captureMultiple + ")"; onClicked: win.captureMultiple() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/video.svg"; Accessible.name: "Record region"; ToolTip.visible: hovered; ToolTip.text: "Record region (" + win.keys.captureVideo + ")"; onClicked: win.captureVideo() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/folder-open.svg"; Accessible.name: "Open image"; ToolTip.visible: hovered; ToolTip.text: "Open image (" + win.keys.openImage + ")"; onClicked: openDialog.open() }
-                ActionButton { objectName: "pasteImageButton"; text: ""; icon.source: "qrc:/icons/clipboard.svg"; Accessible.name: "Paste image"; ToolTip.visible: hovered; ToolTip.text: "Paste image (" + win.keys.pasteImage + ")"; onClicked: win.pasteImage() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/undo-2.svg"; Accessible.name: "Undo"; ToolTip.visible: hovered; ToolTip.text: "Undo (" + win.keys.undo + ")"; visible: !canvas.arranging; enabled: canvas.canUndo && !win.editingText; onClicked: canvas.undo() }
-                ActionButton { text: ""; icon.source: "qrc:/icons/redo-2.svg"; Accessible.name: "Redo"; ToolTip.visible: hovered; ToolTip.text: "Redo (" + win.keys.redo + ")"; visible: !canvas.arranging; enabled: canvas.canRedo && !win.editingText; onClicked: canvas.redo() }
             }
-            RowLayout {
+            Item {
+                visible: !canvas.arranging
                 Layout.fillWidth: true
-                Layout.leftMargin: 14
-                Label {
-                    text: win.notice !== "" ? win.notice
-                        : canvas.arranging ? "Drag to reorder · " + win.keys.columnsMore + "/" + win.keys.columnsLess + " changes columns · " + win.keys.arrange + " to annotate · " + win.keys.copyClose + " to copy or " + win.keys.saveClose + " to save"
-                        : canvas.hasImage ? win.hint : "Select a region · " + win.keys.captureMultiple + " for multiple regions · " + win.keys.captureVideo + " for recording · " + win.keys.dismiss + " closes"
-                    color: win.notice !== "" ? "#91bff0" : "#8f99a8"
-                    font.pixelSize: 12
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Label {
-                    visible: canvas.hasImage
-                    text: "Preview " + Math.round(canvas.imageScale * 100) + "% · Image "
-                        + canvas.imageWidth + " × " + canvas.imageHeight + " px"
-                    color: "#8f99a8"
-                    font.pixelSize: 12
-                    ToolTip.visible: hoverHandler.hovered
-                    ToolTip.text: "Preview zoom only; unannotated exports keep the image's natural pixel size"
-                    HoverHandler { id: hoverHandler }
-                }
+            }
+            Label {
+                text: "Preview " + Math.round(canvas.imageScale * 100) + "% · Image "
+                    + canvas.imageWidth + " × " + canvas.imageHeight + " px"
+                color: "#8f99a8"
+                font.pixelSize: 12
+                ToolTip.visible: hoverHandler.hovered
+                ToolTip.text: "Preview zoom only; unannotated exports keep the image's natural pixel size"
+                HoverHandler { id: hoverHandler }
             }
         }
     }

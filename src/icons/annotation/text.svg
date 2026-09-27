@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img">
+  <title>Text</title>
+  <desc>A bold ivory T with a subtle slate side edge.</desc>
+  <path d="M5 5H28V12H20V28H13V12H5Z" fill="#708396"/>
+  <path d="M4 4H27V10H19V27H12V10H4Z" fill="#f3ecd9"/>
+  <path d="M4 4H27V5H5V10H4Z" fill="#fff9e9"/>
+</svg>

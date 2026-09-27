@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img">
+  <title>Pixelate</title>
+  <desc>A simple four-by-four checkerboard of black and white pixel blocks.</desc>
+  <rect x="4" y="4" width="24" height="24" fill="#ffffff"/>
+  <path d="M4 4H10V10H4Z M16 4H22V10H16Z
+           M10 10H16V16H10Z M22 10H28V16H22Z
+           M4 16H10V22H4Z M16 16H22V22H16Z
+           M10 22H16V28H10Z M22 22H28V28H22Z" fill="#000000"/>
+  <rect x="4" y="4" width="24" height="24" fill="none" stroke="#ffffff" stroke-width="0.8"/>
+</svg>

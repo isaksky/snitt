@@ -235,7 +235,10 @@ annotations restores natural-size export. Copy and Save use the same output.
 
 Use Command on macOS, Ctrl on Windows. Escape cancels region selection or an
 in-progress drawing gesture. Tool shortcuts are inactive while entering text.
-Buttons show their shortcuts in parentheses, for example **Rectangle (R)**.
+Annotation tools show their shortcuts beneath the icons. Good and Bad underline
+their shortcut letter in the Color Mode group. Concise tool hints sit between
+Color Mode and Finish, with Undo/Redo alongside the drawing tools. The groups
+wrap onto two rows when the window is narrow.
 The view fits the screenshot to the window; edits and clipboard output retain
 the source pixels. Cut also removes annotations in the selected strip.
 Annotations are flattened when placed; use undo to correct them. History is

@@ -57,7 +57,7 @@ private slots:
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
     void qmlAnnotationToolbarResponsiveLayout();
-    void qmlToolbarPasteReplacesTextDraft();
+    void qmlPasteReplacesTextDraft();
     void qmlWheelSizes();
     void qmlSaveAndClose();
     void qmlKeyboardCommands();
@@ -407,6 +407,11 @@ void EditorTests::qmlLoadsAndPlacesText() {
 }
 
 void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
+    QGuiApplication::setFont(QFont("Helvetica"));
+#endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support (?:raise|propagateSizeHints)\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
@@ -448,8 +453,16 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     auto *finishHeading = visualItem(window->contentItem(), "finishHeading");
     auto *modeButtons = visualItem(window->contentItem(), "modeSegmentedControl");
     auto *finishButtons = visualItem(window->contentItem(), "finishButtons");
+    auto *hint = visualItem(window->contentItem(), "annotationHint");
+    auto *firstTool = visualItem(window->contentItem(), "tool_cut");
+    auto *undoButton = visualItem(window->contentItem(), "undoButton");
+    auto *redoButton = visualItem(window->contentItem(), "redoButton");
+    auto *saveButton = visualItem(window->contentItem(), "saveButton");
+    auto *copyButton = visualItem(window->contentItem(), "copyButton");
     QVERIFY(toolbar && tools && modeGroup && finishGroup && modeHeading && finishHeading);
-    QVERIFY(modeButtons && finishButtons);
+    QVERIFY(modeButtons && finishButtons && hint && firstTool && undoButton && redoButton);
+    QVERIFY(saveButton && copyButton);
+    QVERIFY(!visualItem(window->contentItem(), "pasteImageButton"));
     const auto centerX = [toolbar](QQuickItem *item) {
         return item->mapToItem(toolbar, QPointF(item->width() / 2, item->height() / 2)).x();
     };
@@ -459,27 +472,44 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     const auto rightX = [toolbar](QQuickItem *item) {
         return item->mapToItem(toolbar, QPointF(item->width(), 0)).x();
     };
+    const auto topY = [toolbar](QQuickItem *item) {
+        return item->mapToItem(toolbar, QPointF(0, 0)).y();
+    };
+    const auto bottomY = [toolbar](QQuickItem *item) {
+        return item->mapToItem(toolbar, QPointF(0, item->height())).y();
+    };
     const auto checkToolbar = [&](int width, bool singleLine, const QString &previewName) {
-        window->resize(width, window->height());
-        QTRY_COMPARE(toolbar->width(), qreal(width - 32));
+        // Native windows can apply a changed minimum size asynchronously.
+        QTRY_VERIFY(([&] {
+            window->resize(width, window->height());
+            return toolbar->width() == qreal(width - 32);
+        })());
         QTRY_COMPARE(toolbar->property("singleLine").toBool(), singleLine);
+        // Wrapping the hint and resizing the header settle on the next frame.
+        QTRY_VERIFY(bottomY(hint) <= toolbar->height());
         QCoreApplication::processEvents();
         QVERIFY(qAbs(centerX(modeHeading) - centerX(modeButtons)) <= 1.0);
         QVERIFY(qAbs(centerX(finishHeading) - centerX(finishButtons)) <= 1.0);
+        QVERIFY(topY(modeHeading) > bottomY(modeButtons));
+        QVERIFY(topY(finishHeading) > bottomY(finishButtons));
+        QCOMPARE(saveButton->height(), 40.0);
+        QCOMPARE(copyButton->height(), saveButton->height());
+        QCOMPARE(topY(copyButton), topY(saveButton));
+        QCOMPARE(topY(undoButton), topY(firstTool));
+        QCOMPARE(topY(redoButton), topY(firstTool));
         QVERIFY(leftX(tools) >= 0);
         QVERIFY(rightX(tools) <= toolbar->width());
         QVERIFY(leftX(modeGroup) >= 0);
         QVERIFY(rightX(modeGroup) <= toolbar->width());
         QVERIFY(leftX(finishGroup) >= 0);
         QVERIFY(rightX(finishGroup) <= toolbar->width());
-        QVERIFY(rightX(modeGroup) <= leftX(finishGroup));
+        QVERIFY(rightX(modeGroup) < leftX(hint));
+        QVERIFY(rightX(hint) < leftX(finishGroup));
+        QVERIFY(hint->width() >= 180);
         if (singleLine) {
             QVERIFY(rightX(tools) <= leftX(modeGroup));
-            const qreal toolBottom = tools->mapToItem(toolbar, QPointF(0, tools->height())).y();
-            const qreal modeBottom = modeButtons->mapToItem(toolbar, QPointF(0, modeButtons->height())).y();
-            const qreal finishBottom = finishButtons->mapToItem(toolbar, QPointF(0, finishButtons->height())).y();
-            QVERIFY(qAbs(toolBottom - modeBottom) <= 1.0);
-            QVERIFY(qAbs(toolBottom - finishBottom) <= 1.0);
+            QVERIFY(qAbs(bottomY(firstTool) - bottomY(modeButtons)) <= 1.0);
+            QVERIFY(qAbs(bottomY(firstTool) - bottomY(finishButtons)) <= 1.0);
         } else {
             QVERIFY(tools->mapToItem(toolbar, QPointF(0, tools->height())).y() <
                     modeButtons->mapToItem(toolbar, QPointF(0, 0)).y());
@@ -500,24 +530,38 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
         QVERIFY(tool->property("text").toString().isEmpty());
         QVERIFY(!accessibleName(tool).isEmpty());
         QCOMPARE(tool->property("focusPolicy").toInt(), int(Qt::TabFocus));
+        auto *shortcut = visualItem(window->contentItem(), "shortcut_" + name.mid(5));
+        QVERIFY(shortcut);
+        QVERIFY(!shortcut->property("text").toString().isEmpty());
+        QVERIFY(topY(shortcut) > bottomY(tool));
+        QVERIFY(qAbs(centerX(shortcut) - centerX(tool)) <= 1.0);
         const qreal x = leftX(tool);
         if (previousRight >= 0) QVERIFY(x >= previousRight);
         previousRight = rightX(tool);
     }
-    auto *saveButton = visualItem(window->contentItem(), "saveButton");
-    auto *copyButton = visualItem(window->contentItem(), "copyButton");
-    QVERIFY(saveButton && copyButton);
     QCOMPARE(saveButton->property("text").toString(), QString("Save"));
     QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
-    QCOMPARE(modeHeading->property("text").toString(), QString("Mode"));
+    QCOMPARE(modeHeading->property("text").toString(), QString("Color Mode"));
     QCOMPARE(finishHeading->property("text").toString(), QString("Finish (will close)"));
     QCOMPARE(window->minimumWidth(), 860);
 
     if (virtualDisplay || desktop.width() >= 1132)
         checkToolbar(1100, true, "annotation-combined-1100.png");
-    checkToolbar(860, true, "annotation-combined-860.png");
+    checkToolbar(860, false, "annotation-combined-860.png");
     window->setMinimumWidth(600); // Exercise the fallback without changing the supported minimum.
     checkToolbar(600, false, "annotation-combined-wrapped.png");
+    QCOMPARE(hint->property("text").toString(), window->property("hint").toString());
+    window->setProperty("notice", "Could not save the screenshot. Choose another folder.");
+    QTRY_COMPARE(hint->property("text").toString(), window->property("notice").toString());
+    window->setProperty("notice", "");
+
+    QVERIFY(undoButton->isEnabled());
+    QVERIFY(!redoButton->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(undoButton, "clicked"));
+    QVERIFY(!canvas->canUndo());
+    QVERIFY(redoButton->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(redoButton, "clicked"));
+    QVERIFY(canvas->canUndo());
 
     auto *goodButton = visualItem(window->contentItem(), "ink_good");
     auto *badButton = visualItem(window->contentItem(), "ink_bad");
@@ -532,6 +576,8 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     const QPointF textPoint = canvas->imageRect().topLeft() + QPointF(12, 12) * canvas->imageScale();
     canvas->begin(textPoint.x(), textPoint.y());
     QVERIFY(window->property("editingText").toBool());
+    QVERIFY(!undoButton->isEnabled());
+    QVERIFY(!redoButton->isEnabled());
     auto *draft = window->findChild<QObject *>("annotationText");
     QVERIFY(draft);
     draft->setProperty("text", "Mode draft");
@@ -548,7 +594,7 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     QVERIFY(!badButton->property("checked").toBool());
 }
 
-void EditorTests::qmlToolbarPasteReplacesTextDraft() {
+void EditorTests::qmlPasteReplacesTextDraft() {
 #ifdef Q_OS_WIN
     QGuiApplication::setFont(QFont("Segoe UI"));
 #else
@@ -576,8 +622,7 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     auto *canvas = window->findChild<EditorCanvas *>("canvas");
     auto *text = window->findChild<QObject *>("annotationText");
     auto *frame = window->findChild<QObject *>("annotationTextFrame");
-    auto *paste = visualItem(window->contentItem(), "pasteImageButton");
-    QVERIFY(canvas); QVERIFY(text); QVERIFY(frame); QVERIFY(paste);
+    QVERIFY(canvas); QVERIFY(text); QVERIFY(frame);
     QTRY_COMPARE(canvas->imageWidth(), 800);
     canvas->setTool("text");
     const QPointF draftPoint = canvas->imageRect().topLeft() + QPointF(400, 400) * canvas->imageScale();
@@ -588,7 +633,7 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     QVERIFY(oldY > 80);
 
     QGuiApplication::clipboard()->setText("no image");
-    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QCOMPARE(canvas->imageWidth(), 800);
     QVERIFY(window->property("editingText").toBool());
     QCOMPARE(text->property("text").toString(), QString("OLD DRAFT"));
@@ -598,7 +643,7 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     QImage small(80, 60, QImage::Format_ARGB32_Premultiplied);
     small.fill(QColor("#51a3ce"));
     QGuiApplication::clipboard()->setImage(small);
-    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QCOMPARE(canvas->imageWidth(), 80);
     QCOMPARE(canvas->imageHeight(), 60);
     QVERIFY(!window->property("editingText").toBool());
@@ -619,11 +664,11 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     QVERIFY(canvas->loadRegions({small, small}));
     QVERIFY(canvas->arranging());
     QGuiApplication::clipboard()->setText("still no image");
-    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QVERIFY(canvas->arranging());
     QCOMPARE(canvas->regionCount(), 2);
     QGuiApplication::clipboard()->setImage(small);
-    QVERIFY(QMetaObject::invokeMethod(paste, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QVERIFY(!canvas->arranging());
     QCOMPARE(canvas->regionCount(), 0);
     QCOMPARE(canvas->imageWidth(), 80);
@@ -733,7 +778,7 @@ void EditorTests::qmlWheelSizes() {
     wheelAt(point({100, 250}), 120);
     QCOMPARE(canvas->pixelBlockSize(), 14);
     QCOMPARE(window->property("hint").toString(),
-             QString("Pixelate · 14 px blocks · Wheel to resize · Drag over an area"));
+             QString("Drag to pixelate · 14 px · Wheel resizes"));
     QCOMPARE(canvas->strokeWidth(), 4);
     QCOMPARE(canvas->textSize(), 25);
     canvas->setTool("text");
@@ -943,9 +988,9 @@ void EditorTests::qmlKeyboardCommands() {
     QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_P);
     QTRY_COMPARE(canvas->tool(), QString("blur"));
-    QCOMPARE(window->property("hint").toString(), QString("Pixelate · 12 px blocks · Wheel to resize · Drag over an area"));
+    QCOMPARE(window->property("hint").toString(), QString("Drag to pixelate · 12 px · Wheel resizes"));
     canvas->adjustToolSize(120);
-    QCOMPARE(window->property("hint").toString(), QString("Pixelate · 14 px blocks · Wheel to resize · Drag over an area"));
+    QCOMPARE(window->property("hint").toString(), QString("Drag to pixelate · 14 px · Wheel resizes"));
     QCOMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_B);
     QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));

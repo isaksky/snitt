@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img">
+<title>Highlight</title><desc>Highlight the entire rectangle from hollow mouse-down at (6,7) to solid mouse-up at (26,25), with yellow fill reaching both coordinates.</desc>
+<defs><linearGradient id="highlight-yellow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe779"/><stop offset="1" stop-color="#f7c83f"/></linearGradient></defs>
+<rect id="highlight-area" x="6" y="7" width="20" height="18" fill="url(#highlight-yellow)" fill-opacity="0.65"/>
+<g id="mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/>
+</svg>

@@ -180,17 +180,27 @@ void ImageDocument::paint(QPainter &p, qreal scale) const {
 QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     if (image().isNull() || !std::isfinite(scale) || scale <= 0) return {};
     if (operationCount == m_operationHistory[m_index].size() && qFuzzyCompare(scale, 1.0)) return image();
-    if (scale > 1 && (m_source.width() * scale > 16384 || m_source.height() * scale > 16384
-                      || double(m_source.width()) * m_source.height() * scale * scale > 32.0 * 1024 * 1024))
-        return {};
     const auto scaledSize = [&](QSize size) {
         return QSize(qMax(1, qRound(size.width() * scale)), qMax(1, qRound(size.height() * scale)));
     };
     const auto &ops = m_operationHistory[m_index];
     int lastRasterEdit = -1;
-    for (int i = 0; i < operationCount; ++i)
+    QSize outputSize = m_source.size();
+    for (int i = 0; i < operationCount; ++i) {
         if (ops[i].kind == Operation::Cut || ops[i].kind == Operation::Blur
             || ops[i].kind == Operation::Erase) lastRasterEdit = i;
+        if (ops[i].kind == Operation::Cut) {
+            const int removed = ops[i].end - ops[i].start;
+            if (ops[i].vertical) outputSize.rwidth() -= removed;
+            else outputSize.rheight() -= removed;
+        }
+    }
+    // Cuts replay at native resolution; only their remainder is enlarged. Using
+    // the original capture here incorrectly rejects a small, zoomed-in preview
+    // and makes paint() fall back to flattened, low-resolution annotations.
+    if (scale > 1 && (outputSize.width() * scale > 16384 || outputSize.height() * scale > 16384
+                      || double(outputSize.width()) * outputSize.height() * scale * scale > 32.0 * 1024 * 1024))
+        return {};
 
     bool annotationBeforeRasterEdit = false;
     for (int i = 0; i < lastRasterEdit; ++i)
