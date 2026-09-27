@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="660" viewBox="0 0 1040 660">
+<rect width="1040" height="660" fill="#111317"/>
+<g font-family="Helvetica,Arial,sans-serif" fill="#dfe5ed"><text x="32" y="38" font-size="23" font-weight="bold">Gesture icon concepts · v1</text><text x="32" y="66" font-size="15" fill="#b8c1ce">Hollow = mouse down · Solid = mouse up</text><text x="32" y="89" font-size="13" fill="#9ba5b5">Colored areas meet the marker coordinates exactly. Large views are 4× the source geometry.</text></g>
+<text x="182" y="125" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="19" fill="#dfe5ed">Cut</text>
+<rect x="32" y="145" width="306" height="218" rx="10" fill="#1b1e23"/>
+<text x="47" y="168" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Normal</text>
+<svg x="121" y="180" width="128" height="128" viewBox="0 0 32 32"><defs>
+<linearGradient id="cut-145-cut-paper" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#254454"/><stop offset="1" stop-color="#19323e"/></linearGradient>
+<clipPath id="cut-145-removed-band-clip"><rect x="7" y="4" width="10" height="24"/></clipPath>
+<pattern id="cut-145-cut-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" fill="none" stroke="#f18f8e" stroke-width="0.8" opacity="0.85"/></pattern>
+</defs>
+<rect x="3" y="4" width="26" height="24" rx="1" fill="url(#cut-145-cut-paper)" stroke="#80b8cb" stroke-width="1.1"/>
+<rect id="cut-145-removed-band" x="7" y="4" width="10" height="24" fill="#bb5359" fill-opacity="0.7"/>
+<g clip-path="url(#cut-145-removed-band-clip)"><rect x="7" y="4" width="10" height="24" fill="url(#cut-145-cut-hatch)"/></g>
+<path id="cut-145-cut-boundary" d="M17 4V28" stroke="#fff0d7" stroke-width="1.15" stroke-dasharray="1.5 2" fill="none"/>
+<g id="cut-145-mouse-down"><circle cx="7" cy="16" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="7" cy="16" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="cut-145-mouse-up" cx="17" cy="16" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="172" y="319" width="26" height="26" viewBox="0 0 32 32"><defs>
+<linearGradient id="cut-145-small-cut-paper" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#254454"/><stop offset="1" stop-color="#19323e"/></linearGradient>
+<clipPath id="cut-145-small-removed-band-clip"><rect x="7" y="4" width="10" height="24"/></clipPath>
+<pattern id="cut-145-small-cut-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" fill="none" stroke="#f18f8e" stroke-width="0.8" opacity="0.85"/></pattern>
+</defs>
+<rect x="3" y="4" width="26" height="24" rx="1" fill="url(#cut-145-small-cut-paper)" stroke="#80b8cb" stroke-width="1.1"/>
+<rect id="cut-145-small-removed-band" x="7" y="4" width="10" height="24" fill="#bb5359" fill-opacity="0.7"/>
+<g clip-path="url(#cut-145-small-removed-band-clip)"><rect x="7" y="4" width="10" height="24" fill="url(#cut-145-small-cut-hatch)"/></g>
+<path id="cut-145-small-cut-boundary" d="M17 4V28" stroke="#fff0d7" stroke-width="1.15" stroke-dasharray="1.5 2" fill="none"/>
+<g id="cut-145-small-mouse-down"><circle cx="7" cy="16" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="7" cy="16" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="cut-145-small-mouse-up" cx="17" cy="16" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="211" y="337" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<rect x="32" y="385" width="306" height="218" rx="10" fill="#283b50"/>
+<text x="47" y="408" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Selected</text>
+<svg x="121" y="420" width="128" height="128" viewBox="0 0 32 32"><defs>
+<linearGradient id="cut-385-cut-paper" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#254454"/><stop offset="1" stop-color="#19323e"/></linearGradient>
+<clipPath id="cut-385-removed-band-clip"><rect x="7" y="4" width="10" height="24"/></clipPath>
+<pattern id="cut-385-cut-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" fill="none" stroke="#f18f8e" stroke-width="0.8" opacity="0.85"/></pattern>
+</defs>
+<rect x="3" y="4" width="26" height="24" rx="1" fill="url(#cut-385-cut-paper)" stroke="#80b8cb" stroke-width="1.1"/>
+<rect id="cut-385-removed-band" x="7" y="4" width="10" height="24" fill="#bb5359" fill-opacity="0.7"/>
+<g clip-path="url(#cut-385-removed-band-clip)"><rect x="7" y="4" width="10" height="24" fill="url(#cut-385-cut-hatch)"/></g>
+<path id="cut-385-cut-boundary" d="M17 4V28" stroke="#fff0d7" stroke-width="1.15" stroke-dasharray="1.5 2" fill="none"/>
+<g id="cut-385-mouse-down"><circle cx="7" cy="16" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="7" cy="16" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="cut-385-mouse-up" cx="17" cy="16" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="172" y="559" width="26" height="26" viewBox="0 0 32 32"><defs>
+<linearGradient id="cut-385-small-cut-paper" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#254454"/><stop offset="1" stop-color="#19323e"/></linearGradient>
+<clipPath id="cut-385-small-removed-band-clip"><rect x="7" y="4" width="10" height="24"/></clipPath>
+<pattern id="cut-385-small-cut-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" fill="none" stroke="#f18f8e" stroke-width="0.8" opacity="0.85"/></pattern>
+</defs>
+<rect x="3" y="4" width="26" height="24" rx="1" fill="url(#cut-385-small-cut-paper)" stroke="#80b8cb" stroke-width="1.1"/>
+<rect id="cut-385-small-removed-band" x="7" y="4" width="10" height="24" fill="#bb5359" fill-opacity="0.7"/>
+<g clip-path="url(#cut-385-small-removed-band-clip)"><rect x="7" y="4" width="10" height="24" fill="url(#cut-385-small-cut-hatch)"/></g>
+<path id="cut-385-small-cut-boundary" d="M17 4V28" stroke="#fff0d7" stroke-width="1.15" stroke-dasharray="1.5 2" fill="none"/>
+<g id="cut-385-small-mouse-down"><circle cx="7" cy="16" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="7" cy="16" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="cut-385-small-mouse-up" cx="17" cy="16" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="211" y="577" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<text x="512" y="125" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="19" fill="#dfe5ed">Rectangle</text>
+<rect x="362" y="145" width="306" height="218" rx="10" fill="#1b1e23"/>
+<text x="377" y="168" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Normal</text>
+<svg x="451" y="180" width="128" height="128" viewBox="0 0 32 32"><defs><linearGradient id="rectangle-145-frame-blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8dd9ff"/><stop offset="1" stop-color="#499aca"/></linearGradient></defs>
+<rect id="rectangle-145-drawn-rectangle" x="6" y="7" width="20" height="18" fill="none" stroke="url(#rectangle-145-frame-blue)" stroke-width="2"/>
+<g id="rectangle-145-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="rectangle-145-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="502" y="319" width="26" height="26" viewBox="0 0 32 32"><defs><linearGradient id="rectangle-145-small-frame-blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8dd9ff"/><stop offset="1" stop-color="#499aca"/></linearGradient></defs>
+<rect id="rectangle-145-small-drawn-rectangle" x="6" y="7" width="20" height="18" fill="none" stroke="url(#rectangle-145-small-frame-blue)" stroke-width="2"/>
+<g id="rectangle-145-small-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="rectangle-145-small-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="541" y="337" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<rect x="362" y="385" width="306" height="218" rx="10" fill="#283b50"/>
+<text x="377" y="408" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Selected</text>
+<svg x="451" y="420" width="128" height="128" viewBox="0 0 32 32"><defs><linearGradient id="rectangle-385-frame-blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8dd9ff"/><stop offset="1" stop-color="#499aca"/></linearGradient></defs>
+<rect id="rectangle-385-drawn-rectangle" x="6" y="7" width="20" height="18" fill="none" stroke="url(#rectangle-385-frame-blue)" stroke-width="2"/>
+<g id="rectangle-385-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="rectangle-385-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="502" y="559" width="26" height="26" viewBox="0 0 32 32"><defs><linearGradient id="rectangle-385-small-frame-blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8dd9ff"/><stop offset="1" stop-color="#499aca"/></linearGradient></defs>
+<rect id="rectangle-385-small-drawn-rectangle" x="6" y="7" width="20" height="18" fill="none" stroke="url(#rectangle-385-small-frame-blue)" stroke-width="2"/>
+<g id="rectangle-385-small-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="rectangle-385-small-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="541" y="577" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<text x="842" y="125" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="19" fill="#dfe5ed">Highlight</text>
+<rect x="692" y="145" width="306" height="218" rx="10" fill="#1b1e23"/>
+<text x="707" y="168" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Normal</text>
+<svg x="781" y="180" width="128" height="128" viewBox="0 0 32 32"><defs><linearGradient id="highlight-145-highlight-yellow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe779"/><stop offset="1" stop-color="#f7c83f"/></linearGradient></defs>
+<rect id="highlight-145-highlight-area" x="6" y="7" width="20" height="18" fill="url(#highlight-145-highlight-yellow)" fill-opacity="0.65"/>
+<g id="highlight-145-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="highlight-145-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="832" y="319" width="26" height="26" viewBox="0 0 32 32"><defs><linearGradient id="highlight-145-small-highlight-yellow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe779"/><stop offset="1" stop-color="#f7c83f"/></linearGradient></defs>
+<rect id="highlight-145-small-highlight-area" x="6" y="7" width="20" height="18" fill="url(#highlight-145-small-highlight-yellow)" fill-opacity="0.65"/>
+<g id="highlight-145-small-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="highlight-145-small-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="871" y="337" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<rect x="692" y="385" width="306" height="218" rx="10" fill="#283b50"/>
+<text x="707" y="408" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">Selected</text>
+<svg x="781" y="420" width="128" height="128" viewBox="0 0 32 32"><defs><linearGradient id="highlight-385-highlight-yellow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe779"/><stop offset="1" stop-color="#f7c83f"/></linearGradient></defs>
+<rect id="highlight-385-highlight-area" x="6" y="7" width="20" height="18" fill="url(#highlight-385-highlight-yellow)" fill-opacity="0.65"/>
+<g id="highlight-385-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="highlight-385-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<svg x="832" y="559" width="26" height="26" viewBox="0 0 32 32"><defs><linearGradient id="highlight-385-small-highlight-yellow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe779"/><stop offset="1" stop-color="#f7c83f"/></linearGradient></defs>
+<rect id="highlight-385-small-highlight-area" x="6" y="7" width="20" height="18" fill="url(#highlight-385-small-highlight-yellow)" fill-opacity="0.65"/>
+<g id="highlight-385-small-mouse-down"><circle cx="6" cy="7" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="6" cy="7" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="highlight-385-small-mouse-up" cx="26" cy="25" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/></svg>
+<text x="871" y="577" font-family="Helvetica,Arial,sans-serif" font-size="12" fill="#b8c1ce">26 px</text>
+<text x="32" y="637" font-family="Helvetica,Arial,sans-serif" font-size="13" fill="#b8c1ce">Cut: red band ends at the dashed line under the solid marker. Highlight: yellow reaches the solid bottom-right marker.</text></svg>

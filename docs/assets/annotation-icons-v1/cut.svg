@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img">
+<title>Cut</title><desc>Remove the full-height red-hatched strip between hollow mouse-down at (7,16) and solid mouse-up at (17,16). The strip reaches the endpoint without a gap.</desc>
+<defs>
+<linearGradient id="cut-paper" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#254454"/><stop offset="1" stop-color="#19323e"/></linearGradient>
+<clipPath id="removed-band-clip"><rect x="7" y="4" width="10" height="24"/></clipPath>
+<pattern id="cut-hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" fill="none" stroke="#f18f8e" stroke-width="0.8" opacity="0.85"/></pattern>
+</defs>
+<rect x="3" y="4" width="26" height="24" rx="1" fill="url(#cut-paper)" stroke="#80b8cb" stroke-width="1.1"/>
+<rect id="removed-band" x="7" y="4" width="10" height="24" fill="#bb5359" fill-opacity="0.7"/>
+<g clip-path="url(#removed-band-clip)"><rect x="7" y="4" width="10" height="24" fill="url(#cut-hatch)"/></g>
+<path id="cut-boundary" d="M17 4V28" stroke="#fff0d7" stroke-width="1.15" stroke-dasharray="1.5 2" fill="none"/>
+<g id="mouse-down"><circle cx="7" cy="16" r="2.7" fill="none" stroke="#111317" stroke-width="2.4"/><circle cx="7" cy="16" r="2.7" fill="none" stroke="#fff6df" stroke-width="1.4"/></g><circle id="mouse-up" cx="17" cy="16" r="2.6" fill="#fff6df" stroke="#111317" stroke-width="0.8"/>
+</svg>
