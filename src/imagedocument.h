@@ -25,10 +25,12 @@ public:
     bool cut(bool vertical, int start, int end);
     bool blur(QRectF area, int blockSize = 12);
     bool erase(QRectF area, QPointF samplePosition);
-    bool annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth = 4);
+    bool annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth = 4,
+                  bool goodMode = false);
     bool text(QRectF box, const QString &text, QColor color, int fontSize = 24);
     static void drawAnnotation(QPainter &painter, const QString &tool,
-                               QPointF start, QPointF end, QColor color, qreal strokeWidth = 4);
+                               QPointF start, QPointF end, QColor color, qreal strokeWidth = 4,
+                               bool goodMode = false);
     static void drawPixelation(QPainter &painter, const QImage &source,
                               const QRect &area, int blockSize = 12);
 private:
@@ -43,6 +45,7 @@ private:
         QString tool, text;
         QPointF from, to;
         QColor color;
+        bool goodMode = false;
         qreal strokeWidth = 0;
         int fontSize = 0;
     };

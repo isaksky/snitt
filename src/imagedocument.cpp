@@ -1,5 +1,5 @@
 #include "imagedocument.h"
-#include <QFont>
+#include "annotationfont.h"
 #include <QPainter>
 #include <QRegion>
 #include <algorithm>
@@ -115,14 +115,7 @@ bool ImageDocument::hasAnnotations() const {
         } else {
             QPainter p(&mask);
             p.setRenderHint(QPainter::TextAntialiasing);
-#ifdef Q_OS_WIN
-            QFont font(QStringLiteral("Segoe UI"));
-#else
-            QFont font(QStringLiteral("Helvetica"));
-#endif
-            font.setPixelSize(op.fontSize);
-            font.setWeight(QFont::DemiBold);
-            p.setFont(font);
+            p.setFont(annotationfont::make(op.fontSize));
             p.setPen(Qt::white);
             p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
         }
@@ -151,14 +144,7 @@ qreal ImageDocument::exportScale() const {
 void ImageDocument::drawText(QPainter &p, const Operation &op) {
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
-#ifdef Q_OS_WIN
-    QFont font(QStringLiteral("Segoe UI"));
-#else
-    QFont font(QStringLiteral("Helvetica"));
-#endif
-    font.setPixelSize(op.fontSize);
-    font.setWeight(QFont::DemiBold);
-    p.setFont(font);
+    p.setFont(annotationfont::make(op.fontSize));
     p.setPen(op.color);
     p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
 }
@@ -184,7 +170,7 @@ void ImageDocument::paint(QPainter &p, qreal scale) const {
         const auto &op = ops[i];
         p.save();
         if (op.kind == Operation::Annotation)
-            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth, op.goodMode);
         else
             drawText(p, op);
         p.restore();
@@ -293,7 +279,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
             p.setClipRegion(fragment.visible);
             const auto &op = *fragment.annotation;
             if (op.kind == Operation::Annotation)
-                drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+                drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth, op.goodMode);
             else drawText(p, op);
             p.restore();
         }
@@ -340,7 +326,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                     break;
                 }
                 case Operation::Annotation:
-                    replay.annotate(op.tool, op.from, op.to, op.color, op.strokeWidth); break;
+                    replay.annotate(op.tool, op.from, op.to, op.color, op.strokeWidth, op.goodMode); break;
                 case Operation::Text: replay.text(op.area, op.text, op.color, op.fontSize); break;
                 }
             }
@@ -355,7 +341,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
         QPainter p(&result);
         p.scale(scale, scale);
         if (op.kind == Operation::Annotation)
-            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth);
+            drawAnnotation(p, op.tool, op.from, op.to, op.color, op.strokeWidth, op.goodMode);
         else if (op.kind == Operation::Text) drawText(p, op);
     }
     return result;
@@ -465,11 +451,11 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
 }
 
 void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
-                                   QPointF start, QPointF end, QColor color, qreal strokeWidth) {
+                                   QPointF start, QPointF end, QColor color, qreal strokeWidth, bool goodMode) {
     p.setRenderHint(QPainter::Antialiasing);
     if (tool == "highlight") {
         // Source-over composition makes overlapping highlights accumulate.
-        QColor fill = color == QColor("#22c55e") ? QColor("#ffff00") : QColor("#ff6b6b");
+        QColor fill = goodMode ? QColor("#ffff00") : QColor("#ff6b6b");
         fill.setAlphaF(0.3);
         p.fillRect(QRectF(start, end).normalized(), fill);
         return;
@@ -493,7 +479,8 @@ void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
     }
 }
 
-bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth) {
+bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth,
+                             bool goodMode) {
     if (image().isNull() || (tool != "rect" && tool != "arrow" && tool != "highlight")
         || QLineF(start, end).length() < 3)
         return false;
@@ -502,10 +489,10 @@ bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QC
         return false;
     QImage result = image().copy();
     QPainter p(&result);
-    drawAnnotation(p, tool, start, end, color, strokeWidth);
+    drawAnnotation(p, tool, start, end, color, strokeWidth, goodMode);
     p.end();
     Operation op; op.kind = Operation::Annotation; op.tool = tool; op.from = start; op.to = end;
-    op.color = color; op.strokeWidth = strokeWidth;
+    op.color = color; op.goodMode = goodMode; op.strokeWidth = strokeWidth;
     commit(std::move(result), &op);
     return true;
 }
@@ -517,14 +504,7 @@ bool ImageDocument::text(QRectF box, const QString &text, QColor color, int font
     QPainter p(&result);
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
-#ifdef Q_OS_WIN
-    QFont font(QStringLiteral("Segoe UI"));
-#else
-    QFont font(QStringLiteral("Helvetica"));
-#endif
-    font.setPixelSize(fontSize);
-    font.setWeight(QFont::DemiBold);
-    p.setFont(font);
+    p.setFont(annotationfont::make(fontSize));
     p.setPen(color);
     p.drawText(box, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
     p.end();

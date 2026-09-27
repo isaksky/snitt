@@ -1,8 +1,8 @@
 #include "editorcanvas.h"
+#include "annotationfont.h"
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QImageReader>
-#include <QStandardPaths>
 #include "screenshotsave.h"
 #include <QPainter>
 #include <cmath>
@@ -11,6 +11,8 @@ EditorCanvas::EditorCanvas(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setAntialiasing(true);
     setClip(true);
 }
+
+QString EditorCanvas::annotationFontFamily() const { return annotationfont::family(); }
 
 qreal EditorCanvas::imageScale() const {
     if (!hasImage()) return 1;
@@ -38,8 +40,36 @@ void EditorCanvas::setTool(const QString &tool) {
 }
 
 void EditorCanvas::setInk(QColor ink) {
-    if (ink == m_ink) return;
+    const bool modeChanged = m_colorMode != QStringLiteral("custom");
+    m_colorMode = QStringLiteral("custom");
+    if (ink == m_ink && !modeChanged) return;
     m_ink = ink;
+    emit inkChanged();
+    update();
+}
+
+void EditorCanvas::setGoodColor(const QColor &color) {
+    if (!color.isValid() || color == m_goodColor) return;
+    m_goodColor = color;
+    if (m_colorMode == QStringLiteral("good")) m_ink = m_goodColor;
+    emit inkChanged();
+    update();
+}
+
+void EditorCanvas::setBadColor(const QColor &color) {
+    if (!color.isValid() || color == m_badColor) return;
+    m_badColor = color;
+    if (m_colorMode == QStringLiteral("bad")) m_ink = m_badColor;
+    emit inkChanged();
+    update();
+}
+
+void EditorCanvas::setInkMode(const QString &mode) {
+    if (mode != QStringLiteral("good") && mode != QStringLiteral("bad")) return;
+    const QColor color = mode == QStringLiteral("good") ? m_goodColor : m_badColor;
+    if (m_colorMode == mode && m_ink == color) return;
+    m_colorMode = mode;
+    m_ink = color;
     emit inkChanged();
     update();
 }
@@ -132,7 +162,8 @@ void EditorCanvas::paint(QPainter *p) {
         p->setBrush(Qt::NoBrush);
         p->drawRect(area);
     } else {
-        ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink, m_strokeWidth);
+        ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink, m_strokeWidth,
+                                      m_colorMode == QStringLiteral("good"));
     }
 }
 
@@ -185,7 +216,7 @@ QImage EditorCanvas::exportImage() const {
 }
 
 QString EditorCanvas::save() {
-    return saveTo(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation));
+    return saveTo(m_saveRoot);
 }
 
 QString EditorCanvas::saveTo(const QString &pictures) {
@@ -246,7 +277,8 @@ void EditorCanvas::end(qreal x, qreal y) {
     } else if (m_tool == "erase") {
         m_document.erase(QRectF(m_start, m_end), m_start);
     } else {
-        m_document.annotate(m_tool, m_start, m_end, m_ink, m_strokeWidth);
+            m_document.annotate(m_tool, m_start, m_end, m_ink, m_strokeWidth,
+                                m_colorMode == QStringLiteral("good"));
     }
     changed();
 }

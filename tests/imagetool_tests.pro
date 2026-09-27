@@ -5,5 +5,5 @@ TARGET = imagetool_tests
 TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
-HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/screenshotsave.h
+HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/annotationfont.h ../src/screenshotsave.h ../src/savepaths.h
 SOURCES += imagetool_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../src/screenshotsave.cpp

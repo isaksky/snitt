@@ -1,4 +1,5 @@
 #include "regionselector.h"
+#include "appsettings.h"
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -8,6 +9,7 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QSvgRenderer>
+#include <QKeySequence>
 #include <cmath>
 
 namespace {
@@ -30,9 +32,9 @@ QIcon toolbarIcon(const QString &name) {
 }
 }
 
-RegionSelector::RegionSelector(QImage image, const QRect &geometry)
+RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings *settings)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
-      m_image(std::move(image)) {
+      m_image(std::move(image)), m_settings(settings) {
     setObjectName("regionSelector");
     setWindowTitle("xshot — Select a region");
     // paintEvent covers the entire window with the frozen desktop.
@@ -71,14 +73,14 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
         return control;
     };
     m_singleButton = button("Region", "singleCaptureButton");
-    m_multipleButton = button("Multiple (M)", "multipleCaptureButton");
-    m_videoButton = button("Video (V)", "videoCaptureButton");
+    m_multipleButton = button(QString(), "multipleCaptureButton");
+    m_videoButton = button(QString(), "videoCaptureButton");
     m_singleButton->setIcon(toolbarIcon("square-dashed"));
     m_multipleButton->setIcon(toolbarIcon("copy"));
     m_videoButton->setIcon(toolbarIcon("video"));
     m_singleButton->setToolTip("Select a region");
-    m_multipleButton->setToolTip("Select multiple regions (M)");
-    m_videoButton->setToolTip("Record a region (V)");
+    m_multipleButton->setToolTip(QString());
+    m_videoButton->setToolTip(QString());
     for (auto *control : {m_singleButton, m_multipleButton, m_videoButton}) {
         control->setCheckable(true);
         control->setIconSize(QSize(22, 22));
@@ -129,12 +131,21 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry)
     });
     updateToolbar();
     layoutControls();
+    if (m_settings) connect(m_settings, &AppSettings::settingsChanged, this, &RegionSelector::updateToolbar);
 }
 
 void RegionSelector::updateToolbar() {
     m_singleButton->setChecked(!m_multiple && !m_video);
     m_multipleButton->setChecked(m_multiple && !m_video);
     m_multipleButton->setEnabled(!m_video);
+    const QString multipleHint = shortcutHint(QStringLiteral("regionMultiple"), QStringLiteral("M"));
+    const QString videoHint = shortcutHint(QStringLiteral("regionVideo"), QStringLiteral("V"));
+    const QString cancelHint = shortcutHint(QStringLiteral("regionCancel"), QStringLiteral("Escape"));
+    m_multipleButton->setText(QStringLiteral("Multiple (%1)").arg(multipleHint));
+    m_videoButton->setText(QStringLiteral("Video (%1)").arg(videoHint));
+    m_multipleButton->setToolTip(QStringLiteral("Select multiple regions (%1)").arg(multipleHint));
+    m_videoButton->setToolTip(QStringLiteral("Record a region (%1)").arg(videoHint));
+    m_cancelButton->setAccessibleName(QStringLiteral("Cancel selection (%1)").arg(cancelHint));
     m_videoButton->setChecked(m_video);
     m_instruction->setText(m_video ? "Drag to record." : m_multiple ? "Drag to add regions." : "Drag to capture.");
     m_count->setText(m_multiple && !m_video ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
@@ -148,13 +159,17 @@ void RegionSelector::updateToolbar() {
 void RegionSelector::layoutControls() {
     if (!m_toolbar) return;
     const bool compact = width() < 560;
-    m_cancelButton->setText(compact ? "Esc" : "Cancel (Esc)");
+    const QString cancelHint = shortcutHint(QStringLiteral("regionCancel"), QStringLiteral("Escape"));
+    const QString arrangeHint = shortcutHint(QStringLiteral("regionArrange"), QStringLiteral("Enter"));
+    m_cancelButton->setText(compact ? cancelHint : QStringLiteral("Cancel (%1)").arg(cancelHint));
     QFont font = m_toolbar->font();
     font.setPixelSize(compact ? 12 : 14);
     m_toolbar->setFont(font);
     // Stylesheet-backed controls can keep a resolved font of their own.
     for (auto *control : m_toolbar->findChildren<QWidget *>()) control->setFont(font);
     m_count->setFixedWidth(compact ? 64 : 86);
+    m_arrangeButton->setText(QStringLiteral("Arrange (%1)").arg(arrangeHint));
+    m_arrangeButton->setToolTip(QStringLiteral("Continue to Arrange (%1)").arg(arrangeHint));
     m_arrangeButton->setFixedWidth(compact ? 132 : 164);
     const int panelWidth = qMin(760, qMax(1, width() - 24));
     m_toolbar->setGeometry((width() - panelWidth) / 2, 24, panelWidth, 104);
@@ -169,6 +184,23 @@ void RegionSelector::layoutControls() {
     }
     m_toolbar->raise();
     m_noticeLabel->raise();
+}
+
+QString RegionSelector::shortcutHint(const QString &name, const QString &fallback) const {
+    if (!m_settings) return fallback;
+    const QString hint = m_settings->shortcutHints().value(name).toString();
+    return hint.isEmpty() ? fallback : hint;
+}
+
+bool RegionSelector::matchesShortcut(const QKeyEvent *event, const QString &name) const {
+    if (!m_settings) return false;
+    const QStringList bindings = m_settings->shortcuts().value(name).toStringList();
+    const Qt::KeyboardModifiers modifiers = event->modifiers()
+        & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier);
+    const QKeySequence pressed(QKeyCombination(modifiers, static_cast<Qt::Key>(event->key())));
+    for (const QString &binding : bindings)
+        if (QKeySequence::fromString(binding, QKeySequence::PortableText) == pressed) return true;
+    return false;
 }
 
 void RegionSelector::resizeEvent(QResizeEvent *event) {
@@ -311,11 +343,10 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void RegionSelector::keyPressEvent(QKeyEvent *event) {
-    if (event->key() == Qt::Key_Escape) emit canceled();
-    else if (event->key() == Qt::Key_V) { m_dragging = false; emit videoRequested(); update(); }
-    else if (event->key() == Qt::Key_M && !m_video) { m_dragging = false; emit multipleRequested(); update(); }
-    else if (m_multiple && m_total > 0 && !m_dragging && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
-             && event->modifiers() == Qt::NoModifier) emit accepted();
-    else if (m_multiple && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)) emit removeLastRequested();
+    if (matchesShortcut(event, QStringLiteral("regionCancel"))) emit canceled();
+    else if (matchesShortcut(event, QStringLiteral("regionVideo"))) { m_dragging = false; emit videoRequested(); update(); }
+    else if (!m_video && matchesShortcut(event, QStringLiteral("regionMultiple"))) { m_dragging = false; emit multipleRequested(); update(); }
+    else if (m_multiple && m_total > 0 && !m_dragging && matchesShortcut(event, QStringLiteral("regionArrange"))) emit accepted();
+    else if (m_multiple && matchesShortcut(event, QStringLiteral("regionRemoveLast"))) emit removeLastRequested();
     else QWidget::keyPressEvent(event);
 }

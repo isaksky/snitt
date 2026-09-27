@@ -18,7 +18,7 @@ public:
     bool finishing() const { return m_finishing; }
     int elapsed() const { return m_elapsed; }
     QString path() const { return m_output; }
-    void start(const recording::Source &source);
+    void start(const recording::Source &source, const QString &saveRoot);
     void finish();
     void cancel();
 

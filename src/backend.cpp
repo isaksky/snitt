@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QWindow>
 #include "regionselector.h"
+#include "appsettings.h"
 #ifdef Q_OS_MACOS
 #include <CoreGraphics/CoreGraphics.h>
 #endif
@@ -18,7 +19,7 @@
 #include <dwmapi.h>
 #endif
 
-Backend::Backend(QObject *parent) : QObject(parent) {
+Backend::Backend(AppSettings *settings, QObject *parent) : QObject(parent), m_settings(settings) {
     connect(&m_recorder, &Recorder::changed, this, &Backend::recordingChanged);
     connect(&m_recorder, &Recorder::processStarted, this, &Backend::recordingProcessStarted);
     connect(&m_recorder, &Recorder::ready, this, &Backend::recordingReady);
@@ -122,7 +123,7 @@ bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls, QOb
     }
     const recording::Source source = m_pendingSource;
     m_pendingRecording = false;
-    m_recorder.start(source);
+    m_recorder.start(source, m_settings ? m_settings->videosRoot() : QString());
     emit recordingChanged();
     return m_recorder.active();
 #else
@@ -233,7 +234,7 @@ void Backend::showSelectors() {
     QPointer<RegionSelector> active;
     for (const auto &screen : m_screens) {
         if (screen.image.isNull()) continue;
-        auto *selector = new RegionSelector(screen.image, screen.geometry);
+        auto *selector = new RegionSelector(screen.image, screen.geometry, m_settings);
         m_selectors.append(selector);
         if (screen.geometry.contains(QCursor::pos())) active = selector;
         connect(selector, &RegionSelector::canceled, this, [this] { finish(); });
@@ -380,7 +381,7 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     m_pendingRecording = true;
     emit recordingChanged();
 #else
-    m_recorder.start(source);
+    m_recorder.start(source, m_settings ? m_settings->videosRoot() : QString());
 #endif
     finish(false);
 }

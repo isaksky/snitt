@@ -2,13 +2,16 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QDir>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QTemporaryDir>
+#include <QTimeZone>
 #include "imagedocument.h"
 #include "editorcanvas.h"
+#include "annotationfont.h"
 #include "screenshotsave.h"
 
 class ImageToolTests : public QObject {
@@ -20,7 +23,9 @@ private slots:
     void eraseUsesExactDragStartPixel();
     void scaledGesturesAndClipboard();
     void highlightsPreviewAndHistory();
+    void logicalGoodBadColorsFollowPalette();
     void annotationSizingAndPreview();
+    void annotationFontSelectionAndTextReplay();
     void replayedAnnotationsAndExportPolicy();
     void replayedEditsKeepOperationOrder();
     void fractionalCutsKeepPrivacyMasksAligned();
@@ -30,6 +35,8 @@ private slots:
     void fractionalCutsKeepEarlierAnnotationsInsideMasks();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
+    void saveUsesConfiguredMediaRoot();
+    void savePngUsesLocalYearAndMonthFolders();
 };
 
 static QImage sourceImage() {
@@ -216,7 +223,8 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     canvas.setWidth(432); canvas.setHeight(332); // 5x fit preview.
     QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
     canvas.setTool("highlight");
-    canvas.setInk(QColor("#22c55e"));
+    canvas.setGoodColor(QColor("#386ab3"));
+    canvas.setInkMode("good");
     const auto point = [&canvas](QPointF source) {
         return canvas.imageRect().topLeft() + source * canvas.imageScale();
     };
@@ -243,7 +251,8 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     QVERIFY(canvas.copy());
     const QImage overlap = QGuiApplication::clipboard()->image();
     QVERIFY(pixelAt(overlap, 40, 30).blue() < pixelAt(one, 40, 30).blue());
-    canvas.setInk(QColor("#ef4444"));
+    canvas.setBadColor(QColor("#d94c63"));
+    canvas.setInkMode("bad");
     canvas.begin(point({5, 5}).x(), point({5, 5}).y());
     canvas.end(point({15, 15}).x(), point({15, 15}).y());
     QVERIFY(canvas.copy());
@@ -256,6 +265,24 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     canvas.redo(); canvas.redo();
     QVERIFY(canvas.copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), bothModes);
+}
+
+void ImageToolTests::logicalGoodBadColorsFollowPalette() {
+    EditorCanvas canvas;
+    canvas.setGoodColor(QColor("#386ab3"));
+    canvas.setBadColor(QColor("#d94c63"));
+    canvas.setInkMode("good");
+    QCOMPARE(canvas.colorMode(), QString("good"));
+    QCOMPARE(canvas.ink(), QColor("#386ab3"));
+    canvas.setGoodColor(QColor("#36b37e"));
+    QCOMPARE(canvas.colorMode(), QString("good"));
+    QCOMPARE(canvas.ink(), QColor("#36b37e"));
+    canvas.setInkMode("bad");
+    QCOMPARE(canvas.colorMode(), QString("bad"));
+    QCOMPARE(canvas.ink(), QColor("#d94c63"));
+    canvas.setBadColor(QColor("#a7475e"));
+    QCOMPARE(canvas.colorMode(), QString("bad"));
+    QCOMPARE(canvas.ink(), QColor("#a7475e"));
 }
 
 void ImageToolTests::annotationSizingAndPreview() {
@@ -362,6 +389,46 @@ void ImageToolTests::replayedAnnotationsAndExportPolicy() {
     QCOMPARE(doc.render(doc.exportScale()).size(), adequate.size());
 }
 
+void ImageToolTests::annotationFontSelectionAndTextReplay() {
+    const QString system = QStringLiteral("System Sans");
+    QCOMPARE(annotationfont::selectFamily({QStringLiteral("Impact"), QStringLiteral("Segoe UI")},
+                                          annotationfont::Platform::Windows, system), QStringLiteral("Impact"));
+    QCOMPARE(annotationfont::selectFamily({QStringLiteral("Impact"), QStringLiteral("Helvetica")},
+                                          annotationfont::Platform::MacOS, system), QStringLiteral("Impact"));
+    QCOMPARE(annotationfont::selectFamily({QStringLiteral("Segoe UI"), system},
+                                          annotationfont::Platform::Windows, system), QStringLiteral("Segoe UI"));
+    QCOMPARE(annotationfont::selectFamily({QStringLiteral("Helvetica"), system},
+                                          annotationfont::Platform::MacOS, system), QStringLiteral("Helvetica"));
+    QCOMPARE(annotationfont::selectFamily({system}, annotationfont::Platform::Windows, system), system);
+    QCOMPARE(annotationfont::selectFamily({system}, annotationfont::Platform::MacOS, system), system);
+
+    const QFont font = annotationfont::make(17);
+    QCOMPARE(font.family(), annotationfont::family());
+    QCOMPARE(font.pixelSize(), 17);
+    QCOMPARE(font.weight(), QFont::DemiBold);
+
+    QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
+    white.fill(Qt::white);
+    ImageDocument document;
+    document.reset(white);
+    QVERIFY(document.text(QRectF(3, 3, 70, 18), QStringLiteral("Single line"), Qt::red, 12));
+    const QImage singleLine = document.image();
+    QVERIFY(singleLine != white);
+    QVERIFY(document.text(QRectF(3, 24, 44, 33), QStringLiteral("Wrapped\nannotation"), Qt::blue, 12));
+    QVERIFY(document.image() != singleLine);
+    QVERIFY(document.hasAnnotations());
+    QCOMPARE(document.exportScale(), 3.0);
+    const QImage enlarged = document.render(document.exportScale());
+    QCOMPARE(enlarged.size(), QSize(240, 180));
+    QVERIFY(enlarged != document.image().scaled(enlarged.size(), Qt::IgnoreAspectRatio,
+                                                 Qt::FastTransformation));
+    document.undo();
+    const QImage singleLineExport = document.render(3.0);
+    QVERIFY(singleLineExport != enlarged);
+    document.redo();
+    QCOMPARE(document.render(3.0), enlarged);
+}
+
 void ImageToolTests::replayedEditsKeepOperationOrder() {
     QImage white(80, 60, QImage::Format_ARGB32_Premultiplied);
     white.fill(Qt::white);
@@ -386,7 +453,7 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(doc.erase(QRectF(35, 8, 15, 8), {35, 8}));
     const QImage erased = doc.render(3);
     QVERIFY(erased.pixelColor(120, 30).red() <= erased.pixelColor(120, 30).green() + 20);
-    QVERIFY(doc.annotate("highlight", {35, 8}, {50, 16}, Qt::green, 2));
+    QVERIFY(doc.annotate("highlight", {35, 8}, {50, 16}, Qt::green, 2, true));
     const QImage lateAnnotation = doc.render(3);
     QVERIFY(lateAnnotation != erased); // A later annotation remains above the erase.
 
@@ -857,7 +924,7 @@ void ImageToolTests::failedSavePreservesSession() {
     QVERIFY(canvas.copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), before);
     QGuiApplication::clipboard()->setText("leave this clipboard alone");
-    QVERIFY(!QFileInfo::exists(QDir(blocked).filePath("xshot")));
+    QVERIFY(!QFileInfo::exists(QDir(blocked).filePath(QDate::currentDate().toString("yyyy"))));
 }
 
 void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {
@@ -865,13 +932,14 @@ void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {
     QVERIFY(pictures.isValid());
     const QImage original = sourceImage();
     QString error;
-    const QString first = screenshots::savePng(original, pictures.path(), &error);
+    const QDateTime saveTime(QDate(2026, 9, 18), QTime(14, 30), QTimeZone::systemTimeZone());
+    const QString first = screenshots::savePng(original, pictures.path(), &error, saveTime);
     QVERIFY2(!first.isEmpty(), qPrintable(error));
-    const QString second = screenshots::savePng(original, pictures.path(), &error);
+    const QString second = screenshots::savePng(original, pictures.path(), &error, saveTime);
     QVERIFY2(!second.isEmpty(), qPrintable(error));
     QVERIFY(first != second);
     QVERIFY(first.endsWith(".png") && second.endsWith(".png"));
-    QCOMPARE(QFileInfo(first).absolutePath(), pictures.filePath("xshot"));
+    QCOMPARE(QFileInfo(first).absolutePath(), pictures.filePath("2026/9"));
     QCOMPARE(QImage(first).convertToFormat(original.format()), original);
     QCOMPARE(QImage(second).convertToFormat(original.format()), original);
     QVERIFY(QFileInfo(first).size() > 0);
@@ -884,6 +952,57 @@ void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {
     QVERIFY(screenshots::savePng(original, blocked, &error).isEmpty());
     QVERIFY(error.contains("Could not create the screenshots folder"));
     QCOMPARE(QImage(first).convertToFormat(original.format()), original);
+}
+
+void ImageToolTests::saveUsesConfiguredMediaRoot() {
+    QTemporaryDir sourceDirectory;
+    QTemporaryDir mediaDirectory;
+    QVERIFY(sourceDirectory.isValid());
+    QVERIFY(mediaDirectory.isValid());
+    const QString source = sourceDirectory.filePath("source.png");
+    QVERIFY(sourceImage().save(source));
+    EditorCanvas canvas;
+    canvas.setSaveRoot(mediaDirectory.filePath("custom captures"));
+    QVERIFY(canvas.load(QUrl::fromLocalFile(source)));
+    const QString saved = canvas.save();
+    QVERIFY2(!saved.isEmpty(), "The canvas did not save to its configured media root");
+    QCOMPARE(QFileInfo(saved).absolutePath(), QDir(canvas.saveRoot()).filePath(
+        QStringLiteral("%1/%2").arg(QString::number(QDate::currentDate().year()).rightJustified(4, QLatin1Char('0')))
+            .arg(QDate::currentDate().month())));
+    QVERIFY(QFileInfo(saved).isAbsolute());
+    QCOMPARE(QImage(saved).convertToFormat(sourceImage().format()), sourceImage());
+}
+
+void ImageToolTests::savePngUsesLocalYearAndMonthFolders() {
+    QTemporaryDir pictures;
+    QVERIFY(pictures.isValid());
+    const QString legacyDirectory = pictures.path();
+    QVERIFY(QDir().mkpath(legacyDirectory));
+    const QString legacyPath = QDir(legacyDirectory).filePath("existing.png");
+    const QByteArray legacyContents("leave existing files in place");
+    QFile legacyFile(legacyPath);
+    QVERIFY(legacyFile.open(QIODevice::WriteOnly));
+    QCOMPARE(legacyFile.write(legacyContents), qint64(legacyContents.size()));
+    legacyFile.close();
+
+    const QImage original = sourceImage();
+    const QList<QPair<QDateTime, QString>> cases{
+        {QDateTime(QDate(2026, 9, 30), QTime(23, 59), QTimeZone::systemTimeZone()), "2026/9"},
+        {QDateTime(QDate(2026, 10, 1), QTime(0, 1), QTimeZone::systemTimeZone()), "2026/10"},
+        {QDateTime(QDate(2026, 12, 31), QTime(23, 59), QTimeZone::systemTimeZone()), "2026/12"},
+        {QDateTime(QDate(2027, 1, 1), QTime(0, 1), QTimeZone::systemTimeZone()), "2027/1"}};
+    QString error;
+    for (const auto &entry : cases) {
+        const QString saved = screenshots::savePng(original, pictures.path(), &error, entry.first);
+        QVERIFY2(!saved.isEmpty(), qPrintable(error));
+        QCOMPARE(QFileInfo(saved).absolutePath(), pictures.filePath(entry.second));
+        QVERIFY(QFileInfo(saved).fileName().startsWith(
+            QStringLiteral("xshot-%1-").arg(entry.first.toLocalTime().toString("yyyyMMdd-HHmmss-zzz"))));
+        QCOMPARE(QImage(saved).convertToFormat(original.format()), original);
+    }
+    QVERIFY(QFileInfo::exists(legacyPath));
+    QVERIFY(legacyFile.open(QIODevice::ReadOnly));
+    QCOMPARE(legacyFile.readAll(), legacyContents);
 }
 
 QTEST_MAIN(ImageToolTests)

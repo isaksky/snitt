@@ -6,14 +6,19 @@
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlContext>
+#include <QQmlProperty>
 #include <QQuickStyle>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QApplication>
+#include <QAccessible>
 #include <QScreen>
 #include <QTimer>
 #include <QFileInfo>
+#include <QDate>
 #include <QFile>
+#include <QSaveFile>
+#include <QSettings>
 #include <QCryptographicHash>
 #include <QScopeGuard>
 #include <QLabel>
@@ -21,13 +26,17 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <QDir>
+#include <QDirIterator>
 #include <QStandardPaths>
+#include <QSet>
 #include <QMediaPlayer>
 #include <QVideoFrame>
 #include <QVideoSink>
 #include "backend.h"
 #include "regionselector.h"
 #include "globalhotkey.h"
+#include "appsettings.h"
+#include "annotationfont.h"
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #elif defined(Q_OS_MACOS)
@@ -47,6 +56,7 @@ private slots:
     void scaledGesturesAndClipboard();
     void failedLoadPreservesImage();
     void qmlLoadsAndPlacesText();
+    void qmlAnnotationToolbarResponsiveLayout();
     void qmlToolbarPasteReplacesTextDraft();
     void qmlWheelSizes();
     void qmlSaveAndClose();
@@ -65,6 +75,10 @@ private slots:
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
     void windowsCaptureLatency();
+    void settingsCreateDefaultsAndPreserveEdits();
+    void settingsReloadsAtomicEditsAndRecovers();
+    void settingsRejectConflictsAndRollbackNativeHotkey();
+    void settingsUpdateEditorShortcutsHintsAndColorsLive();
 #ifdef Q_OS_WIN
     void windowsRecordingOverlayExclusionFailure();
 #endif
@@ -84,6 +98,45 @@ static QQuickItem *visualItem(QQuickItem *parent, const QString &name) {
     for (QQuickItem *child : parent->childItems())
         if (auto *found = visualItem(child, name)) return found;
     return nullptr;
+}
+
+static QString accessibleName(QQuickItem *item) {
+    auto *accessible = QAccessible::queryAccessibleInterface(item);
+    return accessible ? accessible->text(QAccessible::Name) : QString();
+}
+
+static AppSettings &isolatedSettings() {
+    static QTemporaryDir *directory = new QTemporaryDir;
+    static AppSettings *settings = [] {
+        AppSettings::Paths paths;
+        paths.settingsFile = directory->filePath("config/settings.ini");
+        paths.guideFile = directory->filePath("config/settings-format.md");
+        paths.defaultPicturesRoot = directory->filePath("Pictures/xshot");
+        paths.defaultVideosRoot = directory->filePath("Videos/xshot");
+        return new AppSettings(paths);
+    }();
+    Q_ASSERT(directory->isValid());
+    return *settings;
+}
+
+static AppSettings::Paths settingsPaths(const QString &directory) {
+    AppSettings::Paths paths;
+    paths.settingsFile = QDir(directory).filePath("config/settings.ini");
+    paths.guideFile = QDir(directory).filePath("config/settings-format.md");
+    paths.defaultPicturesRoot = QDir(directory).filePath("Pictures/xshot");
+    paths.defaultVideosRoot = QDir(directory).filePath("Videos/xshot");
+    return paths;
+}
+
+static QByteArray readBytes(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    return file.readAll();
+}
+
+static bool atomicWrite(const QString &path, const QByteArray &bytes) {
+    QSaveFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
 }
 
 void EditorTests::cutsJoinExactPixels() {
@@ -207,9 +260,10 @@ void EditorTests::makePreviewFixture() {
     if (qEnvironmentVariableIsEmpty("XSHOT_RENDER_PREVIEW")) return;
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl());
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", true);
@@ -265,7 +319,7 @@ void EditorTests::makePreviewFixture() {
     QVERIFY(QMetaObject::invokeMethod(window, "arrangeRegions"));
     QTest::qWait(250);
     QVERIFY(window->grabWindow().save("rearrange-dialog-preview.png"));
-    RegionSelector selector(image, QRect(0, 0, 860, 560));
+    RegionSelector selector(image, QRect(0, 0, 860, 560), &isolatedSettings());
     selector.setSelections(true, {{0, QRectF(34, 140, 320, 60)}}, 1);
     QVERIFY(selector.grab().save("selection-preview-small.png"));
 }
@@ -279,13 +333,14 @@ void EditorTests::qmlLoadsAndPlacesText() {
     // The offscreen platform cannot raise native windows; QML warnings still fail.
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
-    QQuickStyle::setStyle("Material");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
     QVERIFY(pattern().save(path));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
     engine.rootContext()->setContextProperty("startInBackground", false);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -296,13 +351,15 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(canvas);
     QTRY_VERIFY(canvas->hasImage());
     QCOMPARE(canvas->imageWidth(), 80);
+    QCOMPARE(canvas->annotationFontFamily(), annotationfont::family());
     canvas->setTool("text");
     const QPointF point = canvas->imageRect().topLeft() + QPointF(5, 5) * canvas->imageScale();
     canvas->begin(point.x(), point.y());
     QVERIFY(window->property("editingText").toBool());
     auto *text = window->findChild<QObject *>("annotationText");
     QVERIFY(text);
-    text->setProperty("text", "A\nB");
+    QCOMPARE(QQmlProperty(text, QStringLiteral("font.family")).read().toString(), annotationfont::family());
+    text->setProperty("text", "Impact\nwraps");
     QTRY_COMPARE(text->property("topPadding").toReal(), 0.0);
     auto *textFrame = window->findChild<QObject *>("annotationTextFrame");
     QVERIFY(textFrame);
@@ -313,6 +370,7 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(canvas->copy());
     QVERIFY(QGuiApplication::clipboard()->image() != pattern());
     const QImage copied = QGuiApplication::clipboard()->image();
+    QCOMPARE(copied.size(), pattern().size() * 3);
     QVERIFY(QMetaObject::invokeMethod(window, "finish"));
     QVERIFY(!window->property("visible").toBool());
     QVERIFY(!canvas->hasImage());
@@ -342,6 +400,148 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
 }
 
+void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
+    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support (?:raise|propagateSizeHints)\\(\\)).*"));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir source;
+    const QString imagePath = source.filePath("input.png");
+    QVERIFY(pattern().save(imagePath));
+    Backend backend(&isolatedSettings());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(imagePath));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(canvas->hasImage());
+    emit backend.regionsCaptured({pattern(), pattern(), pattern()});
+    QTRY_VERIFY(canvas->arranging());
+    QCOMPARE(canvas->regionCount(), 3);
+    canvas->setColumns(2);
+    canvas->annotate();
+    canvas->addText(4, 4, 60, 30, "Combined", 14);
+    const bool virtualDisplay = QGuiApplication::platformName() == "offscreen";
+    const QRect desktop = QGuiApplication::primaryScreen()->availableGeometry();
+    if (!virtualDisplay)
+        window->resize(qMin(1100, desktop.width() - 32), qMin(760, desktop.height() - 64));
+    window->show();
+    QTRY_VERIFY(window->isVisible());
+
+    auto *toolbar = visualItem(window->contentItem(), "annotationToolbar");
+    auto *tools = visualItem(window->contentItem(), "annotationToolCluster");
+    auto *modeGroup = visualItem(window->contentItem(), "modeGroup");
+    auto *finishGroup = visualItem(window->contentItem(), "finishGroup");
+    auto *modeHeading = visualItem(window->contentItem(), "modeHeading");
+    auto *finishHeading = visualItem(window->contentItem(), "finishHeading");
+    auto *modeButtons = visualItem(window->contentItem(), "modeSegmentedControl");
+    auto *finishButtons = visualItem(window->contentItem(), "finishButtons");
+    QVERIFY(toolbar && tools && modeGroup && finishGroup && modeHeading && finishHeading);
+    QVERIFY(modeButtons && finishButtons);
+    const auto centerX = [toolbar](QQuickItem *item) {
+        return item->mapToItem(toolbar, QPointF(item->width() / 2, item->height() / 2)).x();
+    };
+    const auto leftX = [toolbar](QQuickItem *item) {
+        return item->mapToItem(toolbar, QPointF(0, 0)).x();
+    };
+    const auto rightX = [toolbar](QQuickItem *item) {
+        return item->mapToItem(toolbar, QPointF(item->width(), 0)).x();
+    };
+    const auto checkToolbar = [&](int width, bool singleLine, const QString &previewName) {
+        window->resize(width, window->height());
+        QTRY_COMPARE(toolbar->width(), qreal(width - 32));
+        QTRY_COMPARE(toolbar->property("singleLine").toBool(), singleLine);
+        QCoreApplication::processEvents();
+        QVERIFY(qAbs(centerX(modeHeading) - centerX(modeButtons)) <= 1.0);
+        QVERIFY(qAbs(centerX(finishHeading) - centerX(finishButtons)) <= 1.0);
+        QVERIFY(leftX(tools) >= 0);
+        QVERIFY(rightX(tools) <= toolbar->width());
+        QVERIFY(leftX(modeGroup) >= 0);
+        QVERIFY(rightX(modeGroup) <= toolbar->width());
+        QVERIFY(leftX(finishGroup) >= 0);
+        QVERIFY(rightX(finishGroup) <= toolbar->width());
+        QVERIFY(rightX(modeGroup) <= leftX(finishGroup));
+        if (singleLine) {
+            QVERIFY(rightX(tools) <= leftX(modeGroup));
+            const qreal toolBottom = tools->mapToItem(toolbar, QPointF(0, tools->height())).y();
+            const qreal modeBottom = modeButtons->mapToItem(toolbar, QPointF(0, modeButtons->height())).y();
+            const qreal finishBottom = finishButtons->mapToItem(toolbar, QPointF(0, finishButtons->height())).y();
+            QVERIFY(qAbs(toolBottom - modeBottom) <= 1.0);
+            QVERIFY(qAbs(toolBottom - finishBottom) <= 1.0);
+        } else {
+            QVERIFY(tools->mapToItem(toolbar, QPointF(0, tools->height())).y() <
+                    modeButtons->mapToItem(toolbar, QPointF(0, 0)).y());
+        }
+        const QString previewDir = qEnvironmentVariable("XSHOT_TOOLBAR_PREVIEW_DIR",
+                                                         QDir::current().filePath("toolbar-layout-previews"));
+        QVERIFY(QDir().mkpath(previewDir));
+        QTest::qWait(100);
+        QVERIFY(window->grabWindow().save(QDir(previewDir).filePath(previewName)));
+    };
+
+    const QStringList toolNames{"tool_cut", "tool_rect", "tool_highlight", "tool_text",
+                                "tool_arrow", "tool_blur", "tool_erase"};
+    qreal previousRight = -1;
+    for (const QString &name : toolNames) {
+        auto *tool = visualItem(window->contentItem(), name);
+        QVERIFY2(tool, qPrintable("Missing icon tool " + name));
+        QVERIFY(tool->property("text").toString().isEmpty());
+        QVERIFY(!accessibleName(tool).isEmpty());
+        QCOMPARE(tool->property("focusPolicy").toInt(), int(Qt::TabFocus));
+        const qreal x = leftX(tool);
+        if (previousRight >= 0) QVERIFY(x >= previousRight);
+        previousRight = rightX(tool);
+    }
+    auto *saveButton = visualItem(window->contentItem(), "saveButton");
+    auto *copyButton = visualItem(window->contentItem(), "copyButton");
+    QVERIFY(saveButton && copyButton);
+    QCOMPARE(saveButton->property("text").toString(), QString("Save"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
+    QCOMPARE(modeHeading->property("text").toString(), QString("Mode"));
+    QCOMPARE(finishHeading->property("text").toString(), QString("Finish (will close)"));
+    QCOMPARE(window->minimumWidth(), 860);
+
+    if (virtualDisplay || desktop.width() >= 1132)
+        checkToolbar(1100, true, "annotation-combined-1100.png");
+    checkToolbar(860, true, "annotation-combined-860.png");
+    window->setMinimumWidth(600); // Exercise the fallback without changing the supported minimum.
+    checkToolbar(600, false, "annotation-combined-wrapped.png");
+
+    auto *goodButton = visualItem(window->contentItem(), "ink_good");
+    auto *badButton = visualItem(window->contentItem(), "ink_bad");
+    QVERIFY(goodButton && badButton);
+    QCOMPARE(accessibleName(goodButton), QString("Good mode"));
+    QCOMPARE(accessibleName(badButton), QString("Bad mode"));
+    QCOMPARE(goodButton->property("focusPolicy").toInt(), int(Qt::TabFocus));
+    QCOMPARE(badButton->property("focusPolicy").toInt(), int(Qt::TabFocus));
+    QCOMPARE(saveButton->property("focusPolicy").toInt(), int(Qt::TabFocus));
+    QCOMPARE(copyButton->property("focusPolicy").toInt(), int(Qt::TabFocus));
+    canvas->setTool("text");
+    const QPointF textPoint = canvas->imageRect().topLeft() + QPointF(12, 12) * canvas->imageScale();
+    canvas->begin(textPoint.x(), textPoint.y());
+    QVERIFY(window->property("editingText").toBool());
+    auto *draft = window->findChild<QObject *>("annotationText");
+    QVERIFY(draft);
+    draft->setProperty("text", "Mode draft");
+    QVERIFY(QMetaObject::invokeMethod(badButton, "clicked"));
+    QTRY_VERIFY(!window->property("editingText").toBool());
+    QCOMPARE(canvas->tool(), QString("text"));
+    QCOMPARE(canvas->colorMode(), QString("bad"));
+    QVERIFY(badButton->property("checked").toBool());
+    QVERIFY(!goodButton->property("checked").toBool());
+    QVERIFY(QMetaObject::invokeMethod(goodButton, "clicked"));
+    QCOMPARE(canvas->colorMode(), QString("good"));
+    QCOMPARE(canvas->tool(), QString("text"));
+    QVERIFY(goodButton->property("checked").toBool());
+    QVERIFY(!badButton->property("checked").toBool());
+}
+
 void EditorTests::qmlToolbarPasteReplacesTextDraft() {
 #ifdef Q_OS_WIN
     QGuiApplication::setFont(QFont("Segoe UI"));
@@ -356,9 +556,10 @@ void EditorTests::qmlToolbarPasteReplacesTextDraft() {
     large.fill(Qt::white);
     const QString sourcePath = temporary.filePath("large.png");
     QVERIFY(large.save(sourcePath));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(sourcePath));
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -429,7 +630,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     for (const auto mode : {Backend::ExclusionTestMode::ForceLegacyVersion,
                             Backend::ExclusionTestMode::ForceFailure}) {
-        Backend backend;
+        Backend backend(&isolatedSettings());
         backend.m_exclusionTestMode = mode;
         backend.m_pendingRecording = true;
         backend.m_recordingRegion = QRect(100, 100, 140, 100);
@@ -443,6 +644,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
         QGuiApplication::clipboard()->setText("keep clipboard on exclusion failure");
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
         engine.rootContext()->setContextProperty("initialImage", QUrl());
         engine.rootContext()->setContextProperty("startInBackground", true);
         engine.rootContext()->setContextProperty("showOnStart", false);
@@ -468,7 +670,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
         QCOMPARE(saved.size(), 0);
         QCOMPARE(QGuiApplication::clipboard()->text(), "keep clipboard on exclusion failure");
     }
-    Backend canceled;
+    Backend canceled(&isolatedSettings());
     canceled.m_pendingRecording = true;
     QSignalSpy canceledSignal(&canceled, &Backend::recordingCanceled);
     canceled.cancelRecording();
@@ -487,9 +689,10 @@ void EditorTests::qmlWheelSizes() {
     QTemporaryDir dir;
     const QString path = dir.filePath("wheel.png");
     QVERIFY(image.save(path));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
     engine.rootContext()->setContextProperty("startInBackground", false);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -567,9 +770,10 @@ void EditorTests::qmlSaveAndClose() {
     QTemporaryDir source;
     const QString inputPath = source.filePath("input.png");
     QVERIFY(pattern().save(inputPath));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(inputPath));
     engine.rootContext()->setContextProperty("startInBackground", false);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -589,23 +793,32 @@ void EditorTests::qmlSaveAndClose() {
     QVERIFY(saveButton && copyButton && arrangeButton && arrangeCopyButton);
     QVERIFY(saveButton->property("visible").toBool());
     QVERIFY(!arrangeButton->property("visible").toBool());
-    QCOMPARE(saveButton->property("text").toString(), QString("Save and close"));
-    QCOMPARE(copyButton->property("text").toString(), QString("Copy and close"));
+    QCOMPARE(saveButton->property("text").toString(), QString("Save"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
+    QCOMPARE(accessibleName(qobject_cast<QQuickItem *>(saveButton)), QString("Save image and close"));
+    QCOMPARE(accessibleName(copyButton), QString("Copy image and close"));
     QCoreApplication::processEvents();
     const qreal saveRight = saveButton->property("x").toReal() + saveButton->property("width").toReal();
     QVERIFY(copyButton->x() >= saveRight && copyButton->x() - saveRight <= 13);
 
-    const QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    QVERIFY(!pictures.isEmpty());
-    QDir savedDir(QDir(pictures).filePath("xshot"));
-    QStringList known = savedDir.entryList({"xshot-*.png"}, QDir::Files);
+    const QString savedRoot = isolatedSettings().picturesRoot();
+    const auto savedFiles = [&]() {
+        QSet<QString> files;
+        QDirIterator iterator(savedRoot, {"xshot-*.png"}, QDir::Files, QDirIterator::Subdirectories);
+        while (iterator.hasNext()) files.insert(iterator.next());
+        return files;
+    };
+    QSet<QString> known = savedFiles();
     const auto newSavedFile = [&]() {
-        for (const QString &name : savedDir.entryList({"xshot-*.png"}, QDir::Files)) {
-            if (!known.contains(name)) { known.append(name); return savedDir.filePath(name); }
+        for (const QString &path : savedFiles()) {
+            if (!known.contains(path)) { known.insert(path); return path; }
         }
         return QString();
     };
     QStringList created;
+    const auto cleanupSavedFiles = qScopeGuard([&created] {
+        for (const QString &path : created) QFile::remove(path);
+    });
     QGuiApplication::clipboard()->setText("keep screenshot clipboard");
     canvas->setTool("text");
     const QPointF textPoint = canvas->imageRect().topLeft() + QPointF(5, 5) * canvas->imageScale();
@@ -613,6 +826,7 @@ void EditorTests::qmlSaveAndClose() {
     QVERIFY(window->property("editingText").toBool());
     auto *text = window->findChild<QObject *>("annotationText");
     QVERIFY(text);
+    QCOMPARE(QQmlProperty(text, QStringLiteral("font.family")).read().toString(), annotationfont::family());
     text->setProperty("text", "A");
     QTest::keyClick(window, Qt::Key_S);
     QTRY_VERIFY(text->property("text").toString().contains('s'));
@@ -658,8 +872,11 @@ void EditorTests::qmlSaveAndClose() {
     QCOMPARE(arrangeButton->property("text").toString(), QString("Save and close"));
     QCOMPARE(arrangeCopyButton->property("text").toString(), QString("Copy and close"));
     QCoreApplication::processEvents();
-    const qreal arrangeSaveRight = arrangeButton->property("x").toReal() + arrangeButton->property("width").toReal();
-    QVERIFY(arrangeCopyButton->x() >= arrangeSaveRight && arrangeCopyButton->x() - arrangeSaveRight <= 13);
+    QTRY_VERIFY(([&] {
+        const qreal saveRight = arrangeButton->property("x").toReal()
+            + arrangeButton->property("width").toReal();
+        return arrangeCopyButton->x() >= saveRight && arrangeCopyButton->x() - saveRight <= 13;
+    })());
     QVERIFY(canvas->copy());
     const QImage arranged = QGuiApplication::clipboard()->image();
     QGuiApplication::clipboard()->setText("keep screenshot clipboard");
@@ -670,7 +887,7 @@ void EditorTests::qmlSaveAndClose() {
     QCOMPARE(QImage(fromArrange).convertToFormat(arranged.format()), arranged);
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
     QTest::qWait(250);
-    for (const QString &path : created) QVERIFY(QFile::remove(path));
+    for (const QString &path : created) QVERIFY(QFileInfo::exists(path));
 }
 
 void EditorTests::qmlKeyboardCommands() {
@@ -685,9 +902,10 @@ void EditorTests::qmlKeyboardCommands() {
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
     QVERIFY(pattern().save(path));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
     engine.rootContext()->setContextProperty("startInBackground", false);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -705,29 +923,39 @@ void EditorTests::qmlKeyboardCommands() {
     // The displayed accelerator and actual keyboard command stay together.
     const QList<QPair<QString, Qt::Key>> tools{
         {"cut", Qt::Key_X}, {"rect", Qt::Key_R}, {"highlight", Qt::Key_H}, {"text", Qt::Key_T},
-        {"arrow", Qt::Key_A}, {"blur", Qt::Key_B}, {"erase", Qt::Key_E}};
+        {"arrow", Qt::Key_A}, {"blur", Qt::Key_P}, {"erase", Qt::Key_E}};
     for (const auto &tool : tools) {
         auto *button = visualItem(window->contentItem(), "tool_" + tool.first);
         QVERIFY2(button, qPrintable("Missing tool button: " + tool.first));
-        QCOMPARE(button->property("text").toString(), tool.first == "cut" ? QString("Cut") : QString());
+        QCOMPARE(button->property("text").toString(), QString());
+        QVERIFY(!accessibleName(button).isEmpty());
         QTest::keyClick(window, tool.second);
         QTRY_COMPARE(canvas->tool(), tool.first);
         QVERIFY(button->property("checked").toBool());
     }
     QTest::keyClick(window, Qt::Key_G);
     QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
-    QTest::keyClick(window, Qt::Key_B);
+    QTest::keyClick(window, Qt::Key_P);
     QTRY_COMPARE(canvas->tool(), QString("blur"));
     QCOMPARE(window->property("hint").toString(), QString("Pixelate · 12 px blocks · Wheel to resize · Drag over an area"));
     canvas->adjustToolSize(120);
     QCOMPARE(window->property("hint").toString(), QString("Pixelate · 14 px blocks · Wheel to resize · Drag over an area"));
     QCOMPARE(canvas->ink(), QColor("#22c55e"));
-    QTest::keyClick(window, Qt::Key_D);
+    QTest::keyClick(window, Qt::Key_B);
     QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));
     QCOMPARE(canvas->tool(), QString("blur"));
-    auto *redButton = visualItem(window->contentItem(), "ink_D");
+    auto *redButton = visualItem(window->contentItem(), "ink_bad");
     QVERIFY(redButton);
     QVERIFY(redButton->property("checked").toBool());
+    QTest::keyClick(window, Qt::Key_G);
+    QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
+    QTest::keyClick(window, Qt::Key_D);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->ink(), QColor("#22c55e"));
+    QCOMPARE(canvas->tool(), QString("blur"));
+    QVERIFY(!visualItem(window->contentItem(), "ink_D"));
+    QTest::keyClick(window, Qt::Key_B);
+    QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));
 
     canvas->setTool("rect");
     const QPointF start = canvas->imageRect().topLeft() + QPointF(10, 10) * canvas->imageScale();
@@ -743,7 +971,7 @@ void EditorTests::qmlKeyboardCommands() {
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("not submitted"));
     auto *copyButton = visualItem(window->contentItem(), "copyButton");
     QVERIFY(copyButton);
-    QCOMPARE(copyButton->property("text").toString(), QString("Copy and close"));
+    QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
     QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
     QCoreApplication::processEvents();
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
@@ -772,6 +1000,14 @@ void EditorTests::qmlKeyboardCommands() {
     const QPoint plusCenter = moreColumns->mapToScene(QPointF(moreColumns->width() / 2, moreColumns->height() / 2)).toPoint();
     QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, plusCenter);
     QTRY_COMPARE(canvas->columns(), 2);
+    const QString arrangeTool = canvas->tool();
+    const QColor arrangeInk = canvas->ink();
+    QTest::keyClick(window, Qt::Key_P);
+    QTest::keyClick(window, Qt::Key_B);
+    QTest::keyClick(window, Qt::Key_D);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->tool(), arrangeTool);
+    QCOMPARE(canvas->ink(), arrangeInk);
 
     QTest::keyClick(window, Qt::Key_Return);
     QTRY_VERIFY(!canvas->arranging());
@@ -780,11 +1016,17 @@ void EditorTests::qmlKeyboardCommands() {
     const QPointF textPoint = canvas->imageRect().center();
     canvas->begin(textPoint.x(), textPoint.y());
     QVERIFY(window->property("editingText").toBool());
+    const QColor textInk = canvas->ink();
     QTest::keyClick(window, Qt::Key_C);
     QTest::keyClick(window, Qt::Key_H);
+    QTest::keyClick(window, Qt::Key_P);
+    QTest::keyClick(window, Qt::Key_B);
+    QTest::keyClick(window, Qt::Key_D);
     auto *annotationText = window->findChild<QObject *>("annotationText");
     QVERIFY(annotationText);
-    QTRY_COMPARE(annotationText->property("text").toString(), QString("ch"));
+    QTRY_COMPARE(annotationText->property("text").toString(), QString("chpbd"));
+    QCOMPARE(canvas->tool(), QString("text"));
+    QCOMPARE(canvas->ink(), textInk);
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->property("editingText").toBool());
@@ -841,9 +1083,10 @@ void EditorTests::qmlDismissal() {
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
     QVERIFY(pattern().save(path));
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
     engine.rootContext()->setContextProperty("startInBackground", false);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -978,7 +1221,7 @@ void EditorTests::qmlRecordingReview() {
         "-c:v", "libx264", "-pix_fmt", "yuv420p", clip});
     QVERIFY(fixture.waitForFinished(15000));
     QCOMPARE(fixture.exitCode(), 0);
-    Backend backend;
+    Backend backend(&isolatedSettings());
     auto *trim = qobject_cast<TrimSession *>(backend.trim());
     QVERIFY(trim);
     QElapsedTimer loadTimer;
@@ -995,6 +1238,7 @@ void EditorTests::qmlRecordingReview() {
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl());
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -1168,7 +1412,7 @@ void EditorTests::qmlRecordingControls() {
     QTest::failOnWarning(QRegularExpression(".*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QString error;
     connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
     QSignalSpy saved(&backend, &Backend::recordingSaved);
@@ -1184,6 +1428,7 @@ void EditorTests::qmlRecordingControls() {
     });
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl());
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -1314,6 +1559,12 @@ void EditorTests::qmlRecordingControls() {
     const QFileInfo clip(path);
     QVERIFY(clip.isAbsolute()); QCOMPARE(clip.suffix(), QString("mp4"));
     QVERIFY(clip.exists() && clip.size() > 0);
+    const QDate allocatedDate = QDate::fromString(clip.completeBaseName().mid(6, 8), "yyyyMMdd");
+    QVERIFY(allocatedDate.isValid());
+    const QString expectedDirectory = QDir(isolatedSettings().videosRoot()).filePath(QStringLiteral("%1/%2")
+        .arg(QString::number(allocatedDate.year()).rightJustified(4, QLatin1Char('0')))
+        .arg(allocatedDate.month()));
+    QCOMPARE(clip.absolutePath(), expectedDirectory);
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("waiting for recording"));
     QProcess probe;
     probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-select_streams", "v:0",
@@ -1347,7 +1598,12 @@ void EditorTests::qmlRecordingControls() {
     QTRY_VERIFY(!outline->isVisible());
     QVERIFY(!window->isVisible());
     QTRY_VERIFY(review->isVisible());
+    auto *trimSession = qobject_cast<TrimSession *>(backend.trim());
+    QVERIFY(trimSession);
+    QSignalSpy finalized(trimSession, &TrimSession::finalized);
     QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
+    QCOMPARE(finalized.size(), 1);
+    QCOMPARE(finalized.first().first().toString(), path);
     QTRY_VERIFY(!review->isVisible());
     QTest::qWait(250); // Let Finder/Explorer select the completed file before cleanup.
     QVERIFY(QFile::remove(path));
@@ -1373,7 +1629,7 @@ void EditorTests::qmlRecordingHotkeyStop() {
     QFETCH(bool, duringStartup);
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QString error;
     connect(&backend, &Backend::error, this, [&error](const QString &message) { error = message; });
     QSignalSpy saved(&backend, &Backend::recordingSaved);
@@ -1388,6 +1644,7 @@ void EditorTests::qmlRecordingHotkeyStop() {
     });
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl());
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -1477,7 +1734,7 @@ void EditorTests::qmlRecordingHotkeyStop() {
 }
 
 void EditorTests::multipleRegionSelection() {
-    RegionSelector selector(pattern(), QRect(0, 0, 400, 300));
+    RegionSelector selector(pattern(), QRect(0, 0, 400, 300), &isolatedSettings());
     QSignalSpy single(&selector, &RegionSelector::selected);
     QSignalSpy multiple(&selector, &RegionSelector::multipleRequested);
     QSignalSpy added(&selector, &RegionSelector::regionAdded);
@@ -1510,7 +1767,7 @@ void EditorTests::multipleRegionSelection() {
 }
 
 void EditorTests::captureToolbarInteraction() {
-    RegionSelector selector(pattern().convertToFormat(QImage::Format_RGB32), QRect(0, 0, 860, 560));
+    RegionSelector selector(pattern().convertToFormat(QImage::Format_RGB32), QRect(0, 0, 860, 560), &isolatedSettings());
     auto *toolbar = selector.findChild<QWidget *>("captureToolbar");
     auto *single = selector.findChild<QPushButton *>("singleCaptureButton");
     auto *multiple = selector.findChild<QPushButton *>("multipleCaptureButton");
@@ -1524,7 +1781,7 @@ void EditorTests::captureToolbarInteraction() {
     QCOMPARE(multiple->text(), QString("Multiple (M)"));
     QCOMPARE(video->text(), QString("Video (V)"));
     QCOMPARE(cancel->text(), QString("Cancel (Esc)"));
-    QCOMPARE(arrange->text(), QString("Arrange (Enter)"));
+    QCOMPARE(arrange->text(), QString("Arrange (Return / Enter)"));
     connect(&selector, &RegionSelector::multipleRequested, &selector, [&] { selector.setSelections(true, {}, 0); });
     connect(&selector, &RegionSelector::singleRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(false); });
     QSignalSpy added(&selector, &RegionSelector::regionAdded);
@@ -1655,7 +1912,7 @@ void EditorTests::regionSelectionScalesAndCancels() {
              QRect(200, 100, 400, 200));
     QCOMPARE(RegionSelector::pixelRect(QRectF(-10, -10, 50, 50), QSizeF(800, 600), QSize(1000, 750)),
              QRect(0, 0, 50, 50));
-    RegionSelector selector(pattern(), QRect(0, 0, 400, 300));
+    RegionSelector selector(pattern(), QRect(0, 0, 400, 300), &isolatedSettings());
     QSignalSpy selected(&selector, &RegionSelector::selected);
     QSignalSpy canceled(&selector, &RegionSelector::canceled);
     QTest::mousePress(&selector, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
@@ -1704,7 +1961,7 @@ void EditorTests::desktopMultipleCapture() {
     marker.show(); marker.raise(); marker.activateWindow();
     QVERIFY(QTest::qWaitForWindowExposed(&marker));
     QTest::qWait(150);
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QSignalSpy batch(&backend, &Backend::regionsCaptured);
     QSignalSpy finished(&backend, &Backend::captureFinished);
     backend.capture();
@@ -1762,7 +2019,7 @@ void EditorTests::windowsDesktopCapture() {
     marker.show(); marker.raise(); marker.activateWindow();
     QVERIFY(QTest::qWaitForWindowExposed(&marker));
     QTest::qWait(300);
-    Backend backend;
+    Backend backend(&isolatedSettings());
     QSignalSpy finished(&backend, &Backend::captureFinished);
     QImage captured;
     connect(&backend, &Backend::captured, this, [&captured](const QUrl &url) { captured.load(url.toLocalFile()); });
@@ -1828,12 +2085,13 @@ void EditorTests::windowsCaptureLatency() {
             return false;
         }
     } probe;
-    Backend backend;
+    Backend backend(&isolatedSettings());
     // Include the real QML capture/hide path used by the resident app.
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
     engine.rootContext()->setContextProperty("initialImage", QUrl());
     engine.rootContext()->setContextProperty("startInBackground", true);
     engine.rootContext()->setContextProperty("showOnStart", false);
@@ -1875,6 +2133,200 @@ void EditorTests::windowsCaptureLatency() {
 #else
     QSKIP("Windows capture latency test");
 #endif
+}
+
+void EditorTests::settingsCreateDefaultsAndPreserveEdits() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    QVERIFY(QFileInfo::exists(paths.settingsFile));
+    QVERIFY(QFileInfo::exists(paths.guideFile));
+    QVERIFY(settings.settingsFile() == QFileInfo(paths.settingsFile).absoluteFilePath());
+    QVERIFY(settings.guideFile() == QFileInfo(paths.guideFile).absoluteFilePath());
+    const QByteArray ini = readBytes(paths.settingsFile);
+    QVERIFY(ini.startsWith("; xshot application settings"));
+    QVERIFY(ini.contains("AI agents: read settings-format.md"));
+    QFile guide(paths.guideFile);
+    QVERIFY(guide.open(QIODevice::ReadOnly));
+    const QByteArray guideBytes = guide.readAll();
+    QVERIFY(guideBytes.contains("# xshot settings file"));
+    QVERIFY(guideBytes.contains("## Shortcuts"));
+    QVERIFY(guideBytes.contains("## Save roots"));
+
+    QSettings parsed(paths.settingsFile, QSettings::IniFormat);
+    QCOMPARE(parsed.value("Shortcuts/globalCapture").toString(), QString("Ctrl+Print"));
+    QCOMPARE(parsed.value("Colors/good").toString(), QString("#22c55e"));
+    QCOMPARE(settings.picturesRoot(), paths.defaultPicturesRoot);
+    QCOMPARE(settings.videosRoot(), paths.defaultVideosRoot);
+
+    QFile append(paths.settingsFile);
+    QVERIFY(append.open(QIODevice::Append));
+    QVERIFY(append.write("\n; user's note\n[Agent]\nunknownSetting=keep-me\n") > 0);
+    append.close();
+    const QByteArray withUnknown = readBytes(paths.settingsFile);
+    QVERIFY(settings.reloadNow());
+    QCOMPARE(readBytes(paths.settingsFile), withUnknown);
+}
+
+void EditorTests::settingsReloadsAtomicEditsAndRecovers() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    QByteArray valid = readBytes(paths.settingsFile);
+    QVERIFY(valid.contains("toolPixelate=P\n"));
+    QByteArray inPlace = valid;
+    inPlace.replace("good=#22c55e", "good=#335577");
+    QFile edit(paths.settingsFile);
+    QVERIFY(edit.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(edit.write(inPlace), qint64(inPlace.size()));
+    edit.close();
+    QTRY_COMPARE_WITH_TIMEOUT(settings.goodColor(), QColor("#335577"), 3000);
+    valid = readBytes(paths.settingsFile);
+    valid.replace("good=#335577", "good=#386ab3");
+    valid.replace("toolPixelate=P\n", "toolPixelate=Shift+P\n");
+    valid.replace("picturesRoot=" + QDir::fromNativeSeparators(paths.defaultPicturesRoot).toUtf8(),
+                  "picturesRoot=" + QDir(directory.filePath("Pictures/custom")).absolutePath().toUtf8());
+    valid.replace("videosRoot=" + QDir::fromNativeSeparators(paths.defaultVideosRoot).toUtf8(),
+                  "videosRoot=" + QDir(directory.filePath("Clips/custom")).absolutePath().toUtf8());
+    QVERIFY(atomicWrite(paths.settingsFile, valid));
+    QTRY_COMPARE_WITH_TIMEOUT(settings.goodColor(), QColor("#386ab3"), 3000);
+    QCOMPARE(settings.shortcuts().value("toolPixelate").toStringList(), QStringList{"Shift+P"});
+    QCOMPARE(settings.picturesRoot(), QDir(directory.filePath("Pictures/custom")).absolutePath());
+    QCOMPARE(settings.videosRoot(), QDir(directory.filePath("Clips/custom")).absolutePath());
+
+    valid.replace("good=#386ab3", "good=#247050");
+    QVERIFY(atomicWrite(paths.settingsFile, valid)); // A second atomic replacement must be watched too.
+    QTRY_COMPARE_WITH_TIMEOUT(settings.goodColor(), QColor("#247050"), 3000);
+
+    QByteArray invalid = valid;
+    invalid.replace("bad=#ef4444", "bad=not-a-color");
+    QVERIFY(atomicWrite(paths.settingsFile, invalid));
+    QTRY_VERIFY_WITH_TIMEOUT(!settings.lastError().isEmpty(), 3000);
+    QCOMPARE(settings.goodColor(), QColor("#247050"));
+    QCOMPARE(settings.badColor(), QColor("#ef4444"));
+    QCOMPARE(readBytes(paths.settingsFile), invalid); // Never rewrite or discard the invalid candidate.
+
+    QByteArray repaired = invalid;
+    repaired.replace("bad=not-a-color", "bad=#a7475e");
+    QVERIFY(atomicWrite(paths.settingsFile, repaired));
+    QTRY_COMPARE_WITH_TIMEOUT(settings.badColor(), QColor("#a7475e"), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(settings.lastError().isEmpty(), 3000);
+
+    QVERIFY(QFile::remove(paths.settingsFile));
+    QTRY_VERIFY_WITH_TIMEOUT(!settings.lastError().isEmpty(), 3000);
+    QCOMPARE(settings.badColor(), QColor("#a7475e"));
+    QVERIFY(QDir(QFileInfo(paths.settingsFile).absolutePath()).removeRecursively());
+    QVERIFY(QDir().mkpath(QFileInfo(paths.settingsFile).absolutePath()));
+    QVERIFY(atomicWrite(paths.settingsFile, repaired));
+    QTRY_VERIFY_WITH_TIMEOUT(settings.lastError().isEmpty(), 3000);
+    QCOMPARE(settings.badColor(), QColor("#a7475e"));
+}
+
+void EditorTests::settingsRejectConflictsAndRollbackNativeHotkey() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    QByteArray invalid = readBytes(paths.settingsFile);
+    QVERIFY(invalid.contains("toolRectangle=R\n"));
+    QVERIFY(invalid.contains("toolPixelate=P\n"));
+    invalid.replace("toolPixelate=P\n", "toolPixelate=R\n");
+    QVERIFY(atomicWrite(paths.settingsFile, invalid));
+    QVERIFY(invalid.contains("toolPixelate=R\n"));
+    QCOMPARE(readBytes(paths.settingsFile), invalid);
+    QSettings parsed(paths.settingsFile, QSettings::IniFormat);
+    QCOMPARE(parsed.value("Shortcuts/toolRectangle").toString(), QString("R"));
+    QCOMPARE(parsed.value("Shortcuts/toolPixelate").toString(), QString("R"));
+    const bool acceptedCollision = settings.reloadNow();
+    QVERIFY(!acceptedCollision);
+    QVERIFY(settings.lastError().contains("toolPixelate"));
+    QVERIFY(settings.lastError().contains("toolRectangle"));
+    QCOMPARE(readBytes(paths.settingsFile), invalid);
+    QCOMPARE(settings.shortcuts().value("toolPixelate").toStringList(), QStringList{"P"});
+
+    GlobalHotkey active;
+    QKeySequence oldSequence;
+    for (int functionKey = 1; functionKey <= 24 && oldSequence.isEmpty(); ++functionKey) {
+        const QKeySequence candidate(QStringLiteral("Ctrl+Alt+F%1").arg(functionKey));
+        if (active.setShortcut(candidate)) oldSequence = candidate;
+    }
+    if (oldSequence.isEmpty()) QSKIP("No free native modifier+function-key shortcut for rollback test");
+    QByteArray nativeCandidate = readBytes(paths.settingsFile);
+    nativeCandidate.replace("toolPixelate=R\n", "toolPixelate=P\n");
+    nativeCandidate.replace("globalCapture=Ctrl+Print", "globalCapture=" + oldSequence.toString(QKeySequence::PortableText).toUtf8());
+    QVERIFY(atomicWrite(paths.settingsFile, nativeCandidate));
+    QVERIFY(settings.reloadNow());
+    settings.attachGlobalHotkey(&active);
+    QCOMPARE(active.shortcut(), oldSequence);
+
+    GlobalHotkey occupied;
+    QKeySequence occupiedSequence;
+    for (int functionKey = 1; functionKey <= 24 && occupiedSequence.isEmpty(); ++functionKey) {
+        const QKeySequence candidate(QStringLiteral("Ctrl+Alt+F%1").arg(functionKey));
+        if (candidate != oldSequence && occupied.setShortcut(candidate)) occupiedSequence = candidate;
+    }
+    if (occupiedSequence.isEmpty()) QSKIP("No second free native modifier+function-key shortcut for rollback test");
+    const QByteArray conflictingCandidate = nativeCandidate;
+    QByteArray blocked = conflictingCandidate;
+    blocked.replace("globalCapture=" + oldSequence.toString(QKeySequence::PortableText).toUtf8(),
+                    "globalCapture=" + occupiedSequence.toString(QKeySequence::PortableText).toUtf8());
+    QVERIFY(atomicWrite(paths.settingsFile, blocked));
+    QVERIFY(!settings.reloadNow());
+    QCOMPARE(active.shortcut(), oldSequence);
+    QCOMPARE(settings.shortcuts().value("globalCapture").toStringList(),
+             QStringList{oldSequence.toString(QKeySequence::PortableText)});
+    QCOMPARE(readBytes(paths.settingsFile), blocked);
+}
+
+void EditorTests::settingsUpdateEditorShortcutsHintsAndColorsLive() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    QTemporaryDir imageDirectory;
+    const QString imagePath = imageDirectory.filePath("input.png");
+    QVERIFY(pattern().save(imagePath));
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend(&settings);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &settings);
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(imagePath));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QTRY_VERIFY(canvas->hasImage());
+    window->show();
+    window->requestActivate();
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QTest::keyClick(window, Qt::Key_G);
+    QTRY_COMPARE(canvas->colorMode(), QString("good"));
+
+    QByteArray changed = readBytes(paths.settingsFile);
+    changed.replace("toolPixelate=P\n", "toolPixelate=Shift+Alt+P\n");
+    changed.replace("good=#22c55e", "good=#317ab5");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QTRY_COMPARE_WITH_TIMEOUT(canvas->goodColor(), QColor("#317ab5"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(canvas->ink(), QColor("#317ab5"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(settings.shortcutHints().value("toolPixelate").toString(),
+        QKeySequence::fromString(QStringLiteral("Shift+Alt+P"), QKeySequence::PortableText)
+            .toString(QKeySequence::NativeText), 3000);
+
+    canvas->setTool("rect");
+    QTest::keyClick(window, Qt::Key_P);
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->tool(), QString("rect"));
+    QTest::keySequence(window, QKeySequence(QStringLiteral("Shift+Alt+P")));
+    QTRY_COMPARE(canvas->tool(), QString("blur"));
 }
 
 QTEST_MAIN(EditorTests)

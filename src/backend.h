@@ -18,6 +18,7 @@ using Recorder = MacRecorder;
 using Recorder = VideoRecorder;
 #endif
 class RegionSelector;
+class AppSettings;
 
 class Backend : public QObject {
     Q_OBJECT
@@ -33,7 +34,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool recordingProtectionPending READ recordingProtectionPending NOTIFY recordingChanged)
     Q_PROPERTY(QObject* trim READ trim CONSTANT)
 public:
-    explicit Backend(QObject *parent = nullptr);
+    explicit Backend(AppSettings *settings, QObject *parent = nullptr);
     ~Backend() override;
     bool capturing() const { return m_capturing; }
     bool recording() const { return m_pendingRecording || m_recorder.active(); }
@@ -79,6 +80,7 @@ private:
     struct ScreenImage { QRect geometry; QImage image; };
     struct Selection { RegionSelector *owner; QRectF area; QImage image; };
     QList<ScreenImage> m_screens;
+    AppSettings *m_settings = nullptr;
     QList<Selection> m_selections;
     int m_screenIndex = 0;
     bool m_multiple = false;

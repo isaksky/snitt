@@ -148,9 +148,9 @@ controls. Tile numbers and selection outlines disappear; you now edit one combin
 - Choose **← Back to arrange** to revise the layout. If edits exist, choose
   **Keep editing** to preserve them or **Discard edits** to reset
   annotations and cuts. The captured regions are kept.
-- Press **C** or **S**, or choose **Save and close** or **Copy and close**, when ready.
-  While typing an annotation, these shortcuts type text; the buttons place the
-  active text before finishing.
+- Press **S** or **C**, or choose **Save** or **Copy** under **Finish (will close)**,
+  when ready. While typing an annotation, these shortcuts type text; the buttons
+  place the active text before finishing.
 
 Enter does not copy or finish an edited screenshot. While typing an annotation,
 Enter adds a line.
@@ -159,8 +159,8 @@ Enter adds a line.
 
 - From Arrange or Annotate, **Copy and close (C)** copies the full-resolution
   combined image to the clipboard. **Save and close (S)** writes a unique PNG to
-  your system Pictures folder under `xshot` and reveals it in Finder or Explorer;
-  it does not change the clipboard.
+  `Pictures/xshot/<year>/<month>` and reveals it in Finder or Explorer; month
+  folders use unpadded numbers, and saving does not change the clipboard.
 - The editor closes and the session's editing history and original regions are cleared.
 - Preview numbers and selection outlines are not included in the exported image.
 - If saving fails, the editor stays open with the image and edits intact.
@@ -192,9 +192,10 @@ recording. Canceling an export or an export error also keeps the original. The
 final file is selected in Finder or Explorer after Keep original or a successful
 trim; previewing and trimming never change the clipboard.
 
-Recordings are silent MP4 files saved under `~/Movies/xshot` on macOS or your
-Windows **Videos\xshot** folder. Both platforms capture the selected region and
-pointer at 30 fps and encode H.264. macOS 15+ uses native ScreenCaptureKit;
+Recordings are silent MP4 files saved under `~/Movies/xshot/<year>/<month>` on
+macOS or your Windows **Videos\xshot\<year>\<month>** folder. The year and
+unpadded month come from the local time when saving or recording starts. Both
+platforms capture the selected region and pointer at 30 fps and encode H.264. macOS 15+ uses native ScreenCaptureKit;
 Windows runs FFmpeg as a separate process. Recordings are kept after the session;
 xshot does not upload them or delete completed clips. On Windows, install FFmpeg
 with `scoop install ffmpeg`; xshot checks PATH and the usual Scoop locations,
@@ -208,12 +209,12 @@ including when started at login.
 | Rectangle | R | Click and drag around an area. |
 | Text | T | Click to place a textbox, then type. Command/Ctrl+Enter places it; Enter adds a line; Escape cancels. |
 | Arrow | A | Drag from the tail toward the tip. |
-| Pixelate | B | Drag a rectangle to replace its contents with coarse blocks averaged from the image. Use the wheel to change block size. |
+| Pixelate | P | Drag a rectangle to replace its contents with coarse blocks averaged from the image. Use the wheel to change block size. |
 | Smart erase | E | Drag a rectangle to fill it with the exact color at the drag's starting point. Works in any drag direction. |
 | Green / good | G | Applies to new rectangles, arrows, and text. |
-| Red / bad | D | Applies to new rectangles, arrows, and text. |
+| Red / bad | B | Applies to new rectangles, arrows, and text. |
 | Copy and close | C | Copies the full-resolution image, hides the editor, and clears its editing history. Inactive while typing an annotation. |
-| Save and close | S | Saves a PNG in Pictures/xshot, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
+| Save and close | S | Saves a PNG in Pictures/xshot/<year>/<month>, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
 | Undo | Command/Ctrl+Z | Reverts the last edit. |
 | Redo | Shift+Command+Z on macOS; Ctrl+Y on Windows | Reapplies the last undone edit. |
 | New capture | Command/Ctrl+N | Starts a new region selection. |

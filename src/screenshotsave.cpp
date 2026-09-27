@@ -1,4 +1,5 @@
 #include "screenshotsave.h"
+#include "savepaths.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -7,11 +8,17 @@
 #include <QUuid>
 
 QString screenshots::savePng(const QImage &image, const QString &picturesDirectory, QString *error) {
+    return savePng(image, picturesDirectory, error, QDateTime::currentDateTime());
+}
+
+QString screenshots::savePng(const QImage &image, const QString &picturesDirectory, QString *error,
+                             const QDateTime &saveTime) {
     if (image.isNull() || picturesDirectory.isEmpty()) {
         if (error) *error = QStringLiteral("There is no screenshot or Pictures folder to save to.");
         return {};
     }
-    const QString directory = QDir(picturesDirectory).filePath(QStringLiteral("xshot"));
+    const QDateTime localSaveTime = saveTime.toLocalTime();
+    const QString directory = savepaths::datedMediaDirectory(picturesDirectory, localSaveTime);
     if (!QDir().mkpath(directory)) {
         if (error) *error = QStringLiteral("Could not create the screenshots folder: %1")
             .arg(QDir::toNativeSeparators(directory));
@@ -19,7 +26,7 @@ QString screenshots::savePng(const QImage &image, const QString &picturesDirecto
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
         const QString path = QDir(directory).filePath(QStringLiteral("xshot-%1-%2.png")
-            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz")),
+            .arg(localSaveTime.toString(QStringLiteral("yyyyMMdd-HHmmss-zzz")),
                  QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
         QFile file(path);
         // NewOnly reserves the name atomically; a collision never overwrites a prior image.

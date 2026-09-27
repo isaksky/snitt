@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCryptographicHash>
+#include <QDate>
 #include <QImage>
 #include <QFile>
 #include <QFileInfo>
@@ -15,6 +16,7 @@
 #include <QWindow>
 #include "backend.h"
 #include "regionselector.h"
+#include "appsettings.h"
 #include "videorecorder.h"
 #ifdef Q_OS_MACOS
 #include <CoreGraphics/CoreGraphics.h>
@@ -24,6 +26,7 @@ class RecordingTests : public QObject {
     Q_OBJECT
 private slots:
     void recordingArguments();
+    void configuredRecordingRootAndFailureAreIsolated();
     void indicatorPlacement();
     void videoSelectorIsSingleRegion();
     void desktopRecording();
@@ -41,6 +44,20 @@ private slots:
     void interactiveCancellationTimeout();
 #endif
 };
+
+static AppSettings &isolatedRecordingSettings() {
+    static QTemporaryDir *directory = new QTemporaryDir;
+    static AppSettings *settings = [] {
+        AppSettings::Paths paths;
+        paths.settingsFile = directory->filePath("config/settings.ini");
+        paths.guideFile = directory->filePath("config/settings-format.md");
+        paths.defaultPicturesRoot = directory->filePath("Pictures/xshot");
+        paths.defaultVideosRoot = directory->filePath("Videos/xshot");
+        return new AppSettings(paths);
+    }();
+    Q_ASSERT(directory->isValid());
+    return *settings;
+}
 
 static QString makeFourColorClip(const QString &directory) {
     const QString path = QDir(directory).filePath("source.mp4");
@@ -657,9 +674,60 @@ void RecordingTests::recordingArguments() {
     QCOMPARE(macArgs.value(macArgs.indexOf("-c:v") + 1), "libx264");
 }
 
+void RecordingTests::configuredRecordingRootAndFailureAreIsolated() {
+#ifdef Q_OS_WIN
+    if (recording::toolPath("ffmpeg").isEmpty())
+        QSKIP("FFmpeg is required to exercise the Windows recorder allocation path");
+#endif
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString root = temporary.filePath("custom video root");
+    Recorder recorder;
+    QSignalSpy canceled(&recorder, &Recorder::canceled);
+    QSignalSpy errors(&recorder, &Recorder::error);
+    recording::Source source;
+#ifdef Q_OS_WIN
+    source.platform = recording::Platform::Windows;
+    source.pixelRegion = QRect(0, 0, 64, 48);
+#else
+    source.platform = recording::Platform::Mac;
+    source.displayId = 0;
+    source.relativeRegion = QRectF(0, 0, 0.25, 0.25);
+#endif
+    recorder.start(source, root);
+    QVERIFY(recorder.active());
+    const QString allocated = recorder.path();
+    QVERIFY(QFileInfo(allocated).isAbsolute());
+    const QDate allocatedDate = QDate::currentDate();
+    const QString expectedDirectory = QDir(root).filePath(QStringLiteral("%1/%2")
+        .arg(QString::number(allocatedDate.year()).rightJustified(4, QLatin1Char('0')))
+        .arg(allocatedDate.month()));
+    QCOMPARE(QFileInfo(allocated).absolutePath(), expectedDirectory);
+    const QString normalizedRoot = QDir::cleanPath(QDir::fromNativeSeparators(QDir(root).absolutePath()));
+    const QString normalizedAllocated = QDir::cleanPath(QDir::fromNativeSeparators(allocated));
+    QVERIFY(normalizedAllocated.startsWith(normalizedRoot + QLatin1Char('/')));
+    recorder.cancel();
+    QTRY_VERIFY_WITH_TIMEOUT(!recorder.active(), 5000);
+    QCOMPARE(canceled.size(), 1);
+    QVERIFY(errors.isEmpty());
+    QVERIFY(!QFileInfo::exists(allocated));
+
+    const QString obstructionPath = temporary.filePath("not-a-folder");
+    QFile obstruction(obstructionPath);
+    QVERIFY(obstruction.open(QIODevice::WriteOnly));
+    obstruction.close();
+    Recorder failed;
+    QSignalSpy failedErrors(&failed, &Recorder::error);
+    failed.start(source, obstructionPath);
+    QCOMPARE(failedErrors.size(), 1);
+    QVERIFY(failedErrors.first().first().toString().contains("folder"));
+    QVERIFY(!failed.active());
+    QVERIFY(failed.path().isEmpty());
+}
+
 void RecordingTests::videoSelectorIsSingleRegion() {
     QImage image(800, 600, QImage::Format_RGB32); image.fill(Qt::blue);
-    RegionSelector selector(image, QRect(0, 0, 400, 300));
+    RegionSelector selector(image, QRect(0, 0, 400, 300), &isolatedRecordingSettings());
     QSignalSpy videoRequest(&selector, &RegionSelector::videoRequested);
     QSignalSpy multiple(&selector, &RegionSelector::multipleRequested);
     QSignalSpy screenshot(&selector, &RegionSelector::selected);
@@ -713,7 +781,7 @@ void RecordingTests::desktopRecording() {
 #endif
     QTest::qWait(100);
 
-    Backend backend;
+    Backend backend(&isolatedRecordingSettings());
 #ifdef Q_OS_WIN
     QWindow startupOverlay, controlsOverlay;
     startupOverlay.setFlags(Qt::Tool | Qt::FramelessWindowHint);
@@ -771,7 +839,13 @@ void RecordingTests::desktopRecording() {
     QVERIFY(!backend.recording());
     const QString file = saved.first().first().toString();
     QVERIFY(QFileInfo(file).size() > 1000);
-    QCOMPARE(QFileInfo(file).absolutePath(), QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)).filePath("xshot"));
+    const QFileInfo savedInfo(file);
+    const QDate allocatedDate = QDate::fromString(savedInfo.completeBaseName().mid(6, 8), "yyyyMMdd");
+    QVERIFY(allocatedDate.isValid());
+    const QString expectedDirectory = QDir(isolatedRecordingSettings().videosRoot()).filePath(QStringLiteral("%1/%2")
+        .arg(QString::number(allocatedDate.year()).rightJustified(4, QLatin1Char('0')))
+        .arg(allocatedDate.month()));
+    QCOMPARE(savedInfo.absolutePath(), expectedDirectory);
     QCOMPARE(QApplication::clipboard()->text(), "keep clipboard on save");
 
     QProcess probe;
@@ -862,7 +936,7 @@ void RecordingTests::cancellationTimeoutDiscards() {
     source.platform = recording::Platform::Mac;
     source.displayId = 0;
     source.relativeRegion = QRectF(0, 0, 0.25, 0.25);
-    recorder.start(source);
+    recorder.start(source, isolatedRecordingSettings().videosRoot());
     QVERIFY(recorder.starting());
     recorder.cancel();
     QCOMPARE(canceled.size(), 1);
@@ -931,7 +1005,7 @@ void RecordingTests::interactiveCancellationTimeout() {
     source.platform = recording::Platform::Mac;
     source.displayId = CGMainDisplayID();
     source.relativeRegion = QRectF(0.1, 0.1, 0.2, 0.2);
-    recorder.start(source);
+    recorder.start(source, isolatedRecordingSettings().videosRoot());
     QTRY_VERIFY_WITH_TIMEOUT(recorder.m_ready || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error.isEmpty() ? QString() : error.first().first().toString()));
     QTest::qWait(500);
@@ -946,7 +1020,7 @@ void RecordingTests::interactiveCancellationTimeout() {
 
     // A late native stop or recording-finished callback belongs to the old
     // session and must neither recreate its file nor cancel this new attempt.
-    recorder.start(source);
+    recorder.start(source, isolatedRecordingSettings().videosRoot());
     QTRY_VERIFY_WITH_TIMEOUT(recorder.m_ready || !error.isEmpty(), 15000);
     QVERIFY2(error.isEmpty(), qPrintable(error.isEmpty() ? QString() : error.first().first().toString()));
     QVERIFY(recorder.active());

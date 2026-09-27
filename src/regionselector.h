@@ -6,12 +6,14 @@
 class QLabel;
 class QPushButton;
 class QToolButton;
+class AppSettings;
+class QKeyEvent;
 
 // One frozen, full-screen overlay per monitor. Coordinates stay screen-local.
 class RegionSelector : public QWidget {
     Q_OBJECT
 public:
-    explicit RegionSelector(QImage image, const QRect &geometry);
+    explicit RegionSelector(QImage image, const QRect &geometry, AppSettings *settings);
     static QRect pixelRect(const QRectF &selection, const QSizeF &viewSize, const QSize &imageSize);
     QImage crop(const QRectF &area) const;
     void setSelections(bool multiple, const QList<QPair<int, QRectF>> &areas, int total);
@@ -39,6 +41,8 @@ private:
     QRectF selection() const;
     void updateToolbar();
     void layoutControls();
+    bool matchesShortcut(const QKeyEvent *event, const QString &name) const;
+    QString shortcutHint(const QString &name, const QString &fallback) const;
     QWidget *m_toolbar = nullptr;
     QLabel *m_instruction = nullptr;
     QLabel *m_count = nullptr;
@@ -57,4 +61,5 @@ private:
     int m_total = 0;
     QList<QPair<int, QRectF>> m_areas;
     QString m_notice;
+    AppSettings *m_settings = nullptr;
 };

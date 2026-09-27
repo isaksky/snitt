@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QAbstractNativeEventFilter>
+#include <QKeySequence>
 #include <memory>
 
 // Native registration rather than a keyboard hook: no keystrokes are recorded.
@@ -10,6 +11,8 @@ public:
     explicit GlobalHotkey(QObject *parent = nullptr);
     ~GlobalHotkey() override;
     bool registered() const;
+    bool setShortcut(const QKeySequence &sequence, QString *error = nullptr);
+    QKeySequence shortcut() const;
     QString description() const;
     bool nativeEventFilter(const QByteArray &, void *, qintptr *) override;
 signals:

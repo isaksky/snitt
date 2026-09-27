@@ -1,4 +1,5 @@
 #include "videorecorder.h"
+#include "savepaths.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -121,7 +122,7 @@ VideoRecorder::~VideoRecorder() {
     }
 }
 
-void VideoRecorder::start(const recording::Source &source) {
+void VideoRecorder::start(const recording::Source &source, const QString &saveRoot) {
     if (m_active || m_process.state() != QProcess::NotRunning) return;
     const QString executable = recording::toolPath("ffmpeg");
     if (executable.isEmpty()) {
@@ -132,14 +133,18 @@ void VideoRecorder::start(const recording::Source &source) {
 #endif
         return;
     }
-    const QString movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
-    const QString directory = QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath("xshot");
+    if (saveRoot.isEmpty()) {
+        emit error(QStringLiteral("The configured video save folder is empty. Correct Save/videosRoot in xshot's settings file."));
+        return;
+    }
+    const QDateTime startedAt = QDateTime::currentDateTime();
+    const QString directory = savepaths::datedMediaDirectory(saveRoot, startedAt);
     if (!QDir().mkpath(directory)) {
         emit error(QStringLiteral("Could not create the recordings folder: %1").arg(directory));
         return;
     }
     m_output = QDir(directory).filePath(QStringLiteral("xshot-%1-%2.mp4")
-        .arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss"),
+        .arg(startedAt.toString("yyyyMMdd-HHmmss"),
              QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
     m_stderr.clear();
     m_progress.clear();

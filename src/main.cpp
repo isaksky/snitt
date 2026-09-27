@@ -12,6 +12,7 @@
 #include "backend.h"
 #include "editorcanvas.h"
 #include "appservice.h"
+#include "appsettings.h"
 #include <QFileInfo>
 
 int main(int argc, char *argv[]) {
@@ -57,9 +58,11 @@ int main(int argc, char *argv[]) {
     QQuickStyle::setStyle("Material");
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
 
-    Backend backend;
+    AppSettings settings;
+    Backend backend(&settings);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &settings);
     QString imagePath;
     for (const auto &arg : args) if (!arg.startsWith('-')) { imagePath = arg; break; }
     engine.rootContext()->setContextProperty("initialImage",
@@ -70,7 +73,7 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty())
         return 1;
 
-    AppService service(&server, engine.rootObjects().first());
+    AppService service(&server, engine.rootObjects().first(), &settings);
 
     return app.exec();
 }

@@ -33,8 +33,8 @@ bool AppService::sendCommand(const QStringList &arguments) {
     return socket.bytesToWrite() == 0 || socket.waitForBytesWritten(1000);
 }
 
-AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
-    : QObject(parent), m_window(window) {
+AppService::AppService(QLocalServer *server, QObject *window, AppSettings *settings, QObject *parent)
+    : QObject(parent), m_window(window), m_settings(settings) {
     auto capture = [this] { QMetaObject::invokeMethod(m_window, "capture"); };
     auto hotkeyCapture = [this] { QMetaObject::invokeMethod(m_window, "hotkeyCapture"); };
     auto show = [this] { QMetaObject::invokeMethod(m_window, "showEditor"); };
@@ -42,7 +42,8 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
     m_menu.addAction(QStringLiteral("Capture region"), this, capture);
     m_menu.addAction(QStringLiteral("Open editor"), this, show);
     m_menu.addSeparator();
-    m_menu.addAction(m_hotkey.description())->setEnabled(false);
+    m_hotkeyAction = m_menu.addAction(QString());
+    m_hotkeyAction->setEnabled(false);
     m_menu.addSeparator();
     m_menu.addAction(QStringLiteral("Quit xshot"), qApp, &QCoreApplication::quit);
     QPixmap pixmap(32, 32); pixmap.fill(Qt::transparent);
@@ -60,7 +61,16 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
     icon.setIsMask(true);
 #endif
     m_tray.setIcon(icon);
-    m_tray.setToolTip(QStringLiteral("xshot · ") + m_hotkey.description());
+    const auto refreshShortcutText = [this] {
+        m_hotkeyAction->setText(m_hotkey.description());
+        m_tray.setToolTip(QStringLiteral("xshot · ") + m_hotkey.description());
+    };
+    connect(m_settings, &AppSettings::settingsChanged, this, refreshShortcutText);
+    connect(m_settings, &AppSettings::reloadFailed, this, [this](const QString &message) {
+        m_tray.showMessage(QStringLiteral("xshot settings not applied"), message, QSystemTrayIcon::Warning);
+    });
+    m_settings->attachGlobalHotkey(&m_hotkey);
+    refreshShortcutText();
     m_tray.setContextMenu(&m_menu);
     connect(&m_tray, &QSystemTrayIcon::activated, this, [capture](QSystemTrayIcon::ActivationReason reason) {
         if (reason == QSystemTrayIcon::DoubleClick) capture();
@@ -72,6 +82,10 @@ AppService::AppService(QLocalServer *server, QObject *window, QObject *parent)
                               m_hotkey.description() + QStringLiteral(". Use Capture region in this menu."), QSystemTrayIcon::Warning);
         });
     }
+    if (!m_settings->lastError().isEmpty())
+        QTimer::singleShot(750, this, [this] {
+            m_tray.showMessage(QStringLiteral("xshot settings not applied"), m_settings->lastError(), QSystemTrayIcon::Warning);
+        });
     connect(server, &QLocalServer::newConnection, this, [this, server] {
         while (auto *socket = server->nextPendingConnection()) {
             socket->setParent(this);

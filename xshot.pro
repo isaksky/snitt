@@ -7,13 +7,13 @@ TEMPLATE = app
 # Match the minimum macOS version of the Homebrew Qt Quick libraries.
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 
-HEADERS += src/backend.h src/imagedocument.h src/editorcanvas.h
+HEADERS += src/backend.h src/imagedocument.h src/editorcanvas.h src/annotationfont.h
 SOURCES += src/main.cpp src/backend.cpp src/imagedocument.cpp src/editorcanvas.cpp
-HEADERS += src/globalhotkey.h src/appservice.h src/regionselector.h
-SOURCES += src/globalhotkey.cpp src/appservice.cpp src/regionselector.cpp
+HEADERS += src/globalhotkey.h src/appservice.h src/appsettings.h src/regionselector.h
+SOURCES += src/globalhotkey.cpp src/appservice.cpp src/appsettings.cpp src/regionselector.cpp
 HEADERS += src/videorecorder.h
 SOURCES += src/videorecorder.cpp
-HEADERS += src/screenshotsave.h
+HEADERS += src/screenshotsave.h src/savepaths.h
 SOURCES += src/screenshotsave.cpp
 HEADERS += src/trimsession.h
 SOURCES += src/trimsession.cpp

@@ -5,13 +5,13 @@ TARGET = editor_tests
 TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
-HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/backend.h ../src/regionselector.h ../src/globalhotkey.h
-SOURCES += editor_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/globalhotkey.cpp
+HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/annotationfont.h ../src/backend.h ../src/regionselector.h ../src/globalhotkey.h ../src/appsettings.h
+SOURCES += editor_tests.cpp ../src/imagedocument.cpp ../src/editorcanvas.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/globalhotkey.cpp ../src/appsettings.cpp
 HEADERS += ../src/videorecorder.h
 SOURCES += ../src/videorecorder.cpp
 HEADERS += ../src/screenshotsave.h
 SOURCES += ../src/screenshotsave.cpp
-HEADERS += ../src/trimsession.h
+HEADERS += ../src/trimsession.h ../src/savepaths.h
 SOURCES += ../src/trimsession.cpp
 macx {
     HEADERS += ../src/macrecorder.h

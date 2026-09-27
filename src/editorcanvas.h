@@ -15,8 +15,13 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(qreal imageScale READ imageScale NOTIFY imageRectChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
+    Q_PROPERTY(QString colorMode READ colorMode NOTIFY inkChanged)
+    Q_PROPERTY(QColor goodColor READ goodColor WRITE setGoodColor NOTIFY inkChanged)
+    Q_PROPERTY(QColor badColor READ badColor WRITE setBadColor NOTIFY inkChanged)
+    Q_PROPERTY(QString saveRoot READ saveRoot WRITE setSaveRoot)
     Q_PROPERTY(int strokeWidth READ strokeWidth NOTIFY sizeChanged)
     Q_PROPERTY(int textSize READ textSize NOTIFY sizeChanged)
+    Q_PROPERTY(QString annotationFontFamily READ annotationFontFamily CONSTANT)
     Q_PROPERTY(int pixelBlockSize READ pixelBlockSize NOTIFY sizeChanged)
     Q_PROPERTY(int maxPixelBlockSize READ maxPixelBlockSize NOTIFY sizeChanged)
     Q_PROPERTY(int maxStrokeWidth READ maxStrokeWidth NOTIFY sizeChanged)
@@ -38,8 +43,17 @@ public:
     void setTool(const QString &tool);
     QColor ink() const { return m_ink; }
     void setInk(QColor ink);
+    QString colorMode() const { return m_colorMode; }
+    QColor goodColor() const { return m_goodColor; }
+    QColor badColor() const { return m_badColor; }
+    void setGoodColor(const QColor &color);
+    void setBadColor(const QColor &color);
+    QString saveRoot() const { return m_saveRoot; }
+    void setSaveRoot(const QString &root) { m_saveRoot = root; }
+    Q_INVOKABLE void setInkMode(const QString &mode);
     int strokeWidth() const { return m_strokeWidth; }
     int textSize() const { return m_textSize; }
+    QString annotationFontFamily() const;
     int pixelBlockSize() const { return m_pixelBlockSize; }
     int maxPixelBlockSize() const;
     int maxStrokeWidth() const;
@@ -90,6 +104,10 @@ private:
     ImageDocument m_document;
     QString m_tool = QStringLiteral("rect");
     QColor m_ink = QColor("#ef4444");
+    QColor m_goodColor = QColor("#22c55e");
+    QColor m_badColor = QColor("#ef4444");
+    QString m_colorMode = QStringLiteral("bad");
+    QString m_saveRoot;
     int m_strokeWidth = 4;
     int m_textSize = 24;
     int m_pixelBlockSize = 12;
