@@ -1,5 +1,6 @@
 #include "trimsession.h"
 
+#include "mp4duration.h"
 #include "videorecorder.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -126,9 +127,9 @@ TrimSession::TrimSession(QObject *parent) : QObject(parent) {
             fail(QStringLiteral("The trimmed MP4 could not be verified. Your original recording is unchanged."));
             return;
         }
-        // Stream copy can retain reordered packets beyond the requested end.
-        // Allow a small tail, but reject large timing errors before replacement.
-        if (info.duration < m_endMs - m_startMs - 100 || info.duration > m_endMs - m_startMs + 250) {
+        // The edit list bounds presentation even when stream copy retains
+        // reference frames beyond the end. Reject missing media or bad timing.
+        if (info.duration < m_endMs - m_startMs - 100 || info.duration > m_endMs - m_startMs + 2) {
             fail(QStringLiteral("The trimmed MP4 duration did not match the selected range. Your original recording is unchanged."));
             return;
         }
@@ -330,12 +331,13 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
     }
     m_progressBuffer.clear();
     // Input seeking retains required keyframe preroll. MP4 edit lists hide it
-    // during playback; reordered frames may extend the tail slightly.
+    // during playback. Bound the tail's edit duration after muxing, since the
+    // decode-order cutoff can retain much later presentation frames on VFR video.
     m_exportProcess.start(ffmpeg, {"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-progress", "pipe:1", "-ss", timestamp(startMs), "-i", m_path,
         "-t", timestamp(endMs - startMs), "-map", "0:v:0", "-map", "0:a?",
         "-c", "copy",
-        "-movflags", "+faststart", m_tempOutput});
+        "-use_editlist", "1", "-movflags", "+faststart", m_tempOutput});
 }
 
 void TrimSession::cancelExport() {
@@ -363,6 +365,10 @@ void TrimSession::exportFinished(bool success, const QString &detail) {
     if (!success || QFileInfo(m_tempOutput).size() < 1024) {
         fail(QStringLiteral("Could not export the selected range%1. Your original recording is unchanged.")
              .arg(detail.isEmpty() ? QString() : QStringLiteral(": %1").arg(detail)));
+        return;
+    }
+    if (!limitMp4Duration(m_tempOutput, m_endMs - m_startMs)) {
+        fail(QStringLiteral("Could not set the trimmed MP4 playback range. Your original recording is unchanged."));
         return;
     }
     validateOutput();

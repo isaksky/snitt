@@ -187,9 +187,9 @@ play/pause button sits below the centered elapsed and total time. Space plays or
 pauses; Left/Right seek one second and Shift+Left/Right seek five seconds. **Save trim**
 exports the chosen range and replaces the original MP4 only after the new file
 passes validation. Trimming copies the existing compressed video and audio without
-re-encoding. Cuts between keyframes can retain hidden preroll and a short extra
-tail; the export is rejected if the video duration exceeds the selection by more
-than 0.25 seconds. **Keep original**, Escape, or closing review keeps the full
+re-encoding. MP4 edit lists hide the reference frames needed before and after the
+selection, keeping playback bounded to the chosen range even with sparse frames.
+**Keep original**, Escape, or closing review keeps the full
 recording. Canceling an export or an export error also keeps the original. The
 final file is selected in Finder or Explorer after Keep original or a successful
 trim; previewing and trimming never change the clipboard.
@@ -254,8 +254,8 @@ Use the mouse wheel over the image with Rectangle or Arrow selected to change
 stroke width, with Text selected to change font size, or with Pixelate selected
 to change block size. Each wheel notch changes line width or text size by 2 px,
 or pixelation block size by 4 px. The current size appears
-in the editor hint. While entering text, wheel over the image outside the text
-box to resize the whole draft; wheel inside the box scrolls its contents. Widths
+in the editor hint. While entering text, wheel over the image or text box to
+resize the whole draft; use the scrollbar to move through long text. Widths
 and font sizes are source-image pixels and stay selected for the next annotation.
 Stroke width ranges from 1 px to the smaller of 64 px and one-eighth of the
 image's shorter edge (at least 1 px). Text ranges from 8 px to the smaller of

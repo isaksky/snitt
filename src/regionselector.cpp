@@ -183,9 +183,10 @@ void RegionSelector::updateToolbar() {
     m_multipleButton->setEnabled(!m_video);
     m_videoButton->setChecked(m_video);
     m_instruction->setText(m_video ? "Drag to record." : m_multiple ? "Drag to add regions." : "Drag to capture.");
-    m_count->setText(m_multiple && !m_video ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
-    m_arrangeButton->setVisible(m_multiple && !m_video);
-    m_arrangeButton->setEnabled(m_multiple && !m_video && m_total > 0);
+    const bool hasSelections = m_multiple && !m_video && m_total > 0;
+    m_count->setText(hasSelections ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
+    m_arrangeButton->setVisible(hasSelections);
+    m_arrangeButton->setEnabled(hasSelections);
     m_noticeLabel->setText(m_notice);
     m_noticeLabel->setVisible(!m_notice.isEmpty());
     layoutControls();

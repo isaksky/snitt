@@ -6,7 +6,8 @@ TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
 HEADERS += ../src/trimsession.h ../src/videorecorder.h
-SOURCES += trim_thumbnail_benchmark.cpp ../src/trimsession.cpp ../src/videorecorder.cpp
+SOURCES += trim_thumbnail_benchmark.cpp ../src/trimsession.cpp ../src/mp4duration.cpp ../src/videorecorder.cpp
+HEADERS += ../src/mp4duration.h
 macx {
     QMAKE_CXXFLAGS += -fobjc-arc
     LIBS += -framework CoreGraphics -framework CoreMedia -framework AVFoundation -framework AppKit

@@ -801,6 +801,11 @@ void EditorTests::qmlResizeTextDraft() {
 }
 
 void EditorTests::qmlWheelSizes() {
+#ifdef Q_OS_WIN
+    QGuiApplication::setFont(QFont("Segoe UI"));
+#else
+    QGuiApplication::setFont(QFont("Helvetica"));
+#endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
@@ -861,19 +866,21 @@ void EditorTests::qmlWheelSizes() {
     QTRY_VERIFY(text->property("contentHeight").toReal() > textFrame->property("height").toReal());
     const QPointF inside(textFrame->property("x").toReal() + 20,
                          textFrame->property("y").toReal() + textFrame->property("height").toReal() / 2);
-    auto *flickable = textFrame->property("contentItem").value<QObject *>();
-    QVERIFY(flickable);
-    const qreal scrollStart = flickable->property("contentY").toReal();
-    wheelAt(inside, scrollStart > 0 ? 120 : -120);
-    QCOMPARE(canvas->textSize(), 26);
-    QTRY_VERIFY(flickable->property("contentY").toReal() != scrollStart);
-    wheelAt(inside, scrollStart > 0 ? -120 : 120);
+    // Wheel input over an overflowing text editor still resizes the whole draft.
+    wheelAt(inside, 120);
+    QCOMPARE(canvas->textSize(), 28);
+    wheelAt(inside, -120);
     QCOMPARE(canvas->textSize(), 26);
     wheelAt(inside, 12000);
+    QCOMPARE(canvas->textSize(), canvas->maxTextSize());
     wheelAt(inside, 120);
+    QCOMPARE(canvas->textSize(), canvas->maxTextSize());
     wheelAt(inside, -12000);
+    QCOMPARE(canvas->textSize(), 8);
     wheelAt(inside, -120);
-    QCOMPARE(canvas->textSize(), 26); // Scroll limits never resize the note.
+    QCOMPARE(canvas->textSize(), 8);
+    wheelAt(inside, 120 * 9);
+    QCOMPARE(canvas->textSize(), 26);
     wheelAt(point({20, 300}), 120);
     QCOMPARE(canvas->textSize(), 28);
     QCOMPARE(text->property("text").toString(), QString(30, 'A').replace("A", "A\n"));
@@ -2058,8 +2065,9 @@ void EditorTests::captureToolbarInteraction() {
     QTest::mouseClick(multiple, Qt::LeftButton);
     QCoreApplication::processEvents();
     QVERIFY(multiple->isChecked());
-    QVERIFY(!arrange->isHidden());
+    QVERIFY(arrange->isHidden());
     QVERIFY(!arrange->isEnabled());
+    QVERIFY(count->text().isEmpty());
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     QCOMPARE(multiple->geometry(), modeBounds);
     QCOMPARE(instruction->geometry(), instructionBounds);
@@ -2680,8 +2688,18 @@ void EditorTests::settingsUpdateEditorShortcutsHintsAndColorsLive() {
     QTest::keyClick(window, Qt::Key_G);
     QTRY_COMPARE(canvas->colorMode(), QString("good"));
 
+    QList<QObject *> finishButtons;
+    for (const char *name : {"saveButton", "copyButton", "saveArrangementButton", "copyArrangementButton"}) {
+        auto *button = window->findChild<QObject *>(name);
+        QVERIFY(button);
+        QVERIFY(button->property("underlineShortcut").toBool());
+        finishButtons.append(button);
+    }
+
     QByteArray changed = readBytes(paths.settingsFile);
     changed.replace("toolPixelate=P\n", "toolPixelate=Shift+Alt+P\n");
+    changed.replace("saveClose=S\n", "saveClose=Ctrl+S\n");
+    changed.replace("copyClose=C\n", "copyClose=Ctrl+C\n");
     changed.replace("good=#22c55e", "good=#317ab5");
     QVERIFY(atomicWrite(paths.settingsFile, changed));
     QTRY_COMPARE_WITH_TIMEOUT(canvas->goodColor(), QColor("#317ab5"), 3000);
@@ -2696,6 +2714,16 @@ void EditorTests::settingsUpdateEditorShortcutsHintsAndColorsLive() {
     QCOMPARE(canvas->tool(), QString("rect"));
     QTest::keySequence(window, QKeySequence(QStringLiteral("Shift+Alt+P")));
     QTRY_COMPARE(canvas->tool(), QString("blur"));
+    for (auto *button : finishButtons)
+        QTRY_VERIFY(!button->property("underlineShortcut").toBool());
+
+    // A mnemonic returns when its bare letter is one of the configured
+    // alternatives; disabling a shortcut must not leave a misleading underline.
+    changed.replace("saveClose=Ctrl+S\n", "saveClose=F6|S\n");
+    changed.replace("copyClose=Ctrl+C\n", "copyClose=\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    for (auto *button : finishButtons)
+        QTRY_COMPARE(button->property("underlineShortcut").toBool(), button->objectName().startsWith("save"));
 }
 
 void EditorTests::settingsShortcutAlternativesAndDisable() {

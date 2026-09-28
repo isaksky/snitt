@@ -31,7 +31,7 @@ ApplicationWindow {
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
     readonly property bool imageInputShortcuts: shortcutsOn && (!canvas.hasImage || canvas.arranging)
-    readonly property string hint: editingText ? "Text " + canvas.textSize + " px · Drag edge to wrap · " + commandKey + "Enter to place · Esc cancels"
+    readonly property string hint: editingText ? canvas.textSize + " px · " + commandKey + "Enter to place"
         : canvas.tool === "cut" ? "↔ removes columns · ↕ removes rows"
         : canvas.tool === "rect" || canvas.tool === "arrow"
             ? "Line width " + canvas.strokeWidth + " px · Scroll to adjust"
@@ -843,37 +843,47 @@ ApplicationWindow {
         }
     }
 
-    component ModeButton: ActionButton {
-        id: modeControl
+    component ShortcutLabel: Item {
+        id: shortcutLabel
+        property alias text: label.text
+        property alias font: label.font
+        property alias color: label.color
         property bool underlineShortcut: false
-        contentItem: Item {
-            implicitWidth: modeLabel.implicitWidth
-            implicitHeight: modeLabel.implicitHeight
-            Text {
-                id: modeLabel
-                anchors.centerIn: parent
-                text: modeControl.text
-                textFormat: Text.PlainText
-                font: modeControl.font
-                color: modeControl.enabled ? modeControl.textColor : "#8f99a8"
-                TextMetrics {
-                    id: shortcutLetter
-                    font: modeLabel.font
-                    text: modeLabel.text.charAt(0)
-                }
-                Rectangle {
-                    visible: modeControl.underlineShortcut
-                    y: Math.ceil(modeLabel.baselineOffset + 2)
-                    width: Math.ceil(shortcutLetter.advanceWidth)
-                    height: 1
-                    color: modeLabel.color
-                }
+        implicitWidth: label.implicitWidth
+        implicitHeight: label.implicitHeight
+        Text {
+            id: label
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            TextMetrics {
+                id: shortcutLetter
+                font: label.font
+                text: label.text.charAt(0)
             }
+            Rectangle {
+                visible: shortcutLabel.underlineShortcut
+                y: Math.ceil(label.baselineOffset + 2)
+                width: Math.ceil(shortcutLetter.advanceWidth)
+                height: 1
+                color: label.color
+            }
+        }
+    }
+
+    component ShortcutButton: ActionButton {
+        id: shortcutControl
+        property bool underlineShortcut: false
+        contentItem: ShortcutLabel {
+            text: shortcutControl.text
+            font: shortcutControl.font
+            color: shortcutControl.enabled ? shortcutControl.textColor : "#8f99a8"
+            underlineShortcut: shortcutControl.underlineShortcut
         }
     }
 
     component PrimaryButton: Button {
         id: primaryControl
+        property bool underlineShortcut: false
         highlighted: true
         font.weight: Font.DemiBold
         leftPadding: 16
@@ -883,12 +893,11 @@ ApplicationWindow {
         topInset: 0
         bottomInset: 0
         // Explicit colors avoid Material's light highlighted label on our mint accent.
-        contentItem: Text {
+        contentItem: ShortcutLabel {
             text: primaryControl.text
             font: primaryControl.font
             color: primaryControl.enabled ? "#142820" : "#9ba5b5"
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            underlineShortcut: primaryControl.underlineShortcut
         }
         background: Rectangle {
             radius: 7
@@ -921,18 +930,20 @@ ApplicationWindow {
                     visible: canvas.regionCount > 0 && !canvas.arranging
                     onClicked: win.arrangeRegions()
                 }
-                ActionButton {
+                ShortcutButton {
                     objectName: "saveArrangementButton"
                     text: "Save and close"
+                    underlineShortcut: win.shortcuts.saveClose.indexOf("S") >= 0
                     visible: canvas.arranging
                     enabled: canvas.hasImage
                     onClicked: win.saveAndClose()
                     ToolTip.visible: hovered
                     ToolTip.text: "Save under " + appSettings.picturesRoot + "/YEAR/MONTH and close (" + win.keys.saveClose + ")"
                 }
-                ActionButton {
+                ShortcutButton {
                     objectName: "copyArrangementButton"
                     text: "Copy and close"
+                    underlineShortcut: win.shortcuts.copyClose.indexOf("C") >= 0
                     visible: canvas.arranging
                     enabled: canvas.hasImage
                     onClicked: win.finish()
@@ -1155,7 +1166,7 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 1
                             spacing: 0
-                            ModeButton {
+                            ShortcutButton {
                                 id: goodModeButton
                                 objectName: "ink_good"
                                 text: "Good"
@@ -1182,7 +1193,7 @@ ApplicationWindow {
                                 Layout.fillHeight: true
                                 onClicked: { win.commitText(); canvas.setInkMode("good") }
                             }
-                            ModeButton {
+                            ShortcutButton {
                                 id: badModeButton
                                 objectName: "ink_bad"
                                 text: "Bad"
@@ -1249,9 +1260,10 @@ ApplicationWindow {
                         objectName: "finishButtons"
                         spacing: 4
                         Layout.alignment: Qt.AlignHCenter
-                        ActionButton {
+                        ShortcutButton {
                             objectName: "saveButton"
                             text: "Save"
+                            underlineShortcut: win.shortcuts.saveClose.indexOf("S") >= 0
                             Accessible.name: "Save image and close"
                             enabled: canvas.hasImage
                             focusPolicy: Qt.TabFocus
@@ -1262,6 +1274,7 @@ ApplicationWindow {
                         PrimaryButton {
                             objectName: "copyButton"
                             text: "Copy"
+                            underlineShortcut: win.shortcuts.copyClose.indexOf("C") >= 0
                             Accessible.name: "Copy image and close"
                             enabled: canvas.hasImage
                             focusPolicy: Qt.TabFocus
@@ -1317,12 +1330,6 @@ ApplicationWindow {
             onReleased: mouse => canvas.end(mouse.x, mouse.y)
             onCanceled: canvas.cancel()
             onWheel: wheel => {
-                // TextArea handles its own scrolling, including at scroll limits.
-                if (win.editingText && wheel.x >= textFrame.x && wheel.x < textFrame.x + textFrame.width
-                        && wheel.y >= textFrame.y && wheel.y < textFrame.y + textFrame.height) {
-                    wheel.accepted = true
-                    return
-                }
                 if (canvas.arranging || (canvas.tool !== "rect" && canvas.tool !== "arrow" && canvas.tool !== "text" && canvas.tool !== "blur")) {
                     wheel.accepted = false
                     return
@@ -1344,6 +1351,14 @@ ApplicationWindow {
             clip: true
             background: Rectangle { color: "#dd181b21"; border.color: "#9ba5b5"; radius: 2 }
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            WheelHandler {
+                target: null
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: event => {
+                    canvas.adjustToolSize(event.angleDelta.y || event.pixelDelta.y * 8)
+                    event.accepted = true
+                }
+            }
             TextArea {
                 id: textInput
                 objectName: "annotationText"

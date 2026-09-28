@@ -18,6 +18,7 @@
 #include "regionselector.h"
 #include "appsettings.h"
 #include "videorecorder.h"
+#include "mp4duration.h"
 #ifdef Q_OS_MACOS
 #include <CoreGraphics/CoreGraphics.h>
 #endif
@@ -32,6 +33,10 @@ private slots:
     void desktopRecording();
     void trimKeepsOriginalOnDismissAndInvalidRange();
     void trimHeadAndTailWithStreamCopy();
+    void trimReorderedFrames_data();
+    void trimReorderedFrames();
+    void mp4DurationBounds_data();
+    void mp4DurationBounds();
     void trimCopyProgressAndReset();
     void trimCopiesAudioAndVideo();
     void trimThumbnailsFollowWindow();
@@ -210,6 +215,144 @@ void RecordingTests::trimCopiesAudioAndVideo() {
         }
         QVERIFY(!clipPixels(path).isEmpty());
         duration = range.second - range.first;
+    }
+}
+
+void RecordingTests::trimReorderedFrames_data() {
+    QTest::addColumn<QString>("selection");
+    QTest::addColumn<qint64>("endMs");
+    QTest::addColumn<bool>("audio");
+    // Sparse initial frames produce a large decode/presentation offset, as in
+    // ScreenCaptureKit recordings. A plain -t stream copy keeps a visible tail.
+    QTest::newRow("large-reorder-delay") << QString("eq(n,0)+eq(n,12)+gte(n,24)") << qint64(7070) << false;
+    QTest::newRow("large-reorder-delay-audio") << QString("eq(n,0)+eq(n,12)+gte(n,24)") << qint64(7070) << true;
+    QTest::newRow("end-in-held-frame") << QString("lt(t,1)+gte(t,2)") << qint64(1500) << false;
+}
+
+void RecordingTests::trimReorderedFrames() {
+    if (recording::toolPath("ffmpeg").isEmpty()) QSKIP("FFmpeg is needed for the fixture");
+    QFETCH(QString, selection);
+    QFETCH(qint64, endMs);
+    QFETCH(bool, audio);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("sparse.mp4");
+    QProcess fixture;
+    QStringList args {"-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=160x90:r=30:d=10"};
+    if (audio) args << "-f" << "lavfi" << "-i" << "sine=frequency=440:duration=10";
+    args << "-vf" << QString("drawbox=c=green:t=fill:enable='gte(t,4)*lt(t,7.1)',"
+                            "drawbox=c=blue:t=fill:enable='gte(t,7.1)',select='%1'").arg(selection)
+         << "-fps_mode" << "vfr" << "-c:v" << "libx264" << "-g" << "300" << "-bf" << "3";
+    if (audio) args << "-c:a" << "aac";
+    args << path;
+    fixture.start(recording::toolPath("ffmpeg"), args);
+    QVERIFY(fixture.waitForFinished(15000));
+    QVERIFY2(fixture.exitCode() == 0, fixture.readAllStandardError().constData());
+    const auto videoPackets = packetHashes(path);
+    const auto audioPackets = audio ? packetHashes(path, "a:0") : QStringList();
+
+    TrimSession trim;
+    QSignalSpy finalized(&trim, &TrimSession::finalized);
+    trim.open(path);
+    trim.setDuration(10000);
+    trim.exportRange(960, endMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!trim.busy(), 15000);
+    QVERIFY2(trim.problem().isEmpty(), qPrintable(trim.problem()));
+    QCOMPARE(finalized.size(), 1);
+    const auto copied = packetHashes(path);
+    QVERIFY(!copied.isEmpty());
+    const int first = videoPackets.indexOf(copied.first());
+    QVERIFY(first >= 0);
+    QCOMPARE(copied, videoPackets.mid(first, copied.size()));
+    if (audio) {
+        const auto copiedAudio = packetHashes(path, "a:0");
+        QVERIFY(!copiedAudio.isEmpty());
+        const int firstAudio = audioPackets.indexOf(copiedAudio.first());
+        QVERIFY(firstAudio >= 0);
+        QCOMPARE(copiedAudio, audioPackets.mid(firstAudio, copiedAudio.size()));
+    }
+    QProcess probe;
+    probe.start(recording::toolPath("ffprobe"), {"-v", "error", "-show_format", "-show_streams", "-of", "json", path});
+    QVERIFY(probe.waitForFinished(15000));
+    QCOMPARE(probe.exitCode(), 0);
+    const auto info = QJsonDocument::fromJson(probe.readAllStandardOutput()).object();
+    QCOMPARE(qRound64(info.value("format").toObject().value("duration").toString().toDouble() * 1000), endMs - 960);
+    for (const auto &stream : info.value("streams").toArray())
+        QVERIFY(stream.toObject().value("duration").toString().toDouble() * 1000 <= endMs - 960 + 2);
+    const QByteArray pixels = clipPixels(path);
+    const qsizetype frameSize = 160 * 90 * 3;
+    QVERIFY(pixels.size() >= frameSize);
+    // Decode without an output -t: the MP4 edit list itself must suppress blue
+    // frames beyond 7.07s, while retaining the green content inside the range.
+    bool sawGreen = false;
+    for (qsizetype frame = 0; frame + frameSize <= pixels.size(); frame += frameSize) {
+        const qsizetype middle = frame + (45 * 160 + 80) * 3;
+        const int r = uchar(pixels[middle]), g = uchar(pixels[middle + 1]), b = uchar(pixels[middle + 2]);
+        QVERIFY2(b < qMax(r, g), "A frame beyond the chosen end was presented");
+        sawGreen |= g > r * 2;
+    }
+    QCOMPARE(sawGreen, endMs > 4000);
+    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files | QDir::Hidden).isEmpty());
+}
+
+void RecordingTests::mp4DurationBounds_data() {
+    QTest::addColumn<bool>("wide");
+    QTest::newRow("32-bit") << false;
+    QTest::newRow("64-bit") << true;
+}
+
+void RecordingTests::mp4DurationBounds() {
+    QFETCH(bool, wide);
+    const auto number = [](quint64 value, int bytes) {
+        QByteArray data(bytes, '\0');
+        for (int i = bytes - 1; i >= 0; --i) { data[i] = char(value & 0xff); value >>= 8; }
+        return data;
+    };
+    const auto box = [&](const char *type, const QByteArray &data) {
+        return (wide ? number(1, 4) + QByteArray(type) + number(data.size() + 16, 8)
+                     : number(data.size() + 8, 4) + QByteArray(type)) + data;
+    };
+    const int bytes = wide ? 8 : 4;
+    const auto header = [&](bool track, quint64 duration) {
+        QByteArray data(track ? (wide ? 96 : 84) : (wide ? 112 : 100), '\0');
+        data[0] = wide ? 1 : 0;
+        const int offset = wide ? 24 : 16;
+        if (!track) data.replace(offset - 4, 4, number(2000, 4));
+        data.replace(offset + (track ? 4 : 0), bytes, number(duration, bytes));
+        return data;
+    };
+    const auto movie = [&](quint64 duration, bool badRate = false) {
+        QByteArray edits = number(wide ? 0x01000000 : 0, 4) + number(2, 4);
+        // A delayed track has an empty edit followed by one media edit. Keep
+        // its delay/media time; change only the presentation duration.
+        edits += number(20, bytes) + QByteArray(bytes, '\xff') + number(0x10000, 4);
+        edits += number(duration - 20, bytes) + number(800, bytes) + number(badRate ? 0x20000 : 0x10000, 4);
+        const QByteArray track = box("tkhd", header(true, duration)) + box("edts", box("elst", edits))
+            + box("mdia", box("mdhd", QByteArray("encoded sample timing unchanged")));
+        return box("ftyp", QByteArray("isom")) + box("moov", box("mvhd", header(false, duration)) + box("trak", track))
+            + box("mdat", QByteArray("encoded video unchanged"));
+    };
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("metadata.mp4");
+    const auto write = [&](const QByteArray &data) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
+    };
+    const auto read = [&] {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    QVERIFY(write(movie(20000)));
+    QVERIFY(limitMp4Duration(path, 3055));
+    QCOMPARE(read(), movie(6110));
+    // Never inflate duration to make a truncated export appear complete.
+    QVERIFY(limitMp4Duration(path, 9000));
+    QCOMPARE(read(), movie(6110));
+    for (const QByteArray &invalid : {movie(20000, true), movie(20000).chopped(1), QByteArray("broken")}) {
+        QVERIFY(write(invalid));
+        QVERIFY(!limitMp4Duration(path, 3055));
+        QCOMPARE(read(), invalid);
     }
 }
 
