@@ -21,6 +21,8 @@
         <file alias="icons/grid-3x3.svg">icons/grid-3x3.svg</file>
         <file alias="icons/highlighter.svg">icons/highlighter.svg</file>
         <file alias="icons/move-up-right.svg">icons/move-up-right.svg</file>
+        <file alias="icons/play.svg">icons/play.svg</file>
+        <file alias="icons/pause.svg">icons/pause.svg</file>
         <file alias="icons/redo-2.svg">icons/redo-2.svg</file>
         <file alias="icons/scissors.svg">icons/scissors.svg</file>
         <file alias="icons/square-dashed.svg">icons/square-dashed.svg</file>
@@ -30,5 +32,7 @@
         <file alias="icons/undo-2.svg">icons/undo-2.svg</file>
         <file alias="icons/video.svg">icons/video.svg</file>
         <file alias="icons/x.svg">icons/x.svg</file>
+        <file alias="icons/zoom-in.svg">icons/zoom-in.svg</file>
+        <file alias="icons/zoom-out.svg">icons/zoom-out.svg</file>
     </qresource>
 </RCC>

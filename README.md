@@ -113,7 +113,8 @@ Use **Enter** to advance through selection and arrangement, then **C** to copy o
   **M**, or choose **Multiple (M)** in the editor.
 - Drag rectangles on the frozen desktop. Selections remain highlighted and
   numbered in the order you draw them.
-- The fixed capture toolbar shows **Region**, **Multiple (M)**, and **Video (V)**.
+- The fixed capture toolbar shows **Region**, **Multi**, and **Video**, with their
+  first letters underlined for the **R**, **M**, and **V** mode shortcuts.
   Switching to Multiple keeps the controls in place; dimensions appear beside the
   selection while dragging.
 - Click a selection's **×** control (or the selection itself) to remove it, or press
@@ -181,7 +182,8 @@ On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
 the startup indicator and controls; they can remain over the selected region.
 
 After Stop, preview the video and drag the filmstrip's blue handles to choose the
-portion to keep. Space plays or pauses; Left/Right seek one second, Shift+Left/Right
+portion to keep. Standard icon buttons control play/pause and zoom; elapsed and
+total time stay centered below the video. Space plays or pauses; Left/Right seek one second, Shift+Left/Right
 seek five seconds, and Z zooms the filmstrip to the selected range. **Save trim**
 exports the chosen range and replaces the original MP4 only after the new file
 passes validation. Trimming copies the existing compressed video and audio without
@@ -221,6 +223,10 @@ including when started at login.
 | Multiple regions | M | Starts a multiple-region capture, or enables it in the screenshot picker. |
 | Record video | V | Starts a video capture, or enables it in the screenshot picker. |
 | Open / paste | Command/Ctrl+O / Command/Ctrl+V | Opens an existing image for editing. |
+
+New capture, multiple-region capture, video recording, open, and image-paste
+shortcuts are disabled while annotating an image. Finish or close the image first.
+Pasting text into an annotation still works.
 
 The footer shows preview zoom and the current image's natural pixel dimensions.
 Zoom changes only the editor view. Copy and Save keep those dimensions for

@@ -7,12 +7,51 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QStyleOptionButton>
+#include <QTextLayout>
 #include <QToolButton>
 #include <QSvgRenderer>
 #include <QKeySequence>
 #include <cmath>
 
 namespace {
+class ModeButton final : public QPushButton {
+public:
+    using QPushButton::QPushButton;
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QStyleOptionButton option;
+        initStyleOption(&option);
+        const QRectF contents = style()->subElementRect(QStyle::SE_PushButtonContents, &option, this);
+        option.text.clear();
+        option.icon = QIcon();
+        QPainter painter(this);
+        style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
+
+        const QString label = QString(text()).remove('&');
+        QTextLayout layout(label, font());
+        if (text().startsWith('&')) {
+            QTextCharFormat shortcut;
+            shortcut.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+            layout.setFormats({{0, 1, shortcut}});
+        }
+        layout.beginLayout();
+        QTextLine line = layout.createLine();
+        line.setLineWidth(contents.width());
+        layout.endLayout();
+        const qreal iconWidth = icon().isNull() ? 0 : iconSize().width() + 4;
+        const qreal x = contents.center().x() - (iconWidth + line.naturalTextWidth()) / 2;
+        if (!icon().isNull())
+            icon().paint(&painter, QRect(qRound(x), qRound(contents.center().y() - iconSize().height() / 2.0),
+                                        iconSize().width(), iconSize().height()), Qt::AlignCenter,
+                         isEnabled() ? QIcon::Normal : QIcon::Disabled, isChecked() ? QIcon::On : QIcon::Off);
+        painter.setPen(!isEnabled() ? QColor("#727a86") : isChecked() ? QColor("#15283d") : QColor("#e9edf3"));
+        // Draw the first-letter underline explicitly: macOS hides native
+        // button mnemonics, even when SH_UnderlineShortcut is enabled.
+        layout.draw(&painter, QPointF(x + iconWidth, contents.center().y() - line.height() / 2));
+    }
+};
+
 QString actionHint(const QString &action, const QString &hint) {
     return hint.isEmpty() ? action : QStringLiteral("%1 (%2)").arg(action, hint);
 }
@@ -68,17 +107,17 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     layout->setSpacing(8);
     auto *modes = new QHBoxLayout;
     modes->setSpacing(4);
-    const auto button = [this](const QString &text, const QString &name) {
-        auto *control = new QPushButton(text, m_toolbar);
+    const auto button = [this](const QString &text, const QString &name, bool mode = false) {
+        QPushButton *control = mode ? new ModeButton(text, m_toolbar) : new QPushButton(text, m_toolbar);
         control->setObjectName(name);
         control->setFocusPolicy(Qt::NoFocus);
         control->setCursor(Qt::PointingHandCursor);
         control->setFixedHeight(36);
         return control;
     };
-    m_singleButton = button("Region", "singleCaptureButton");
-    m_multipleButton = button(QString(), "multipleCaptureButton");
-    m_videoButton = button(QString(), "videoCaptureButton");
+    m_singleButton = button("Region", "singleCaptureButton", true);
+    m_multipleButton = button(QString(), "multipleCaptureButton", true);
+    m_videoButton = button(QString(), "videoCaptureButton", true);
     m_singleButton->setIcon(toolbarIcon("square-dashed"));
     m_multipleButton->setIcon(toolbarIcon("copy"));
     m_videoButton->setIcon(toolbarIcon("video"));
@@ -167,13 +206,25 @@ void RegionSelector::layoutControls() {
                                        const QString &fallback) {
         const QString hint = shortcutHint(name, fallback);
         const QString firstHint = hint.section(QStringLiteral(" / "), 0, 0);
-        // Keep alternatives discoverable without making the compact toolbar wider.
-        control->setText(compact && control == m_cancelButton && !firstHint.isEmpty()
-            ? firstHint : actionHint(action, firstHint));
+        const bool mode = control == m_singleButton || control == m_multipleButton || control == m_videoButton;
+        if (mode) {
+            const QStringList bindings = m_settings ? m_settings->shortcuts().value(name).toStringList()
+                                                   : QStringList{fallback};
+            control->setText(bindings.contains(action.left(1).toUpper()) ? QLatin1Char('&') + action : action);
+            // The selector handles bare-letter and configured shortcuts. Keep
+            // the visible mnemonic without adding an implicit Alt shortcut.
+            control->setShortcut(QKeySequence());
+        } else {
+            // Keep alternatives discoverable without making the compact toolbar wider.
+            control->setText(compact && control == m_cancelButton && !firstHint.isEmpty()
+                ? firstHint : actionHint(action, firstHint));
+        }
         control->setToolTip(actionHint(description, hint));
         control->setAccessibleName(control->toolTip());
     };
-    setHint(m_multipleButton, QStringLiteral("Multiple"), QStringLiteral("Select multiple regions"),
+    setHint(m_singleButton, QStringLiteral("Region"), QStringLiteral("Select a region"),
+            QStringLiteral("regionSingle"), QStringLiteral("R"));
+    setHint(m_multipleButton, QStringLiteral("Multi"), QStringLiteral("Select multiple regions"),
             QStringLiteral("regionMultiple"), QStringLiteral("M"));
     setHint(m_videoButton, QStringLiteral("Video"), QStringLiteral("Record a region"),
             QStringLiteral("regionVideo"), QStringLiteral("V"));
@@ -185,8 +236,6 @@ void RegionSelector::layoutControls() {
         m_arrangeButton->setText(QStringLiteral("Arrange"));
     const int panelWidth = qMin(760, qMax(1, width() - 24));
     const QList<QPair<QPushButton *, QString>> modeLabels = {
-        {m_multipleButton, QStringLiteral("Multiple")},
-        {m_videoButton, QStringLiteral("Video")},
         {m_cancelButton, QStringLiteral("Cancel")}};
     // Long custom bindings may still need to live only in the tooltip. Drop the
     // widest hint first while preserving each action's label and the panel size.
@@ -377,8 +426,9 @@ void RegionSelector::mouseReleaseEvent(QMouseEvent *event) {
 
 void RegionSelector::keyPressEvent(QKeyEvent *event) {
     if (matchesShortcut(event, QStringLiteral("regionCancel"))) emit canceled();
-    else if (matchesShortcut(event, QStringLiteral("regionVideo"))) { m_dragging = false; emit videoRequested(); update(); }
-    else if (!m_video && matchesShortcut(event, QStringLiteral("regionMultiple"))) { m_dragging = false; emit multipleRequested(); update(); }
+    else if (matchesShortcut(event, QStringLiteral("regionSingle"))) { m_singleButton->click(); update(); }
+    else if (matchesShortcut(event, QStringLiteral("regionVideo"))) { m_videoButton->click(); update(); }
+    else if (matchesShortcut(event, QStringLiteral("regionMultiple"))) { m_multipleButton->click(); update(); }
     else if (m_multiple && m_total > 0 && !m_dragging && matchesShortcut(event, QStringLiteral("regionArrange"))) emit accepted();
     else if (m_multiple && matchesShortcut(event, QStringLiteral("regionRemoveLast"))) emit removeLastRequested();
     else QWidget::keyPressEvent(event);

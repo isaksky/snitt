@@ -21,6 +21,7 @@
 #include <QSettings>
 #include <QCryptographicHash>
 #include <QScopeGuard>
+#include <QSignalBlocker>
 #include <QLabel>
 #include <QPushButton>
 #include <QToolButton>
@@ -1013,6 +1014,25 @@ void EditorTests::qmlKeyboardCommands() {
     const QPointF end = canvas->imageRect().topLeft() + QPointF(50, 40) * canvas->imageScale();
     canvas->begin(start.x(), start.y()); canvas->end(end.x(), end.y());
     QVERIFY(canvas->canUndo());
+    // Removed input actions must not interrupt or replace an annotation session.
+    const QStringList inputActions{"capture", "captureMultiple", "captureVideo", "openImage", "pasteImage"};
+    QImage replacement(24, 18, QImage::Format_RGB32);
+    replacement.fill(Qt::yellow);
+    QGuiApplication::clipboard()->setImage(replacement);
+    QSignalSpy captureChanges(&backend, &Backend::capturingChanged);
+    for (const QString &action : inputActions) {
+        auto *shortcut = window->findChild<QObject *>(action + "Shortcut");
+        QVERIFY(shortcut);
+        QVERIFY(!shortcut->property("enabled").toBool());
+        for (const QString &key : isolatedSettings().shortcuts().value(action).toStringList())
+            QTest::keySequence(window, QKeySequence(key));
+    }
+    QCoreApplication::processEvents();
+    QCOMPARE(captureChanges.size(), 0);
+    QVERIFY(window->isVisible());
+    QVERIFY(canvas->canUndo());
+    QCOMPARE(canvas->imageWidth(), pattern().width());
+    QCOMPARE(canvas->imageHeight(), pattern().height());
     QVERIFY(canvas->copy());
     const QImage expectedImage = QGuiApplication::clipboard()->image();
     QGuiApplication::clipboard()->setText("not submitted");
@@ -1029,6 +1049,8 @@ void EditorTests::qmlKeyboardCommands() {
     QTest::keyClick(window, Qt::Key_C);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->image(), expectedImage);
+    for (const QString &action : inputActions)
+        QVERIFY(window->findChild<QObject *>(action + "Shortcut")->property("enabled").toBool());
 
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     QVERIFY(canvas->loadRegions({pattern(), pattern(), pattern(), pattern(), pattern(), pattern(), pattern()}));
@@ -1305,6 +1327,20 @@ void EditorTests::qmlRecordingReview() {
     auto *bar = review->findChild<QObject *>("recordingTrimBar");
     auto *player = review->findChild<QObject *>("recordingReviewPlayer");
     QVERIFY(bar && player);
+    auto *save = review->findChild<QObject *>("recordingSaveTrimButton");
+    auto *keep = review->findChild<QObject *>("recordingKeepOriginalButton");
+    QVERIFY(save && keep);
+    auto *playbackControls = review->findChild<QQuickItem *>("recordingPlaybackControls");
+    auto *playbackTime = review->findChild<QQuickItem *>("recordingPlaybackTime");
+    auto *playbackTimer = review->findChild<QObject *>("recordingPlaybackTimer");
+    QVERIFY(playbackControls && playbackTime && playbackTimer);
+    const auto timeCentered = [&] {
+        const QPointF center = playbackTime->mapToItem(playbackControls,
+            QPointF(playbackTime->width() / 2, playbackTime->height() / 2));
+        return qAbs(center.x() - playbackControls->width() / 2) <= 0.5; // Anchors snap to logical pixels.
+    };
+    QTRY_VERIFY2(timeCentered(), qPrintable(QString("time x=%1 width=%2; controls width=%3")
+        .arg(playbackTime->x()).arg(playbackTime->width()).arg(playbackControls->width())));
     auto *videoOutput = qvariant_cast<QObject *>(player->property("videoOutput"));
     QVERIFY(videoOutput);
     auto *videoSink = qvariant_cast<QVideoSink *>(videoOutput->property("videoSink"));
@@ -1319,6 +1355,9 @@ void EditorTests::qmlRecordingReview() {
     })(), 45000);
     const qint64 firstFrameMs = loadTimer.elapsed();
     QTRY_VERIFY(!player->property("priming").toBool());
+    QCOMPARE(save->property("text").toString(), QString("Keep original"));
+    QVERIFY(save->property("enabled").toBool());
+    QVERIFY(!keep->property("visible").toBool());
     QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
     QVERIFY(qAbs(player->property("position").toLongLong()) < 150);
     QVERIFY(qAbs(bar->property("playheadSec").toDouble()) < 0.15);
@@ -1330,7 +1369,16 @@ void EditorTests::qmlRecordingReview() {
         "The paused preview should show video pixels before Play");
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
     QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 500, 15000);
+    // Sparse backend notifications must not freeze the visible playtime.
+    const double before = bar->property("playheadSec").toDouble();
+    {
+        QSignalBlocker sparseNotifications(player);
+        QTRY_VERIFY_WITH_TIMEOUT(bar->property("playheadSec").toDouble() > before + 0.15, 2000);
+    }
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QVERIFY(!playbackTimer->property("running").toBool());
+    QVERIFY(qAbs(bar->property("playheadSec").toDouble()
+        - player->property("position").toLongLong() / 1000.0) < 0.1);
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         for (const auto &url : trim->thumbnails()) if (!url.isEmpty()) return true;
         return false;
@@ -1338,6 +1386,7 @@ void EditorTests::qmlRecordingReview() {
     QVERIFY(review->grabWindow().save("trim-review-normal.png"));
     review->resize(680, 520);
     QTest::qWait(150);
+    QTRY_VERIFY(timeCentered());
     QVERIFY(review->grabWindow().save("trim-review-minimum.png"));
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
@@ -1353,6 +1402,8 @@ void EditorTests::qmlRecordingReview() {
     const QString fullStripFirst = trim->thumbnails().first();
     bar->setProperty("startSec", 0.5);
     bar->setProperty("endSec", 2.0);
+    QCOMPARE(save->property("text").toString(), QString("Save trim"));
+    QVERIFY(keep->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(bar, "toggleZoom"));
     QTRY_VERIFY(bar->property("windowStart").toDouble() > 0.3);
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
@@ -1401,7 +1452,11 @@ void EditorTests::qmlRecordingReview() {
         QTRY_VERIFY(qAbs(player->property("position").toLongLong() - 1000) < 150);
     }
     QSignalSpy finalized(trim, &TrimSession::finalized);
-    trim->keepOriginal();
+    bar->setProperty("startSec", 0.0);
+    bar->setProperty("endSec", trim->duration() / 1000.0);
+    QCOMPARE(save->property("text").toString(), QString("Keep original"));
+    QVERIFY(!keep->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
     QCOMPARE(finalized.size(), 1);
     QCOMPARE(finalized.first().first().toString(), clip);
     QTRY_VERIFY(!review->isVisible());
@@ -1420,8 +1475,6 @@ void EditorTests::qmlRecordingReview() {
     QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
     bar->setProperty("startSec", 0.5);
     bar->setProperty("endSec", 2.0);
-    auto *save = review->findChild<QObject *>("recordingSaveTrimButton");
-    QVERIFY(save);
     QTRY_VERIFY(save->property("enabled").toBool());
     QVERIFY(review->grabWindow().save("trim-review-selected.png"));
     QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
@@ -1830,9 +1883,9 @@ void EditorTests::captureToolbarInteraction() {
     auto *instruction = selector.findChild<QLabel *>("captureInstruction");
     auto *count = selector.findChild<QLabel *>("captureCount");
     QVERIFY(toolbar && single && multiple && video && cancel && arrange && instruction && count);
-    QCOMPARE(single->text(), QString("Region")); // No selector-local shortcut is bound.
-    QCOMPARE(multiple->text(), QString("Multiple (M)"));
-    QCOMPARE(video->text(), QString("Video (V)"));
+    QCOMPARE(single->text(), QString("&Region"));
+    QCOMPARE(multiple->text(), QString("&Multi"));
+    QCOMPARE(video->text(), QString("&Video"));
     QCOMPARE(cancel->text(), QString("Cancel (%1)").arg(QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText)));
     QCOMPARE(arrange->text(), QString("Arrange (%1)")
         .arg(QKeySequence(Qt::Key_Return).toString(QKeySequence::NativeText)));
@@ -1841,6 +1894,7 @@ void EditorTests::captureToolbarInteraction() {
              QKeySequence(Qt::Key_Enter).toString(QKeySequence::NativeText)));
     connect(&selector, &RegionSelector::multipleRequested, &selector, [&] { selector.setSelections(true, {}, 0); });
     connect(&selector, &RegionSelector::singleRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(false); });
+    connect(&selector, &RegionSelector::videoRequested, &selector, [&] { selector.setSelections(false, {}, 0); selector.setVideo(true); });
     QSignalSpy added(&selector, &RegionSelector::regionAdded);
     QSignalSpy accepted(&selector, &RegionSelector::accepted);
     QSignalSpy removed(&selector, &RegionSelector::regionRemoved);
@@ -1894,9 +1948,12 @@ void EditorTests::captureToolbarInteraction() {
     QVERIFY(single->isChecked());
     QVERIFY(arrange->isHidden());
     QVERIFY(remove->isHidden());
-    selector.setVideo(true);
+    QTest::keyClick(&selector, Qt::Key_V);
     QVERIFY(video->isChecked());
     QVERIFY(!multiple->isEnabled());
+    QTest::keyClick(&selector, Qt::Key_V); // Selecting the current mode does not toggle it off.
+    QTest::keyClick(&selector, Qt::Key_M); // The disabled mode's key follows its button.
+    QVERIFY(video->isChecked());
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     selector.resize(400, 300);
     QCoreApplication::processEvents();
@@ -1906,12 +1963,15 @@ void EditorTests::captureToolbarInteraction() {
     QVERIFY(selector.grab().save("capture-toolbar-compact.png"));
     for (auto *control : toolbar->findChildren<QPushButton *>())
         QVERIFY(toolbar->rect().contains(control->geometry()));
-    selector.setVideo(false);
-    selector.setSelections(true, {}, 0);
+    QTest::keyClick(&selector, Qt::Key_R);
+    QVERIFY(single->isChecked());
+    QVERIFY(multiple->isEnabled());
+    QTest::keyClick(&selector, Qt::Key_M);
+    QVERIFY(multiple->isChecked());
     QCoreApplication::processEvents();
     QVERIFY(instruction->width() >= instruction->fontMetrics().horizontalAdvance(instruction->text()));
     for (auto *control : toolbar->findChildren<QPushButton *>())
-        QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20,
+        QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(QString(control->text()).remove('&')) + 20,
                  qPrintable(control->objectName() + ": " + control->text()));
 }
 
@@ -1936,7 +1996,8 @@ void EditorTests::settingsRegionToolbarHintsLive() {
         const char *customKeys;
     };
     const Action actions[] = {
-        {"regionMultiple", "multipleCaptureButton", "Multiple", "Select multiple regions", "M", "F6|F7"},
+        {"regionSingle", "singleCaptureButton", "Region", "Select a region", "R", "F4|F5"},
+        {"regionMultiple", "multipleCaptureButton", "Multi", "Select multiple regions", "M", "F6|F7"},
         {"regionVideo", "videoCaptureButton", "Video", "Record a region", "V", "F8|F9"},
         {"regionCancel", "cancelCaptureButton", "Cancel", "Cancel selection", "Escape", "F10|F11"},
         {"regionArrange", "arrangeCaptureButton", "Arrange", "Continue to Arrange", "Return|Enter", "F12|F13"}
@@ -1954,7 +2015,9 @@ void EditorTests::settingsRegionToolbarHintsLive() {
         auto *control = selector.findChild<QPushButton *>(action.objectName);
         QVERIFY(control);
         const QString hints = settings.shortcutHints().value(action.key).toString();
-        QCOMPARE(control->text(), QString("%1 (%2)").arg(action.label, hints.section(" / ", 0, 0)));
+        const bool mode = control->isCheckable();
+        QCOMPARE(control->text(), mode ? QString(action.label)
+            : QString("%1 (%2)").arg(action.label, hints.section(" / ", 0, 0)));
         QCOMPARE(control->toolTip(), QString("%1 (%2)").arg(action.description, hints));
         QCOMPARE(control->accessibleName(), control->toolTip());
     }
@@ -1997,10 +2060,17 @@ void EditorTests::settingsRegionToolbarHintsLive() {
     }
     QSignalSpy canceled(&selector, &RegionSelector::canceled);
     QSignalSpy accepted(&selector, &RegionSelector::accepted);
+    QSignalSpy singleRequested(&selector, &RegionSelector::singleRequested);
+    QSignalSpy multipleRequested(&selector, &RegionSelector::multipleRequested);
+    QSignalSpy videoRequested(&selector, &RegionSelector::videoRequested);
+    for (Qt::Key key : {Qt::Key_R, Qt::Key_M, Qt::Key_V}) QTest::keyClick(&selector, key);
     QTest::keyClick(&selector, Qt::Key_Escape);
     QTest::keyClick(&selector, Qt::Key_Return);
     QCOMPARE(canceled.size(), 0);
     QCOMPARE(accepted.size(), 0);
+    QCOMPARE(singleRequested.size(), 0);
+    QCOMPARE(multipleRequested.size(), 0);
+    QCOMPARE(videoRequested.size(), 0);
 }
 
 void EditorTests::gridArrangementPreservesPixels() {
@@ -2612,6 +2682,10 @@ void EditorTests::macSettingsUseCommandActions() {
     QImage replacement(24, 18, QImage::Format_RGB32);
     replacement.fill(Qt::yellow);
     QGuiApplication::clipboard()->setImage(replacement);
+    QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
+    QCoreApplication::processEvents();
+    QCOMPARE(canvas->imageWidth(), pattern().width()); // Image paste is disabled during annotation.
+    canvas->clear();
     QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
     QTRY_COMPARE(canvas->imageWidth(), 24);
     canvas->addText(2, 2, 20, 15, "Undo");

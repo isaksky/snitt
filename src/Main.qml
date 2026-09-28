@@ -30,6 +30,7 @@ ApplicationWindow {
     readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !reviewWindow.visible && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
+    readonly property bool imageInputShortcuts: shortcutsOn && (!canvas.hasImage || canvas.arranging)
     readonly property string hint: editingText ? "Text " + canvas.textSize + " px · " + commandKey + "Enter to place · Esc cancels"
         : canvas.tool === "cut" ? "Drag ↔ to cut columns, ↕ for rows"
         : canvas.tool === "rect" ? "Drag a box · " + canvas.strokeWidth + " px · Wheel resizes"
@@ -433,6 +434,18 @@ ApplicationWindow {
             property bool priming: false
             property bool finishingPrime: false
 
+            function syncPlayhead() {
+                if (priming || trimBar.interacting) return
+                const seconds = position / 1000
+                if (playbackState === MediaPlayer.PlayingState
+                        && seconds >= trimBar.endSec && trimBar.endSec > 0) {
+                    pause()
+                    position = Math.round(trimBar.endSec * 1000)
+                    trimBar.playheadSec = trimBar.endSec
+                    return
+                }
+                trimBar.playheadSec = seconds
+            }
             function startPriming() {
                 if (primed || priming || !reviewWindow.visible || reviewWindow.preparingExport
                         || source.toString() === "") return
@@ -468,19 +481,22 @@ ApplicationWindow {
                     if (trimBar.endSec <= 0) trimBar.endSec = backend.trim.duration / 1000
                 }
             }
-            onPositionChanged: position => {
-                if (priming) return
-                if (playbackState === MediaPlayer.PlayingState
-                        && position / 1000 >= trimBar.endSec && trimBar.endSec > 0) {
-                    pause()
-                    reviewPlayer.position = Math.round(trimBar.endSec * 1000)
-                }
-                if (!trimBar.interacting) trimBar.playheadSec = position / 1000
-            }
+            onPositionChanged: if (playbackState !== MediaPlayer.PlayingState) syncPlayhead()
+            onPlaybackStateChanged: syncPlayhead()
             onErrorOccurred: (error, errorString) => {
                 if (reviewWindow.visible && !backend.trim.busy)
                     playbackError.text = "Playback unavailable: " + errorString
             }
+        }
+        Timer {
+            objectName: "recordingPlaybackTimer"
+            // Read the actual playback clock at a fixed cadence, independent of
+            // clip length and the backend's position-notification frequency.
+            interval: 50
+            repeat: true
+            running: reviewWindow.visible && !reviewPlayer.priming && !trimBar.interacting
+                && reviewPlayer.playbackState === MediaPlayer.PlayingState
+            onTriggered: reviewPlayer.syncPlayhead()
         }
         Timer {
             id: primeFallback
@@ -526,32 +542,47 @@ ApplicationWindow {
                     text: ""
                 }
             }
-            RowLayout {
+            Item {
+                objectName: "recordingPlaybackControls"
                 Layout.fillWidth: true
-                ActionButton {
+                Layout.preferredHeight: 40
+                ToolButton {
                     id: reviewPlayButton
                     objectName: "recordingReviewPlayButton"
-                    highlighted: true
-                    font.weight: Font.DemiBold
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 40; height: 40
+                    display: AbstractButton.IconOnly
                     text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia || reviewPlayer.priming ? "Loading…"
                         : reviewPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                    icon.source: reviewPlayer.playbackState === MediaPlayer.PlayingState && !reviewPlayer.priming
+                        ? "qrc:/icons/pause.svg" : "qrc:/icons/play.svg"
+                    icon.width: 24; icon.height: 24
+                    Accessible.name: text
+                    ToolTip.visible: hovered
+                    ToolTip.text: text + (win.keys.reviewPlayPause ? " (" + win.keys.reviewPlayPause + ")" : "")
                     enabled: reviewWindow.canEdit && reviewPlayer.duration > 0 && !reviewPlayer.priming
-                    contentItem: Text {
-                        text: reviewPlayButton.text
-                        font: reviewPlayButton.font
-                        color: reviewPlayButton.enabled ? "#162a40" : "#9ba5b5"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                     onClicked: reviewWindow.togglePlay()
                 }
                 Label {
-                    Layout.fillWidth: true
+                    objectName: "recordingPlaybackTime"
+                    anchors.centerIn: parent
+                    anchors.alignWhenCentered: false
                     text: Format.fmt(trimBar.playheadSec) + " / " + Format.fmt(backend.trim.duration / 1000)
                     color: "#dfe5ed"
                 }
-                ActionButton {
+                ToolButton {
+                    objectName: "recordingReviewZoomButton"
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 40; height: 40
+                    display: AbstractButton.IconOnly
                     text: trimBar.zoomed ? "Zoom out" : "Zoom to selection"
+                    icon.source: trimBar.zoomed ? "qrc:/icons/zoom-out.svg" : "qrc:/icons/zoom-in.svg"
+                    icon.width: 24; icon.height: 24
+                    Accessible.name: text
+                    ToolTip.visible: hovered
+                    ToolTip.text: text + (win.keys.reviewToggleZoom ? " (" + win.keys.reviewToggleZoom + ")" : "")
                     enabled: reviewWindow.canEdit
                     onClicked: trimBar.toggleZoom()
                 }
@@ -594,6 +625,7 @@ ApplicationWindow {
                 ActionButton {
                     objectName: "recordingKeepOriginalButton"
                     text: "Keep original"
+                    visible: reviewWindow.hasTrim
                     enabled: !backend.trim.busy && !reviewWindow.preparingExport
                     onClicked: backend.trim.keepOriginal()
                 }
@@ -606,9 +638,13 @@ ApplicationWindow {
                 }
                 PrimaryButton {
                     objectName: "recordingSaveTrimButton"
-                    text: "Save trim"
-                    enabled: reviewWindow.canEdit && reviewWindow.hasTrim
-                    onClicked: reviewWindow.prepareExport()
+                    text: reviewWindow.hasTrim ? "Save trim" : "Keep original"
+                    enabled: reviewWindow.hasTrim ? reviewWindow.canEdit
+                        : !backend.trim.busy && !reviewWindow.preparingExport
+                    onClicked: {
+                        if (reviewWindow.hasTrim) reviewWindow.prepareExport()
+                        else backend.trim.keepOriginal()
+                    }
                 }
             }
         }
@@ -715,8 +751,8 @@ ApplicationWindow {
     Shortcut { sequences: win.shortcuts.toolErase; enabled: win.annotationShortcuts; onActivated: win.chooseTool("erase") }
     Shortcut { sequences: win.shortcuts.goodMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("good") }
     Shortcut { sequences: win.shortcuts.badMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("bad") }
-    Shortcut { sequences: win.shortcuts.captureVideo; enabled: win.shortcutsOn; onActivated: win.captureVideo() }
-    Shortcut { sequences: win.shortcuts.captureMultiple; enabled: win.shortcutsOn; onActivated: win.captureMultiple() }
+    Shortcut { objectName: "captureVideoShortcut"; sequences: win.shortcuts.captureVideo; enabled: win.imageInputShortcuts; onActivated: win.captureVideo() }
+    Shortcut { objectName: "captureMultipleShortcut"; sequences: win.shortcuts.captureMultiple; enabled: win.imageInputShortcuts; onActivated: win.captureMultiple() }
     Shortcut { sequences: win.shortcuts.arrange; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.annotate() }
     Shortcut { sequences: win.shortcuts.columnsMore; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns++ }
     Shortcut { sequences: win.shortcuts.columnsLess; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns-- }
@@ -725,9 +761,9 @@ ApplicationWindow {
     Shortcut { sequences: win.shortcuts.removeRegion; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.removeRegion(canvas.selectedRegion) }
     Shortcut { sequences: win.shortcuts.moveRegionLeft; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
     Shortcut { sequences: win.shortcuts.moveRegionRight; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
-    Shortcut { sequences: win.shortcuts.openImage; enabled: win.shortcutsOn; onActivated: openDialog.open() }
-    Shortcut { sequences: win.shortcuts.capture; enabled: win.shortcutsOn; onActivated: win.capture() }
-    Shortcut { sequences: win.shortcuts.pasteImage; enabled: win.shortcutsOn; onActivated: win.pasteImage() }
+    Shortcut { objectName: "openImageShortcut"; sequences: win.shortcuts.openImage; enabled: win.imageInputShortcuts; onActivated: openDialog.open() }
+    Shortcut { objectName: "captureShortcut"; sequences: win.shortcuts.capture; enabled: win.imageInputShortcuts; onActivated: win.capture() }
+    Shortcut { objectName: "pasteImageShortcut"; sequences: win.shortcuts.pasteImage; enabled: win.imageInputShortcuts; onActivated: win.pasteImage() }
     Shortcut {
         sequences: win.shortcuts.copyClose; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.finish()

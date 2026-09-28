@@ -51,6 +51,7 @@ const ShortcutDefinition shortcutDefinitions[] = {
     {"moveRegionLeft", "Left", "Left", "editorArrange"},
     {"moveRegionRight", "Right", "Right", "editorArrange"},
     {"regionCancel", "Escape", "Escape", "region"},
+    {"regionSingle", "R", "R", "region"},
     {"regionMultiple", "M", "M", "region"},
     {"regionVideo", "V", "V", "region"},
     {"regionArrange", "Return|Enter", "Return|Enter", "region"},

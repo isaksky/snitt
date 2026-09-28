@@ -13,11 +13,11 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | Key | Action | Default on Windows | Default on macOS | Context |
 | --- | --- | --- | --- | --- |
 | `globalCapture` | Capture a region; stop an active recording | `Ctrl+Print` | `Ctrl+Print` | Global |
-| `capture` | Capture a region | `Ctrl+N` | `Meta+N` | Editor |
-| `captureMultiple` | Capture multiple regions | `M` | `M` | Editor |
-| `captureVideo` | Record a region | `V` | `V` | Editor |
-| `openImage` | Open an image | `Ctrl+O` | `Meta+O` | Editor |
-| `pasteImage` | Paste an image | `Ctrl+V` | `Meta+V` | Editor |
+| `capture` | Capture a region | `Ctrl+N` | `Meta+N` | Empty editor or Arrange |
+| `captureMultiple` | Capture multiple regions | `M` | `M` | Empty editor or Arrange |
+| `captureVideo` | Record a region | `V` | `V` | Empty editor or Arrange |
+| `openImage` | Open an image | `Ctrl+O` | `Meta+O` | Empty editor or Arrange |
+| `pasteImage` | Paste an image | `Ctrl+V` | `Meta+V` | Empty editor or Arrange |
 | `copyClose` | Copy and close | `C` | `C` | Editor |
 | `saveClose` | Save and close | `S` | `S` | Editor |
 | `dismiss` | Cancel current action or close editor | `Escape` | `Escape` | Editor |
@@ -29,7 +29,7 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | `removeRegion` | Remove selected region | `Backspace|Delete` | Same | Arrange |
 | `moveRegionLeft` / `moveRegionRight` | Move selected region | `Left` / `Right` | Same | Arrange |
 | `regionCancel` | Cancel capture | `Escape` | Same | Region picker |
-| `regionMultiple` / `regionVideo` | Choose multiple / video capture | `M` / `V` | Same | Region picker |
+| `regionSingle` / `regionMultiple` / `regionVideo` | Choose region / multiple / video capture | `R` / `M` / `V` | Same | Region picker |
 | `regionArrange` | Continue from multiple capture | `Return|Enter` | Same | Region picker |
 | `regionRemoveLast` | Remove the most recent region | `Backspace|Delete` | Same | Region picker |
 | `reviewPlayPause` | Play or pause a recording | `Space` | Same | Trim review |
