@@ -46,10 +46,12 @@
 #endif
 #include "imagedocument.h"
 #include "editorcanvas.h"
+#include "playbackclock.h"
 
 class EditorTests : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase() { qmlRegisterType<PlaybackClock>("XShot", 1, 0, "PlaybackClock"); }
     void cutsJoinExactPixels();
     void invalidCutsDoNotAlterHistory();
     void undoRedoAndBranch();
@@ -59,6 +61,7 @@ private slots:
     void qmlLoadsAndPlacesText();
     void qmlAnnotationToolbarResponsiveLayout();
     void qmlPasteReplacesTextDraft();
+    void qmlResizeTextDraft();
     void qmlWheelSizes();
     void qmlSaveAndClose();
     void qmlKeyboardCommands();
@@ -67,7 +70,7 @@ private slots:
     void qmlRecordingHotkeyStop_data();
     void qmlRecordingHotkeyStop();
     void qmlRecordingReview();
-    void qmlTrimBarZoomMapping();
+    void qmlTrimBarSeeking();
     void regionSelectionScalesAndCancels();
     void multipleRegionSelection();
     void captureToolbarInteraction();
@@ -308,7 +311,7 @@ void EditorTests::makePreviewFixture() {
     QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
     QTest::qWait(100);
     QVERIFY(window->grabWindow().save("text-committed-preview.png"));
-    canvas->adjustToolSize(120 * 48);
+    canvas->adjustToolSize(120 * 24);
     const QPointF largeTextPoint = canvas->imageRect().topLeft() + QPointF(450, 20) * canvas->imageScale();
     canvas->begin(largeTextPoint.x(), largeTextPoint.y());
     QVERIFY(window->property("editingText").toBool());
@@ -732,6 +735,71 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
 }
 #endif
 
+void EditorTests::qmlResizeTextDraft() {
+    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QImage original(800, 600, QImage::Format_ARGB32_Premultiplied);
+    original.fill(Qt::white);
+    QTemporaryDir directory;
+    const QString path = directory.filePath("text-resize.png");
+    QVERIFY(original.save(path));
+    Backend backend(&isolatedSettings());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
+    engine.rootContext()->setContextProperty("initialImage", QUrl::fromLocalFile(path));
+    engine.rootContext()->setContextProperty("startInBackground", false);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    auto *text = window->findChild<QQuickItem *>("annotationText");
+    auto *handle = window->findChild<QQuickItem *>("annotationTextResizeHandle");
+    QVERIFY(canvas && text && handle);
+    QTRY_VERIFY(canvas->hasImage());
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    canvas->setTool("text");
+    const QPointF origin = canvas->imageRect().topLeft() + QPointF(60, 40) * canvas->imageScale();
+    canvas->begin(origin.x(), origin.y());
+    const QString draft = "One two three four five six seven eight nine ten";
+    text->setProperty("text", draft);
+    QTRY_VERIFY(handle->isVisible());
+    const int originalLines = text->property("lineCount").toInt();
+    const auto resizeTo = [&](qreal width) {
+        const QPoint from = handle->mapToScene(QPointF(handle->width() / 2, handle->height() / 2)).toPoint();
+        const QPoint to = from + QPoint(qRound((width - window->property("textWidth").toReal())
+                                              * canvas->imageScale()), 0);
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
+        QTest::mouseMove(window, to);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, to);
+    };
+    resizeTo(180);
+    QVERIFY(qAbs(window->property("textWidth").toReal() - 180) < 2);
+    QTRY_VERIFY(text->property("lineCount").toInt() > originalLines);
+    QCOMPARE(text->property("text").toString(), draft);
+    QVERIFY(window->property("editingText").toBool());
+    QVERIFY(text->hasActiveFocus());
+    QVERIFY(!canvas->canUndo());
+    QCOMPARE(canvas->textSize(), 24);
+    window->resize(860, 560);
+    QTest::qWait(50);
+    resizeTo(300);
+    QVERIFY(qAbs(window->property("textWidth").toReal() - 300) < 2);
+    resizeTo(180);
+    const QRectF box(window->property("textX").toReal(), window->property("textY").toReal(),
+        window->property("textWidth").toReal(), canvas->imageHeight() - window->property("textY").toReal());
+    ImageDocument expected;
+    expected.reset(original);
+    QVERIFY(expected.text(box, draft, canvas->ink(), canvas->textSize()));
+    QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
+    QVERIFY(!handle->isVisible());
+    QVERIFY(canvas->copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), expected.render(expected.exportScale()));
+}
+
 void EditorTests::qmlWheelSizes() {
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
@@ -757,8 +825,9 @@ void EditorTests::qmlWheelSizes() {
     QTRY_VERIFY(canvas->hasImage());
     window->show();
     QTRY_VERIFY(window->isVisible());
-    const auto wheelAt = [window](QPointF local, int delta) {
-        QWheelEvent event(local, window->mapToGlobal(local.toPoint()), {}, {0, delta},
+    const auto wheelAt = [window, canvas](QPointF local, int delta) {
+        const QPointF scene = canvas->mapToScene(local);
+        QWheelEvent event(scene, window->mapToGlobal(scene.toPoint()), {}, {0, delta},
                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(window, &event);
         QCoreApplication::processEvents();
@@ -768,20 +837,20 @@ void EditorTests::qmlWheelSizes() {
     };
     canvas->setTool("rect");
     wheelAt(point({100, 250}), 120);
-    QCOMPARE(canvas->strokeWidth(), 5);
+    QCOMPARE(canvas->strokeWidth(), 6);
     canvas->setTool("arrow");
     wheelAt(point({100, 250}), -120);
     QCOMPARE(canvas->strokeWidth(), 4);
     canvas->setTool("text");
     wheelAt(point({100, 250}), 120);
-    QCOMPARE(canvas->textSize(), 25);
+    QCOMPARE(canvas->textSize(), 26);
     canvas->setTool("blur");
     wheelAt(point({100, 250}), 120);
-    QCOMPARE(canvas->pixelBlockSize(), 14);
+    QCOMPARE(canvas->pixelBlockSize(), 16);
     QCOMPARE(window->property("hint").toString(),
-             QString("Drag to pixelate · 14 px · Wheel resizes"));
+             QString("Block size 16 px · Scroll to adjust"));
     QCOMPARE(canvas->strokeWidth(), 4);
-    QCOMPARE(canvas->textSize(), 25);
+    QCOMPARE(canvas->textSize(), 26);
     canvas->setTool("text");
     canvas->begin(point({180, 180}).x(), point({180, 180}).y());
     auto *text = window->findChild<QObject *>("annotationText");
@@ -796,17 +865,17 @@ void EditorTests::qmlWheelSizes() {
     QVERIFY(flickable);
     const qreal scrollStart = flickable->property("contentY").toReal();
     wheelAt(inside, scrollStart > 0 ? 120 : -120);
-    QCOMPARE(canvas->textSize(), 25);
+    QCOMPARE(canvas->textSize(), 26);
     QTRY_VERIFY(flickable->property("contentY").toReal() != scrollStart);
     wheelAt(inside, scrollStart > 0 ? -120 : 120);
-    QCOMPARE(canvas->textSize(), 25);
+    QCOMPARE(canvas->textSize(), 26);
     wheelAt(inside, 12000);
     wheelAt(inside, 120);
     wheelAt(inside, -12000);
     wheelAt(inside, -120);
-    QCOMPARE(canvas->textSize(), 25); // Scroll limits never resize the note.
+    QCOMPARE(canvas->textSize(), 26); // Scroll limits never resize the note.
     wheelAt(point({20, 300}), 120);
-    QCOMPARE(canvas->textSize(), 26);
+    QCOMPARE(canvas->textSize(), 28);
     QCOMPARE(text->property("text").toString(), QString(30, 'A').replace("A", "A\n"));
     QVERIFY(text->property("activeFocus").toBool());
 }
@@ -989,9 +1058,9 @@ void EditorTests::qmlKeyboardCommands() {
     QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_P);
     QTRY_COMPARE(canvas->tool(), QString("blur"));
-    QCOMPARE(window->property("hint").toString(), QString("Drag to pixelate · 12 px · Wheel resizes"));
+    QCOMPARE(window->property("hint").toString(), QString("Block size 12 px · Scroll to adjust"));
     canvas->adjustToolSize(120);
-    QCOMPARE(window->property("hint").toString(), QString("Drag to pixelate · 14 px · Wheel resizes"));
+    QCOMPARE(window->property("hint").toString(), QString("Block size 16 px · Scroll to adjust"));
     QCOMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_B);
     QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));
@@ -1252,35 +1321,54 @@ void EditorTests::qmlDismissal() {
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 }
 
-void EditorTests::qmlTrimBarZoomMapping() {
+void EditorTests::qmlTrimBarSeeking() {
     QQmlEngine engine;
     QQmlComponent component(&engine, QUrl("qrc:/TrimBar.qml"));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     std::unique_ptr<QObject> bar(component.create());
     QVERIFY(bar);
     bar->setProperty("width", 1000);
+    bar->setProperty("height", 100);
     bar->setProperty("durationSec", 4.0);
     bar->setProperty("startSec", 1.5);
     bar->setProperty("endSec", 2.5);
-    QSignalSpy views(bar.get(), SIGNAL(viewChanged(double,double)));
-    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
-    QCOMPARE(bar->property("windowStart").toDouble(), 1.375);
-    QCOMPARE(bar->property("windowEnd").toDouble(), 2.625);
-    QCOMPARE(views.size(), 1);
-    QCOMPARE(views.first().at(0).toDouble(), 1.375);
-    QCOMPARE(views.first().at(1).toDouble(), 2.625);
-    bar->setProperty("activeMode", 1);
-    const double x = bar->property("activeHandleX").toDouble();
-    QVERIFY(qAbs(x - (14.0 + 0.1 * 972.0 - 7.0)) < 0.01);
-    bar->setProperty("startSec", 1.7);
-    bar->setProperty("endSec", 2.3);
-    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
-    QCOMPARE(bar->property("windowStart").toDouble(), 1.625);
-    QCOMPARE(bar->property("windowEnd").toDouble(), 2.375);
-    QVERIFY(QMetaObject::invokeMethod(bar.get(), "toggleZoom"));
-    QCOMPARE(bar->property("windowStart").toDouble(), 0.0);
-    QCOMPARE(bar->property("windowEnd").toDouble(), 4.0);
-    QCOMPARE(views.size(), 3);
+    QSignalSpy scrubs(bar.get(), SIGNAL(scrub(double)));
+    auto *slider = bar->findChild<QObject *>("recordingSeekSlider");
+    QVERIFY(slider);
+    const auto seek = [&](double seconds) {
+        return QMetaObject::invokeMethod(bar.get(), "seekTo", Q_ARG(QVariant, seconds));
+    };
+    QVERIFY(seek(2.0));
+    QCOMPARE(bar->property("playheadSec").toDouble(), 2.0);
+    QCOMPARE(slider->property("value").toDouble(), 2.0);
+    QVERIFY(seek(0.0));
+    QCOMPARE(bar->property("playheadSec").toDouble(), 1.5);
+    QVERIFY(seek(4.0));
+    QCOMPARE(bar->property("playheadSec").toDouble(), 2.5);
+    QCOMPARE(scrubs.size(), 3);
+    QCOMPARE(bar->property("startSec").toDouble(), 1.5);
+    QCOMPARE(bar->property("endSec").toDouble(), 2.5);
+    // Exercise the actual pointer gesture, including its grab/release state.
+    QQuickWindow window;
+    window.resize(1000, 140);
+    auto *barItem = qobject_cast<QQuickItem *>(bar.get());
+    auto *sliderItem = qobject_cast<QQuickItem *>(slider);
+    QVERIFY(barItem && sliderItem);
+    barItem->setParentItem(window.contentItem());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto sliderPoint = [&](double fraction) {
+        return sliderItem->mapToScene(QPointF(9 + fraction * (sliderItem->width() - 18), 12)).toPoint();
+    };
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, sliderPoint(0.5));
+    QVERIFY(bar->property("interacting").toBool());
+    QTest::mouseMove(&window, sliderPoint(0.75));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, sliderPoint(0.75));
+    QVERIFY(!bar->property("interacting").toBool());
+    QVERIFY(qAbs(bar->property("playheadSec").toDouble() - 2.25) < 0.01);
+    QCOMPARE(bar->property("startSec").toDouble(), 1.5);
+    QCOMPARE(bar->property("endSec").toDouble(), 2.5);
+    barItem->setParentItem(nullptr);
 }
 
 void EditorTests::qmlRecordingReview() {
@@ -1290,10 +1378,16 @@ void EditorTests::qmlRecordingReview() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const QString clip = directory.filePath("review.mp4");
+    const QString sparseClip = directory.filePath("held-frame.mp4");
     QProcess fixture;
     fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", "testsrc2=size=2560x1440:rate=30:duration=3",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", clip});
+    QVERIFY(fixture.waitForFinished(15000));
+    QCOMPARE(fixture.exitCode(), 0);
+    fixture.start(recording::toolPath("ffmpeg"), {"-hide_banner", "-loglevel", "error", "-y",
+        "-i", clip, "-vf", "select='lt(t,1)+gte(t,2)'", "-fps_mode", "vfr",
+        "-c:v", "libx264", sparseClip});
     QVERIFY(fixture.waitForFinished(15000));
     QCOMPARE(fixture.exitCode(), 0);
     Backend backend(&isolatedSettings());
@@ -1332,8 +1426,10 @@ void EditorTests::qmlRecordingReview() {
     QVERIFY(save && keep);
     auto *playbackControls = review->findChild<QQuickItem *>("recordingPlaybackControls");
     auto *playbackTime = review->findChild<QQuickItem *>("recordingPlaybackTime");
-    auto *playbackTimer = review->findChild<QObject *>("recordingPlaybackTimer");
-    QVERIFY(playbackControls && playbackTime && playbackTimer);
+    auto *playbackClock = review->findChild<QObject *>("recordingPlaybackClock");
+    auto *playButton = review->findChild<QQuickItem *>("recordingReviewPlayButton");
+    QVERIFY(playbackControls && playbackTime && playbackClock && playButton);
+    QVERIFY(!review->findChild<QObject *>("recordingReviewZoomButton"));
     const auto timeCentered = [&] {
         const QPointF center = playbackTime->mapToItem(playbackControls,
             QPointF(playbackTime->width() / 2, playbackTime->height() / 2));
@@ -1341,6 +1437,18 @@ void EditorTests::qmlRecordingReview() {
     };
     QTRY_VERIFY2(timeCentered(), qPrintable(QString("time x=%1 width=%2; controls width=%3")
         .arg(playbackTime->x()).arg(playbackTime->width()).arg(playbackControls->width())));
+    QTRY_VERIFY(playButton->y() >= playbackTime->y() + playbackTime->height());
+    QVERIFY(qAbs(playButton->x() + playButton->width() / 2 - playbackControls->width() / 2) <= 0.5);
+    auto *timeSeparator = review->findChild<QQuickItem *>("recordingTimeSeparator");
+    QVERIFY(timeSeparator);
+    const qreal timeWidth = playbackTime->width();
+    const qreal separatorX = timeSeparator->mapToItem(playbackControls, QPointF()).x();
+    for (double seconds : {0.0, 1.11, 2.88}) {
+        bar->setProperty("playheadSec", seconds);
+        QCOMPARE(playbackTime->width(), timeWidth);
+        QCOMPARE(timeSeparator->mapToItem(playbackControls, QPointF()).x(), separatorX);
+    }
+    bar->setProperty("playheadSec", 0.0);
     auto *videoOutput = qvariant_cast<QObject *>(player->property("videoOutput"));
     QVERIFY(videoOutput);
     auto *videoSink = qvariant_cast<QVideoSink *>(videoOutput->property("videoSink"));
@@ -1376,9 +1484,28 @@ void EditorTests::qmlRecordingReview() {
         QTRY_VERIFY_WITH_TIMEOUT(bar->property("playheadSec").toDouble() > before + 0.15, 2000);
     }
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
-    QVERIFY(!playbackTimer->property("running").toBool());
+    QVERIFY(!playbackClock->property("running").toBool());
     QVERIFY(qAbs(bar->property("playheadSec").toDouble()
         - player->property("position").toLongLong() / 1000.0) < 0.1);
+    auto *seekSlider = review->findChild<QQuickItem *>("recordingSeekSlider");
+    QVERIFY(seekSlider);
+    const auto seekPoint = [&](double fraction) {
+        return seekSlider->mapToScene(QPointF(9 + fraction * (seekSlider->width() - 18), 12)).toPoint();
+    };
+    QTest::mousePress(review, Qt::LeftButton, Qt::NoModifier, seekPoint(0.25));
+    QTest::mouseMove(review, seekPoint(0.5));
+    QTest::mouseRelease(review, Qt::LeftButton, Qt::NoModifier, seekPoint(0.5));
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
+    QVERIFY(qAbs(player->property("position").toLongLong() - 1500) < 50);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QTest::mousePress(review, Qt::LeftButton, Qt::NoModifier, seekPoint(0.3));
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
+    QTest::mouseMove(review, seekPoint(0.4));
+    QTest::mouseRelease(review, Qt::LeftButton, Qt::NoModifier, seekPoint(0.4));
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PlayingState));
+    QCOMPARE(bar->property("startSec").toDouble(), 0.0);
+    QCOMPARE(bar->property("endSec").toDouble(), trim->duration() / 1000.0);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
         for (const auto &url : trim->thumbnails()) if (!url.isEmpty()) return true;
         return false;
@@ -1399,23 +1526,10 @@ void EditorTests::qmlRecordingReview() {
         QVERIFY(firstThumbMs < 2000);
         QVERIFY(allThumbsMs < 5000);
     }
-    const QString fullStripFirst = trim->thumbnails().first();
     bar->setProperty("startSec", 0.5);
     bar->setProperty("endSec", 2.0);
     QCOMPARE(save->property("text").toString(), QString("Save trim"));
     QVERIFY(keep->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(bar, "toggleZoom"));
-    QTRY_VERIFY(bar->property("windowStart").toDouble() > 0.3);
-    QTRY_VERIFY_WITH_TIMEOUT(([&] {
-        for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
-        return trim->thumbnails().first() != fullStripFirst;
-    })(), 45000);
-    QVERIFY(QMetaObject::invokeMethod(bar, "toggleZoom"));
-    QCOMPARE(bar->property("windowStart").toDouble(), 0.0);
-    QTRY_VERIFY_WITH_TIMEOUT(([&] {
-        for (const auto &url : trim->thumbnails()) if (url.isEmpty()) return false;
-        return true;
-    })(), 45000);
     QFile originalClip(clip);
     QVERIFY(originalClip.open(QIODevice::ReadOnly));
     const QByteArray originalHash = QCryptographicHash::hash(originalClip.readAll(), QCryptographicHash::Sha256);
@@ -1502,6 +1616,37 @@ void EditorTests::qmlRecordingReview() {
     QVERIFY(player->property("duration").toLongLong() <= 1750);
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
     QTRY_VERIFY_WITH_TIMEOUT(player->property("position").toLongLong() > 500, 5000);
+    trim->keepOriginal();
+
+    // This separate fixture holds a single frame from 1 to 2 seconds. Test the
+    // actual frame timestamp as well as the counter so a timer that merely
+    // polls the decoder's stale position cannot pass this regression.
+    trim->open(sparseClip);
+    QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 2000
+        && player->property("primed").toBool() && !player->property("priming").toBool(), 10000);
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    QTRY_VERIFY_WITH_TIMEOUT(bar->property("playheadSec").toDouble() >= 1.1, 3000);
+    const qint64 heldFrameTime = videoSink->videoFrame().startTime();
+    QVERIFY(heldFrameTime >= 900000 && heldFrameTime < 1000000);
+    double previousPlayhead = bar->property("playheadSec").toDouble();
+    QElapsedTimer cadenceTimer;
+    cadenceTimer.start();
+    for (int sample = 0; sample < 5; ++sample) {
+        QTest::qWait(100);
+        const double currentPlayhead = bar->property("playheadSec").toDouble();
+        qInfo("held-frame sample: elapsed=%lld ms, playhead=%.3f->%.3f, backend=%lld ms, clock=%d, mediaStatus=%d",
+            cadenceTimer.restart(), previousPlayhead, currentPlayhead,
+            player->property("position").toLongLong(), playbackClock->property("running").toBool(),
+            player->property("mediaStatus").toInt());
+        QVERIFY(currentPlayhead > previousPlayhead + 0.04);
+        QVERIFY(currentPlayhead < previousPlayhead + 0.25);
+        QCOMPARE(videoSink->videoFrame().startTime(), heldFrameTime);
+        previousPlayhead = currentPlayhead;
+    }
+    QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
+    const double pausedPlayhead = bar->property("playheadSec").toDouble();
+    QTest::qWait(150);
+    QVERIFY(qAbs(bar->property("playheadSec").toDouble() - pausedPlayhead) < 0.01);
     trim->keepOriginal();
 }
 

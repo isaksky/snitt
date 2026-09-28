@@ -13,6 +13,7 @@
 #include "editorcanvas.h"
 #include "appservice.h"
 #include "appsettings.h"
+#include "playbackclock.h"
 #include <QFileInfo>
 
 int main(int argc, char *argv[]) {
@@ -57,6 +58,7 @@ int main(int argc, char *argv[]) {
 
     QQuickStyle::setStyle("Material");
     qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<PlaybackClock>("XShot", 1, 0, "PlaybackClock");
 
     AppSettings settings;
     Backend backend(&settings);

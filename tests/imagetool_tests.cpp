@@ -98,12 +98,12 @@ void ImageToolTests::pixelateWheelPreviewAndExport() {
     QCOMPARE(canvas.pixelBlockSize(), 12);
     QCOMPARE(canvas.maxPixelBlockSize(), 30);
     canvas.adjustToolSize(120);
-    QCOMPARE(canvas.pixelBlockSize(), 14);
+    QCOMPARE(canvas.pixelBlockSize(), 16);
     canvas.adjustToolSize(120 * 100);
     QCOMPARE(canvas.pixelBlockSize(), 30);
     canvas.adjustToolSize(-120 * 100);
     QCOMPARE(canvas.pixelBlockSize(), 4);
-    canvas.adjustToolSize(120 * 4);
+    canvas.adjustToolSize(120 * 2);
     QCOMPARE(canvas.pixelBlockSize(), 12);
     const auto point = [&canvas](QPointF imagePoint) {
         return canvas.imageRect().topLeft() + imagePoint * canvas.imageScale();
@@ -136,7 +136,7 @@ void ImageToolTests::pixelateWheelPreviewAndExport() {
     QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(original.format()), expected.image());
 
     // A later wheel change only affects the next operation, including replay.
-    canvas.adjustToolSize(120 * 3);
+    canvas.adjustToolSize(60 * 3);
     QCOMPARE(canvas.pixelBlockSize(), 18);
     const QPointF secondStart = point({40, 20}), secondEnd = point({70, 50});
     canvas.begin(secondStart.x(), secondStart.y()); canvas.end(secondEnd.x(), secondEnd.y());
@@ -302,7 +302,7 @@ void ImageToolTests::annotationSizingAndPreview() {
     QCOMPARE(canvas.strokeWidth(), 64);
     canvas.adjustToolSize(-120 * 200);
     QCOMPARE(canvas.strokeWidth(), 1);
-    canvas.adjustToolSize(120 * 19);
+    canvas.adjustToolSize(60 * 19);
     QCOMPARE(canvas.strokeWidth(), 20);
     const auto point = [&canvas](QPointF source) {
         return canvas.imageRect().topLeft() + source * canvas.imageScale();
@@ -310,7 +310,7 @@ void ImageToolTests::annotationSizingAndPreview() {
     const QPointF start = point({100, 100}), end = point({300, 300});
     canvas.begin(start.x(), start.y()); canvas.move(end.x(), end.y());
     canvas.adjustToolSize(120);
-    QCOMPARE(canvas.strokeWidth(), 21);
+    QCOMPARE(canvas.strokeWidth(), 22);
     canvas.adjustToolSize(-120);
     QCOMPARE(canvas.strokeWidth(), 20);
     QImage preview(1232, 832, QImage::Format_ARGB32_Premultiplied);
@@ -336,12 +336,12 @@ void ImageToolTests::annotationSizingAndPreview() {
     canvas.setTool("text");
     canvas.adjustToolSize(-120 * 100);
     QCOMPARE(canvas.textSize(), 8);
-    canvas.adjustToolSize(120 * 64);
+    canvas.adjustToolSize(120 * 32);
     QCOMPARE(canvas.textSize(), 72);
     canvas.addText(500, 200, 500, 300, "Whole draft", canvas.textSize());
     QVERIFY(canvas.copy());
     const QImage largeText = QGuiApplication::clipboard()->image();
-    canvas.adjustToolSize(-120 * 64);
+    canvas.adjustToolSize(-120 * 32);
     canvas.addText(500, 400, 500, 300, "Whole draft", canvas.textSize());
     QVERIFY(canvas.copy());
     const QImage bothText = QGuiApplication::clipboard()->image();
@@ -697,7 +697,7 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
                 cut(3, 5); cut(10, 13);
             }
             canvas.setTool(tool);
-            if (tool != "highlight") canvas.adjustToolSize(-120); // Thin 3 px stroke.
+            if (tool != "highlight") canvas.adjustToolSize(-60); // Thin 3 px stroke.
             const auto point = [&](QPointF source) {
                 return canvas.imageRect().topLeft() + source * canvas.imageScale();
             };

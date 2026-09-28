@@ -31,14 +31,14 @@ ApplicationWindow {
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
     readonly property bool imageInputShortcuts: shortcutsOn && (!canvas.hasImage || canvas.arranging)
-    readonly property string hint: editingText ? "Text " + canvas.textSize + " px · " + commandKey + "Enter to place · Esc cancels"
-        : canvas.tool === "cut" ? "Drag ↔ to cut columns, ↕ for rows"
-        : canvas.tool === "rect" ? "Drag a box · " + canvas.strokeWidth + " px · Wheel resizes"
-        : canvas.tool === "highlight" ? "Drag to highlight"
-        : canvas.tool === "arrow" ? "Drag tail → tip · " + canvas.strokeWidth + " px · Wheel resizes"
-        : canvas.tool === "blur" ? "Drag to pixelate · " + canvas.pixelBlockSize + " px · Wheel resizes"
-        : canvas.tool === "erase" ? "Drag to fill with starting color"
-        : "Click to type · " + canvas.textSize + " px · Wheel resizes"
+    readonly property string hint: editingText ? "Text " + canvas.textSize + " px · Drag edge to wrap · " + commandKey + "Enter to place · Esc cancels"
+        : canvas.tool === "cut" ? "↔ removes columns · ↕ removes rows"
+        : canvas.tool === "rect" || canvas.tool === "arrow"
+            ? "Line width " + canvas.strokeWidth + " px · Scroll to adjust"
+        : canvas.tool === "highlight" ? "Overlapping highlights build up color"
+        : canvas.tool === "blur" ? "Block size " + canvas.pixelBlockSize + " px · Scroll to adjust"
+        : canvas.tool === "erase" ? "Fills with the color where you start"
+        : "Text size " + canvas.textSize + " px · Scroll to adjust"
 
     function commitText() {
         if (!editingText) return
@@ -343,6 +343,7 @@ ApplicationWindow {
         property url playbackSource: ""
         property bool preparingExport: false
         property bool dismissAfterCancel: false
+        property bool resumeAfterScrub: false
         readonly property bool canEdit: backend.trim.duration > 0 && !backend.trim.busy && !preparingExport
         readonly property bool hasTrim: trimBar.startSec > 0.001
             || trimBar.endSec < backend.trim.duration / 1000 - 0.001
@@ -350,10 +351,13 @@ ApplicationWindow {
         function togglePlay() {
             if (!canEdit) return
             if (reviewPlayer.priming) reviewPlayer.finishPriming()
-            if (reviewPlayer.playbackState === MediaPlayer.PlayingState) { reviewPlayer.pause(); return }
-            if (reviewPlayer.position / 1000 < trimBar.startSec
-                    || reviewPlayer.position / 1000 >= trimBar.endSec - 0.01)
-                reviewPlayer.position = Math.round(trimBar.startSec * 1000)
+            if (reviewPlayer.playbackState === MediaPlayer.PlayingState) {
+                reviewPlayer.pauseAtPlayhead()
+                return
+            }
+            if (trimBar.playheadSec < trimBar.startSec || trimBar.playheadSec >= trimBar.endSec - 0.01)
+                trimBar.playheadSec = trimBar.startSec
+            reviewPlayer.position = Math.round(trimBar.playheadSec * 1000)
             reviewPlayer.play()
         }
         function seek(seconds) {
@@ -383,13 +387,13 @@ ApplicationWindow {
             trimBar.startSec = 0
             trimBar.endSec = backend.trim.duration / 1000
             trimBar.playheadSec = 0
-            trimBar.zoomed = false
             raise(); requestActivate()
         } else {
             reviewPlayer.stop()
             playbackSource = ""
             preparingExport = false
             dismissAfterCancel = false
+            resumeAfterScrub = false
         }
         onClosing: close => {
             close.accepted = false
@@ -436,15 +440,21 @@ ApplicationWindow {
 
             function syncPlayhead() {
                 if (priming || trimBar.interacting) return
-                const seconds = position / 1000
-                if (playbackState === MediaPlayer.PlayingState
-                        && seconds >= trimBar.endSec && trimBar.endSec > 0) {
-                    pause()
-                    position = Math.round(trimBar.endSec * 1000)
-                    trimBar.playheadSec = trimBar.endSec
-                    return
-                }
+                trimBar.playheadSec = position / 1000
+            }
+            function pauseAtPlayhead() {
+                // The backend reports the last rendered frame, which can be
+                // seconds behind the clock in a static screen recording.
+                const seconds = trimBar.playheadSec
+                pause()
+                position = Math.round(seconds * 1000)
                 trimBar.playheadSec = seconds
+            }
+            function advancePlayhead(elapsedSeconds) {
+                trimBar.playheadSec = Math.min(trimBar.endSec,
+                    trimBar.playheadSec + elapsedSeconds * playbackRate)
+                if (trimBar.playheadSec >= trimBar.endSec && trimBar.endSec > 0)
+                    pauseAtPlayhead()
             }
             function startPriming() {
                 if (primed || priming || !reviewWindow.visible || reviewWindow.preparingExport
@@ -482,21 +492,21 @@ ApplicationWindow {
                 }
             }
             onPositionChanged: if (playbackState !== MediaPlayer.PlayingState) syncPlayhead()
-            onPlaybackStateChanged: syncPlayhead()
+            onPlaybackStateChanged: if (playbackState !== MediaPlayer.PlayingState) syncPlayhead()
             onErrorOccurred: (error, errorString) => {
                 if (reviewWindow.visible && !backend.trim.busy)
                     playbackError.text = "Playback unavailable: " + errorString
             }
         }
-        Timer {
-            objectName: "recordingPlaybackTimer"
-            // Read the actual playback clock at a fixed cadence, independent of
-            // clip length and the backend's position-notification frequency.
-            interval: 50
-            repeat: true
+        PlaybackClock {
+            objectName: "recordingPlaybackClock"
+            // Advance by elapsed time, not by the timestamps of decoded frames.
+            // Screen recordings may legitimately hold one frame for seconds.
             running: reviewWindow.visible && !reviewPlayer.priming && !trimBar.interacting
                 && reviewPlayer.playbackState === MediaPlayer.PlayingState
-            onTriggered: reviewPlayer.syncPlayhead()
+                && reviewPlayer.mediaStatus !== MediaPlayer.LoadingMedia
+                && reviewPlayer.mediaStatus !== MediaPlayer.StalledMedia
+            onAdvanced: seconds => reviewPlayer.advancePlayhead(seconds)
         }
         Timer {
             id: primeFallback
@@ -516,7 +526,7 @@ ApplicationWindow {
             }
             Label {
                 Layout.fillWidth: true
-                text: "Drag the blue handles to choose a range. Keeping or closing this review preserves the full recording."
+                text: "Drag the white handle to seek, or the blue handles to trim."
                 color: "#aab3c0"; wrapMode: Text.WordWrap
             }
             Rectangle {
@@ -545,12 +555,53 @@ ApplicationWindow {
             Item {
                 objectName: "recordingPlaybackControls"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: playbackTime.implicitHeight + reviewPlayButton.height + 4
+                Item {
+                    id: playbackTime
+                    objectName: "recordingPlaybackTime"
+                    anchors.top: parent.top
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.alignWhenCentered: false
+                    implicitWidth: timeMetrics.advanceWidth * 2 + timeSeparator.implicitWidth + 16
+                    implicitHeight: elapsedTime.implicitHeight
+                    width: implicitWidth; height: implicitHeight
+                    TextMetrics {
+                        id: timeMetrics
+                        font: elapsedTime.font
+                        text: Format.fmt(backend.trim.duration / 1000)
+                    }
+                    Row {
+                        spacing: 8
+                        Label {
+                            id: elapsedTime
+                            objectName: "recordingElapsedTime"
+                            width: timeMetrics.advanceWidth
+                            horizontalAlignment: Text.AlignRight
+                            font.features: { "tnum": 1 }
+                            text: Format.fmt(trimBar.playheadSec)
+                            color: "#dfe5ed"
+                        }
+                        Label {
+                            id: timeSeparator
+                            objectName: "recordingTimeSeparator"
+                            text: "/"
+                            color: "#dfe5ed"
+                        }
+                        Label {
+                            objectName: "recordingTotalTime"
+                            width: timeMetrics.advanceWidth
+                            font: elapsedTime.font
+                            text: timeMetrics.text
+                            color: "#dfe5ed"
+                        }
+                    }
+                }
                 ToolButton {
                     id: reviewPlayButton
                     objectName: "recordingReviewPlayButton"
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.top: playbackTime.bottom
+                    anchors.topMargin: 4
+                    anchors.horizontalCenter: parent.horizontalCenter
                     width: 40; height: 40
                     display: AbstractButton.IconOnly
                     text: reviewPlayer.mediaStatus === MediaPlayer.LoadingMedia || reviewPlayer.priming ? "Loading…"
@@ -564,34 +615,12 @@ ApplicationWindow {
                     enabled: reviewWindow.canEdit && reviewPlayer.duration > 0 && !reviewPlayer.priming
                     onClicked: reviewWindow.togglePlay()
                 }
-                Label {
-                    objectName: "recordingPlaybackTime"
-                    anchors.centerIn: parent
-                    anchors.alignWhenCentered: false
-                    text: Format.fmt(trimBar.playheadSec) + " / " + Format.fmt(backend.trim.duration / 1000)
-                    color: "#dfe5ed"
-                }
-                ToolButton {
-                    objectName: "recordingReviewZoomButton"
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 40; height: 40
-                    display: AbstractButton.IconOnly
-                    text: trimBar.zoomed ? "Zoom out" : "Zoom to selection"
-                    icon.source: trimBar.zoomed ? "qrc:/icons/zoom-out.svg" : "qrc:/icons/zoom-in.svg"
-                    icon.width: 24; icon.height: 24
-                    Accessible.name: text
-                    ToolTip.visible: hovered
-                    ToolTip.text: text + (win.keys.reviewToggleZoom ? " (" + win.keys.reviewToggleZoom + ")" : "")
-                    enabled: reviewWindow.canEdit
-                    onClicked: trimBar.toggleZoom()
-                }
             }
             TrimBar {
                 id: trimBar
                 objectName: "recordingTrimBar"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 84
+                Layout.preferredHeight: 108
                 enabled: reviewWindow.canEdit
                 durationSec: backend.trim.duration / 1000
                 thumbCount: 12
@@ -600,8 +629,17 @@ ApplicationWindow {
                     if (reviewPlayer.priming) reviewPlayer.finishPriming()
                     reviewPlayer.position = Math.round(seconds * 1000)
                 }
-                onViewChanged: (startSeconds, endSeconds) =>
-                    backend.trim.setThumbnailWindow(Math.round(startSeconds * 1000), Math.round(endSeconds * 1000))
+                onInteractingChanged: {
+                    if (interacting) {
+                        reviewWindow.resumeAfterScrub = !reviewPlayer.priming
+                            && reviewPlayer.playbackState === MediaPlayer.PlayingState
+                        if (reviewPlayer.priming) reviewPlayer.finishPriming()
+                        reviewPlayer.pauseAtPlayhead()
+                    } else if (reviewWindow.resumeAfterScrub) {
+                        reviewWindow.resumeAfterScrub = false
+                        if (reviewWindow.canEdit && playheadSec < endSec) reviewPlayer.play()
+                    }
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -653,7 +691,6 @@ ApplicationWindow {
         Shortcut { sequences: win.shortcuts.reviewSeekForward; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(1) }
         Shortcut { sequences: win.shortcuts.reviewSeekBackwardFar; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(-5) }
         Shortcut { sequences: win.shortcuts.reviewSeekForwardFar; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: reviewWindow.seek(5) }
-        Shortcut { sequences: win.shortcuts.reviewToggleZoom; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: trimBar.toggleZoom() }
         Shortcut { sequences: win.shortcuts.reviewMarkStart; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
             trimBar.startSec = Math.min(trimBar.playheadSec, trimBar.endSec - 0.1) } }
         Shortcut { sequences: win.shortcuts.reviewMarkEnd; enabled: reviewWindow.visible && reviewWindow.canEdit; onActivated: {
@@ -1011,7 +1048,7 @@ ApplicationWindow {
                                     opacity: enabled ? 1 : 0.4
                                     Accessible.name: modelData.label
                                     ToolTip.visible: hovered
-                                    ToolTip.text: modelData.tool === "blur" ? "Pixelate image colors (" + modelData.key + ") · Wheel adjusts blocks"
+                                    ToolTip.text: modelData.tool === "blur" ? "Pixelate (" + modelData.key + ") · Scroll to adjust block size"
                                         : modelData.tool === "cut" ? "Cut: remove an image strip (" + modelData.key + ")"
                                         : modelData.label + " (" + modelData.key + ")"
                                     checked: canvas.tool === modelData.tool
@@ -1341,6 +1378,44 @@ ApplicationWindow {
                         event.accepted = true
                     }
                 }
+            }
+        }
+        MouseArea {
+            id: textResizeHandle
+            objectName: "annotationTextResizeHandle"
+            visible: win.editingText
+            x: textFrame.x + textFrame.width - 4
+            y: textFrame.y
+            width: 16
+            height: Math.max(24, textFrame.height)
+            hoverEnabled: true
+            preventStealing: true
+            cursorShape: Qt.SizeHorCursor
+            property real pressX: 0
+            property real initialWidth: 0
+            ToolTip.visible: containsMouse && !pressed
+            ToolTip.text: "Resize text width"
+            onPressed: mouse => {
+                pressX = mapToItem(canvas, mouse.x, mouse.y).x
+                initialWidth = win.textWidth
+            }
+            onPositionChanged: mouse => {
+                if (!pressed) return
+                const delta = (mapToItem(canvas, mouse.x, mouse.y).x - pressX) / canvas.imageScale
+                const maximum = canvas.imageWidth - win.textX
+                const minimum = Math.min(maximum, Math.max(24, canvas.textSize * 2))
+                win.textWidth = Math.max(minimum, Math.min(maximum, initialWidth + delta))
+            }
+            onReleased: textInput.forceActiveFocus()
+            onCanceled: if (win.editingText) textInput.forceActiveFocus()
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6
+                height: 24
+                radius: 3
+                color: textResizeHandle.pressed || textResizeHandle.containsMouse ? "#91bff0" : "#dfe5ed"
+                border.color: "#111317"
+                border.width: 1
             }
         }
     }

@@ -35,7 +35,6 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | `reviewPlayPause` | Play or pause a recording | `Space` | Same | Trim review |
 | `reviewSeekBackward` / `reviewSeekForward` | Seek one second | `Left` / `Right` | Same | Trim review |
 | `reviewSeekBackwardFar` / `reviewSeekForwardFar` | Seek five seconds | `Shift+Left` / `Shift+Right` | Same | Trim review |
-| `reviewToggleZoom` | Toggle trim timeline zoom | `Z` | Same | Trim review |
 | `reviewMarkStart` / `reviewMarkEnd` | Set trim start / end at the playhead | `Ctrl+Space` / `Alt+Space` | Same | Trim review |
 | `reviewCancel` | Cancel export or keep the original recording | `Escape` | Same | Trim review |
 

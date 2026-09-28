@@ -182,9 +182,9 @@ On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
 the startup indicator and controls; they can remain over the selected region.
 
 After Stop, preview the video and drag the filmstrip's blue handles to choose the
-portion to keep. Standard icon buttons control play/pause and zoom; elapsed and
-total time stay centered below the video. Space plays or pauses; Left/Right seek one second, Shift+Left/Right
-seek five seconds, and Z zooms the filmstrip to the selected range. **Save trim**
+portion to keep. Drag the white seek handle to change playback position. The
+play/pause button sits below the centered elapsed and total time. Space plays or
+pauses; Left/Right seek one second and Shift+Left/Right seek five seconds. **Save trim**
 exports the chosen range and replaces the original MP4 only after the new file
 passes validation. Trimming copies the existing compressed video and audio without
 re-encoding. Cuts between keyframes can retain hidden preroll and a short extra
@@ -209,7 +209,7 @@ including when started at login.
 | --- | --- | --- |
 | Cut | X | Drag sideways to remove a vertical strip, or up/down to remove a horizontal strip. Release to join the remaining edges. |
 | Rectangle | R | Click and drag around an area. |
-| Text | T | Click to place a textbox, then type. Command/Ctrl+Enter places it; Enter adds a line; Escape cancels. |
+| Text | T | Click to place a textbox, then type. Drag its right-edge grip to change wrapping. Command/Ctrl+Enter places it; Enter adds a line; Escape cancels. |
 | Arrow | A | Drag from the tail toward the tip. |
 | Pixelate | P | Drag a rectangle to replace its contents with coarse blocks averaged from the image. Use the wheel to change block size. |
 | Smart erase | E | Drag a rectangle to fill it with the exact color at the drag's starting point. Works in any drag direction. |
@@ -252,7 +252,8 @@ limited to 50 images or 256 MiB.
 
 Use the mouse wheel over the image with Rectangle or Arrow selected to change
 stroke width, with Text selected to change font size, or with Pixelate selected
-to change block size. The current size appears
+to change block size. Each wheel notch changes line width or text size by 2 px,
+or pixelation block size by 4 px. The current size appears
 in the editor hint. While entering text, wheel over the image outside the text
 box to resize the whole draft; wheel inside the box scrolls its contents. Widths
 and font sizes are source-image pixels and stay selected for the next annotation.
@@ -260,7 +261,7 @@ Stroke width ranges from 1 px to the smaller of 64 px and one-eighth of the
 image's shorter edge (at least 1 px). Text ranges from 8 px to the smaller of
 144 px and one-third of that edge (at least 8 px). Existing annotations keep
 their size. Pixelate blocks range from 4 px to the smaller of 64 px and half
-the image's shorter edge; each wheel step changes the size by 2 px. Existing
+the image's shorter edge. Existing
 pixelated areas keep their chosen block size.
 
 Pixelate averages source colors into larger blocks. It obscures fine detail but

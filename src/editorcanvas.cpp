@@ -90,7 +90,8 @@ int EditorCanvas::maxPixelBlockSize() const {
 
 void EditorCanvas::adjustToolSize(qreal wheelDelta) {
     if (!hasImage() || m_arranging || (m_tool != "rect" && m_tool != "arrow" && m_tool != "text" && m_tool != "blur")) return;
-    m_wheelRemainder += wheelDelta;
+    // Double wheel sensitivity while retaining small high-resolution deltas.
+    m_wheelRemainder += wheelDelta * 2;
     const int steps = int(m_wheelRemainder / 120);
     if (!steps) return;
     m_wheelRemainder -= steps * 120;

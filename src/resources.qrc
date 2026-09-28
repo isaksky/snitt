@@ -32,7 +32,5 @@
         <file alias="icons/undo-2.svg">icons/undo-2.svg</file>
         <file alias="icons/video.svg">icons/video.svg</file>
         <file alias="icons/x.svg">icons/x.svg</file>
-        <file alias="icons/zoom-in.svg">icons/zoom-in.svg</file>
-        <file alias="icons/zoom-out.svg">icons/zoom-out.svg</file>
     </qresource>
 </RCC>

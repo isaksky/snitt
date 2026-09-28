@@ -61,7 +61,6 @@ const ShortcutDefinition shortcutDefinitions[] = {
     {"reviewSeekForward", "Right", "Right", "review"},
     {"reviewSeekBackwardFar", "Shift+Left", "Shift+Left", "review"},
     {"reviewSeekForwardFar", "Shift+Right", "Shift+Right", "review"},
-    {"reviewToggleZoom", "Z", "Z", "review"},
     {"reviewMarkStart", "Ctrl+Space", "Ctrl+Space", "review"},
     {"reviewMarkEnd", "Alt+Space", "Alt+Space", "review"},
     {"reviewCancel", "Escape", "Escape", "review"},

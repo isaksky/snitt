@@ -15,7 +15,7 @@ HEADERS += src/videorecorder.h
 SOURCES += src/videorecorder.cpp
 HEADERS += src/screenshotsave.h src/savepaths.h
 SOURCES += src/screenshotsave.cpp
-HEADERS += src/trimsession.h
+HEADERS += src/trimsession.h src/playbackclock.h
 SOURCES += src/trimsession.cpp
 macx {
     HEADERS += src/macrecorder.h

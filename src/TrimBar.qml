@@ -1,35 +1,30 @@
 import QtQuick
+import QtQuick.Controls
 import "Format.js" as Format
 
 // A thumbnail filmstrip with two draggable handles and a scrubbable playhead.
 // All times are in seconds.
 Item {
     id: root
-    implicitHeight: 76
+    implicitHeight: 100
 
     property real durationSec: 0
     property real startSec: 0
     property real endSec: 0
     property real playheadSec: 0
-    property bool zoomed: false
-    // Frozen at zoom time, so dragging a handle doesn't rescale the view under it.
-    property real viewStartSec: 0
-    property real viewEndSec: 0
     property int thumbCount: 0
     property var thumbnails: []
 
     // True while the user is dragging anything, so the player won't fight the UI.
-    property bool interacting: false
-    property int activeMode: 0  // 0 none, 1 start, 2 end, 3 playhead
+    readonly property bool interacting: timelineMouse.pressed || seekSlider.pressed
+    readonly property int activeMode: seekSlider.pressed ? 3 : timelineMouse.mode
     readonly property bool trimmingRange: activeMode === 1 || activeMode === 2
 
     readonly property real handleW: 14
+    readonly property real seekHandleW: 18
     readonly property real trackX: handleW
     readonly property real trackW: width - 2 * handleW
-    // The stretch of the video the track currently shows.
-    readonly property real windowStart: zoomed ? viewStartSec : 0
-    readonly property real windowEnd: zoomed ? viewEndSec : durationSec
-    readonly property real windowLen: Math.max(windowEnd - windowStart, 0.001)
+    readonly property real trimY: 24
     property color accent: "#91bff0"
     readonly property color film: "#1c1c1e"
     readonly property real activeTime: activeMode === 1 ? startSec : endSec
@@ -38,47 +33,63 @@ Item {
         : xForTime(endSec) + handleW / 2
 
     signal scrub(real seconds)
-    signal viewChanged(real startSeconds, real endSeconds)
 
     function xForTime(t) {
         if (durationSec <= 0)
             return trackX;
-        return trackX + ((t - windowStart) / windowLen) * trackW;
+        return trackX + (t / durationSec) * trackW;
     }
     function timeForX(x) {
         if (trackW <= 0 || durationSec <= 0)
             return 0;
         var f = (x - trackX) / trackW;
-        return windowStart + Math.max(0, Math.min(1, f)) * windowLen;
+        return Math.max(0, Math.min(1, f)) * durationSec;
     }
-    // Z zooms to a close-up where the selection fills 80% of the track, leaving
-    // 10% slack on each side for fine tuning. If the selection changed since the
-    // last zoom, Z zooms again on the new selection; only when zooming wouldn't
-    // get any closer does it zoom back out to the whole video.
-    function toggleZoom() {
-        if (durationSec <= 0)
-            return;
-        var slack = (endSec - startSec) / 8;
-        var newStart = Math.max(0, startSec - slack);
-        var newEnd = Math.min(durationSec, endSec + slack);
-        if (zoomed && newStart === viewStartSec && newEnd === viewEndSec) {
-            zoomed = false;
-            viewChanged(0, durationSec);
-            return;
+
+    function seekTo(seconds) {
+        playheadSec = Math.max(startSec, Math.min(seconds, endSec));
+        scrub(playheadSec);
+    }
+
+    Slider {
+        id: seekSlider
+        objectName: "recordingSeekSlider"
+        x: root.xForTime(root.startSec) - root.seekHandleW / 2
+        width: Math.max(0, root.xForTime(root.endSec) - root.xForTime(root.startSec)) + root.seekHandleW
+        height: root.trimY
+        padding: 0
+        from: root.startSec
+        to: Math.max(root.endSec, root.startSec + 0.001)
+        value: root.playheadSec
+        enabled: root.durationSec > 0
+        Accessible.name: "Playback position"
+        onMoved: root.seekTo(value)
+        background: Rectangle {
+            x: root.seekHandleW / 2
+            y: (seekSlider.height - height) / 2
+            width: seekSlider.width - root.seekHandleW
+            height: 2
+            color: "#454d59"
         }
-        viewStartSec = newStart;
-        viewEndSec = newEnd;
-        zoomed = true;
-        viewChanged(newStart, newEnd);
+        handle: Rectangle {
+            objectName: "recordingSeekHandle"
+            x: seekSlider.visualPosition * (seekSlider.availableWidth - width)
+            y: (seekSlider.height - height) / 2
+            width: root.seekHandleW; height: width
+            radius: 9
+            color: seekSlider.pressed ? root.accent : "white"
+            border.color: "#111317"
+            border.width: 2
+        }
     }
 
     // ---- filmstrip ----
     Rectangle {
         id: track
         x: root.trackX
-        y: 4
+        y: root.trimY + 4
         width: root.trackW
-        height: root.height - 8
+        height: root.height - root.trimY - 8
         radius: 6
         color: root.film
         clip: true
@@ -121,9 +132,9 @@ Item {
     // ---- selected range frame ----
     Rectangle {
         x: root.xForTime(root.startSec) - root.handleW
-        y: 0
+        y: root.trimY
         width: (root.xForTime(root.endSec) - root.xForTime(root.startSec)) + 2 * root.handleW
-        height: root.height
+        height: root.height - root.trimY
         radius: 8
         color: "transparent"
         border.color: root.accent
@@ -148,22 +159,21 @@ Item {
     Loader {
         sourceComponent: handle
         x: root.xForTime(root.startSec) - root.handleW
-        y: 0
+        y: root.trimY
         width: root.handleW
-        height: root.height
+        height: root.height - root.trimY
     }
     Loader {
         sourceComponent: handle
         x: root.xForTime(root.endSec)
-        y: 0
+        y: root.trimY
         width: root.handleW
-        height: root.height
+        height: root.height - root.trimY
     }
 
     // ---- playhead ----
     Rectangle {
         visible: root.durationSec > 0
-            && root.playheadSec >= root.windowStart && root.playheadSec <= root.windowEnd
         x: root.xForTime(root.playheadSec) - 1
         y: track.y
         width: 2
@@ -203,7 +213,9 @@ Item {
 
     // ---- interaction: one MouseArea, hit-test on press (mirrors the C++ logic) ----
     MouseArea {
-        anchors.fill: parent
+        id: timelineMouse
+        x: 0; y: root.trimY
+        width: root.width; height: root.height - root.trimY
         hoverEnabled: true
         property int mode: 0  // 0 none, 1 start, 2 end, 3 playhead
 
@@ -226,7 +238,8 @@ Item {
                 return;
             if (mode === 0) {
                 var h = hitTest(mouse.x);
-                cursorShape = (h === 1 || h === 2) ? Qt.SizeHorCursor : Qt.ArrowCursor;
+                cursorShape = (h === 1 || h === 2) ? Qt.SizeHorCursor
+                    : h === 3 ? Qt.PointingHandCursor : Qt.ArrowCursor;
                 return;
             }
             var t = root.timeForX(mouse.x);
@@ -240,8 +253,7 @@ Item {
                 root.playheadSec = root.endSec;
                 root.scrub(root.endSec);
             } else {
-                root.playheadSec = Math.max(root.startSec, Math.min(t, root.endSec));
-                root.scrub(root.playheadSec);
+                root.seekTo(t);
             }
         }
 
@@ -249,18 +261,14 @@ Item {
             if (root.durationSec <= 0)
                 return;
             mode = hitTest(mouse.x);
-            root.activeMode = mode;
-            root.interacting = mode !== 0;
             if (mode === 3) {
-                root.playheadSec = Math.max(root.startSec, Math.min(root.timeForX(mouse.x), root.endSec));
-                root.scrub(root.playheadSec);
-            }
+                root.seekTo(root.timeForX(mouse.x));
+            } else if (mode === 0) mouse.accepted = false;
         }
 
         onReleased: {
             mode = 0;
-            root.activeMode = 0;
-            root.interacting = false;
         }
+        onCanceled: mode = 0
     }
 }
