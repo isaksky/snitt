@@ -853,7 +853,7 @@ void EditorTests::qmlWheelSizes() {
     wheelAt(point({100, 250}), 120);
     QCOMPARE(canvas->pixelBlockSize(), 16);
     QCOMPARE(window->property("hint").toString(),
-             QString("Block size 16 px · Scroll to adjust"));
+             QString("16 px · Mouse wheel to adjust"));
     QCOMPARE(canvas->strokeWidth(), 4);
     QCOMPARE(canvas->textSize(), 26);
     canvas->setTool("text");
@@ -1065,9 +1065,9 @@ void EditorTests::qmlKeyboardCommands() {
     QTRY_COMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_P);
     QTRY_COMPARE(canvas->tool(), QString("blur"));
-    QCOMPARE(window->property("hint").toString(), QString("Block size 12 px · Scroll to adjust"));
+    QCOMPARE(window->property("hint").toString(), QString("12 px · Mouse wheel to adjust"));
     canvas->adjustToolSize(120);
-    QCOMPARE(window->property("hint").toString(), QString("Block size 16 px · Scroll to adjust"));
+    QCOMPARE(window->property("hint").toString(), QString("16 px · Mouse wheel to adjust"));
     QCOMPARE(canvas->ink(), QColor("#22c55e"));
     QTest::keyClick(window, Qt::Key_B);
     QTRY_COMPARE(canvas->ink(), QColor("#ef4444"));
