@@ -1,0 +1,171 @@
+name: Build and headless tests
+
+on:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Exact source commit to check out
+        required: true
+        type: string
+      package:
+        description: Build private media runtimes and release archives
+        default: false
+        type: boolean
+      version:
+        default: '0.2.0'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make diffutils
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-qt6-quicktimeline
+            mingw-w64-ucrt-x86_64-qt6-multimedia-ffmpeg
+      - name: Select and record SDK
+        env:
+          MSYS_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $qt = Join-Path $env:MSYS_ROOT 'ucrt64/bin'
+          $version = & "$qt/qmake6.exe" -query QT_VERSION
+          if ($LASTEXITCODE -ne 0 -or $version -ne '6.11.2') {
+            throw "Expected Qt 6.11.2, got $version. Review the pinned runtime before upgrading."
+          }
+          "SNITT_QT_BIN=$qt" >> $env:GITHUB_ENV
+          $qt >> $env:GITHUB_PATH
+          New-Item -ItemType Directory -Force build/ci | Out-Null
+          & "$env:MSYS_ROOT/usr/bin/pacman.exe" -Q | Set-Content build/ci/windows-build-info.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Could not record MSYS2 packages' }
+      - name: Lightweight policy checks
+        run: |
+          & "$env:SNITT_QT_BIN/python.exe" tests/windows_multimedia_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime policy checks failed' }
+          & "$env:SNITT_QT_BIN/python.exe" scripts/test-scoop-manifest.py
+          if ($LASTEXITCODE -ne 0) { throw 'Scoop metadata checks failed' }
+      - name: Build app and run headless tests
+        run: ./bin/build.ps1 -QtBin $env:SNITT_QT_BIN -Test
+      # Desktop capture, packaged playback, install/upgrade and performance tests
+      # run locally. PR jobs do not compile the private FFmpeg runtime.
+      - name: Build release package
+        if: inputs.package
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          ./bin/package-windows.ps1 -QtBin $env:SNITT_QT_BIN -Version $env:RELEASE_VERSION
+          Copy-Item build/ci/windows-build-info.txt build/release/
+      - name: Upload release package
+        if: inputs.package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-package
+          path: build/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-diagnostics
+          path: |
+            build/ci/*.txt
+            build/windows-app/tests/**/results.*
+            build/tools/windows-multimedia-runtime/*.log
+            build/tools/windows-multimedia-runtime/stage/manifest.json
+          retention-days: 14
+
+  macos:
+    name: macOS Apple silicon
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      # Ad-hoc bundle signatures need no certificate, account, or keychain.
+      SNITT_SIGN_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Set up build tools and pinned Qt SDK
+        run: |
+          test "$(uname -m)" = arm64
+          brew list --versions ffmpeg >/dev/null || brew install ffmpeg
+          bin/setup-macos-qt
+          qt="$GITHUB_WORKSPACE/build/tools/qt-sdk/6.11.2/macos/bin"
+          echo "SNITT_QMAKE=$qt/qmake6" >> "$GITHUB_ENV"
+          echo "$qt" >> "$GITHUB_PATH"
+          mkdir -p build/ci
+          {
+            sw_vers
+            xcodebuild -version
+            clang --version
+            "$qt/qmake6" -query QT_VERSION
+            brew list --versions
+          } > build/ci/macos-build-info.txt
+      - name: Check SDK selection and run headless tests
+        run: |
+          python tests/mac_qt_sdk_selection.py
+          bin/test
+      - name: Build release package
+        if: inputs.package
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          brew list --versions cmake >/dev/null || brew install cmake
+          python scripts/release_metadata.py version "$RELEASE_VERSION"
+          bin/stage-macos
+          bin/package-macos --version "$RELEASE_VERSION"
+          cp build/ci/macos-build-info.txt build/release/
+      - name: Upload release package
+        if: inputs.package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-package
+          path: build/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-diagnostics
+          path: |
+            build/ci/*.txt
+            build/tests/**/results.*
+            build/tools/mac-multimedia-runtime/*.log
+            build/tools/mac-multimedia-runtime/stage/manifest.json
+          retention-days: 14

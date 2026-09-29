@@ -12,8 +12,9 @@ Third-party code and bundled dependencies retain their own licenses, including
 the notices in `src/OMACUT-LICENSE` and `src/icons/LICENSE`. Windows packaging
 builds an [LGPL-only FFmpeg playback runtime](docs/windows-multimedia-runtime.md)
 and includes its source and build instructions. See the
-[public release preparation plan](docs/releasing.md) for GitHub Actions and code
-signing setup.
+[release guide](docs/releasing.md) for Scoop and Homebrew cask distribution
+through GitHub Actions. CI runs headless tests; version tags create draft releases
+for local desktop validation. Public code signing is deferred.
 
 ## Upgrading from xshot
 

@@ -19,13 +19,14 @@ REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 PRIVATE_NOTICE = "Private GitHub release; install and update with Install-Scoop.ps1 using your own gh authentication."
 
 
-def render(version: str, digest: str, repository: str, private: bool = False) -> dict[str, Any]:
+def render(version: str, digest: str, repository: str, private: bool = False,
+           source_license: str = "MIT") -> dict[str, Any]:
     archive = f"snitt_{version}_windows_amd64.zip"
     manifest = {
         "version": version,
         "description": "Capture, annotate, combine, and record screen regions",
         "homepage": f"https://github.com/{repository}",
-        "license": "Unknown",
+        "license": source_license,
         "architecture": {
             "64bit": {
                 "url": f"https://github.com/{repository}/releases/download/v{version}/{archive}",
@@ -75,7 +76,13 @@ def read_manifest(path: Path) -> dict[str, Any]:
     digest = manifest.get("architecture", {}).get("64bit", {}).get("hash", "")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("architecture.64bit.hash must be a lowercase SHA-256")
-    if manifest != render(version, digest, repository, private="##" in manifest):
+    # Historical manifests predate the root MIT license. New releases always
+    # use MIT for Snitt's original code; bundled dependencies keep their notices.
+    source_license = manifest.get("license")
+    if source_license not in ("MIT", "Unknown"):
+        raise ValueError("unexpected Snitt source license")
+    if manifest != render(version, digest, repository, private="##" in manifest,
+                          source_license=source_license):
         raise ValueError("manifest does not match the Snitt install and release contract")
     return manifest
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-if command -v qmake6 >/dev/null 2>&1; then
+if [ -n "${SNITT_QMAKE:-}" ]; then
+    QMAKE="$SNITT_QMAKE"
+elif command -v qmake6 >/dev/null 2>&1; then
     QMAKE=qmake6
 elif command -v qmake >/dev/null 2>&1; then
     QMAKE=qmake
@@ -9,7 +11,7 @@ else
     echo "Qt 6 qmake is required." >&2
     exit 1
 fi
-if [ "$(uname -s)" = Darwin ]; then
+if [ "$(uname -s)" = Darwin ] && [ -n "${SNITT_INTERACTIVE_TESTS:-}" ]; then
     MARKER_DIR="$ROOT/build/tests/recording_marker"
     mkdir -p "$MARKER_DIR"
     cd "$MARKER_DIR"
@@ -23,5 +25,8 @@ for SUITE in editor_tests imagetool_tests recording_tests; do
     cd "$TEST_DIR"
     "$QMAKE" "$ROOT/tests/$SUITE.pro"
     make -j4
-    QT_QPA_PLATFORM=offscreen "./$SUITE"
+    TEST_EXIT=0
+    QT_QPA_PLATFORM=offscreen "./$SUITE" -o results.txt,txt -o results.xml,junitxml || TEST_EXIT=$?
+    cat results.txt
+    [ "$TEST_EXIT" -eq 0 ] || exit "$TEST_EXIT"
 done

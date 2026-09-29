@@ -6,6 +6,12 @@ use `snitt.json`, `snitt_<version>_windows_amd64.zip`, and
 `snitt_<version>_checksums.txt`; a repository rename does not rename existing
 release assets or the executables inside their archives.
 
+GitHub Actions now builds draft releases for stable version tags and generates
+both the Scoop manifest and Homebrew cask. Publishing a release opens a package
+update PR. See [the release guide](../docs/releasing.md) for triggers, CI scope,
+local checks, and the one-time repository permission setting. The commands below
+remain available for manual Windows packaging and private-release downloads.
+
 Build the Windows package with `bin/package-windows.ps1 -Version 0.1.0`.
 It writes the ZIP and checksum file to `build/release`. Copy both to the Mac,
 then generate the Scoop manifest from those exact bytes:

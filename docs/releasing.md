@@ -1,25 +1,84 @@
 # Preparing public releases
 
 This is the implementation plan for public Snitt releases, reviewed on
-2026-09-28. The chosen license for Snitt's original code is MIT, and the intended
-publisher is an individual. The publisher's country and signing provider still
-need to be selected. No signing service or GitHub Actions workflow has been
-configured by this preparation work.
+2026-09-28. The chosen license for Snitt's original code is MIT. Public code
+signing is deferred by choice: the initial Windows releases will be unsigned
+ZIPs. No signing account, certificate enrollment, or signing credentials are
+needed for this plan. The workflows are defined in `.github/workflows`; they
+become active when committed and pushed to GitHub.
+The intended installation channels are Scoop on Windows and a Homebrew cask
+on macOS, backed by versioned GitHub Release assets.
 
 ## What exists
 
 | Area | Current state | Work before a public binary release |
 | --- | --- | --- |
 | Source license | Root MIT license; upstream notices retained | Review third-party inventory and Git history before changing repository visibility |
-| Windows build | `bin/build.ps1 -Test`, MSYS2 UCRT64/Qt 6 | Run on a clean CI runner with recorded dependency versions |
-| Windows packaging | `bin/package-windows.ps1`, private LGPL FFmpeg build, ZIP, checksums, source and notices | Validate the release package and split staging from final archive creation |
-| Windows signing | No signing step | Enroll a publisher and add Authenticode signing and verification |
-| Scoop | Generator supports private and public releases | Update license metadata from `Unknown` and regenerate against the final signed ZIP |
-| macOS | Local development signing and bundle validation | Developer ID, hardened runtime, notarization, and stapling |
-| Automation | No `.github/workflows` directory | Separate unprivileged build/test jobs from trusted release signing and publishing |
+| Windows build | CI runs `bin/build.ps1 -Test` with MSYS2 UCRT64/Qt 6.11.2 | Confirm the first hosted run; package versions are recorded |
+| Windows packaging | `bin/package-windows.ps1`, private LGPL FFmpeg build, ZIP, checksums, source and notices | Validate the exact release ZIP |
+| Windows signing | Deferred; unsigned ZIPs are the chosen release path | Describe unsigned status in release notes |
+| Scoop | New generated manifests use MIT; historical `Unknown` manifests remain readable | Test public install/update/uninstall, then merge the package update PR |
+| macOS | Local development signing and bundle validation; arm64 ZIP | Public signing/notarization deferred; validate downloaded builds separately |
+| Homebrew | Release automation generates an arm64 cask | Test locally, then merge the first package update PR to add `Casks/snitt.rb` |
+| Automation | CI, shared platform builds, draft releases, and package update PRs | Push workflows and enable Actions to create pull requests |
 
 The packaging scripts now include the root MIT license in future Windows and
 macOS archives. Existing archives have not been rebuilt or re-licensed.
+
+## Package-manager distribution
+
+Keep the compiled ZIPs on GitHub Releases. Scoop and Homebrew each need a small
+package definition that selects the version, download URL, and SHA-256; users
+should not need a compiler or the Qt SDK. Start with an owned bucket and tap,
+without making acceptance into the official package repositories a prerequisite.
+
+For the simplest initial layout, the public `isaksky/snitt` repository can host
+both the existing `bucket/snitt.json` and a new `Casks/snitt.rb`. Homebrew accepts
+an explicit Git URL for a tap, so a separate `homebrew-*` repository is optional.
+See [Scoop manifests](https://github.com/ScoopInstaller/Scoop/wiki/App-Manifests)
+and [Homebrew taps](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap).
+
+The intended commands **after the public assets and definitions are ready** are:
+
+```powershell
+scoop bucket add snitt https://github.com/isaksky/snitt.git
+scoop install snitt/snitt
+# Later, after finishing captures and quitting Snitt:
+scoop update snitt
+```
+
+```sh
+brew tap isaksky/snitt https://github.com/isaksky/snitt.git
+brew install --cask isaksky/snitt/snitt
+# Later, after finishing captures and quitting Snitt:
+brew update
+brew upgrade --cask isaksky/snitt/snitt
+```
+
+The fully qualified Homebrew install selects and trusts that cask on Homebrew
+versions with explicit tap trust; it does not confer Apple publisher trust.
+See [Homebrew tap trust](https://docs.brew.sh/Tap-Trust).
+
+The existing Scoop definition installs `main/ffmpeg` and handles the shortcut,
+login startup, and uninstall. Public downloads can use ordinary Scoop updates
+without the private-release GitHub authentication wrapper. Generate the public
+manifest only from the final public release bytes.
+
+Use a Homebrew **cask** for the prebuilt GUI app. It should install `Snitt.app`
+from `snitt_<version>_macos_arm64.zip`, declare Apple silicon and macOS 15+
+support, and retain the shipped notices/source material. Qt and the macOS media
+helpers are already bundled, so the current package needs no Homebrew Qt or
+FFmpeg runtime dependency. Do not advertise Intel support until an Intel build
+is produced and tested. See the [Cask Cookbook](https://docs.brew.sh/Cask-Cookbook).
+
+A cask installing the app does not automatically reproduce `bin/install`'s
+LaunchAgent setup. Initially document enabling login startup through macOS
+Login Items, as the packaged app already does. Test migration from the existing
+`~/Applications` install and remove its old login entry through the existing
+uninstaller before introducing a second installation. Users still grant screen
+recording permission through macOS; verify that permissions remain usable after
+upgrades. Uninstall should remove package-owned integration without deleting
+saved captures.
 
 ## Windows playback licensing
 
@@ -52,125 +111,132 @@ even with Snitt's MIT license. See
 [FFmpeg's licensing guidance](https://ffmpeg.org/legal.html) and
 [Qt's LGPL obligations](https://www.qt.io/development/open-source-lgpl-obligations).
 
-## Select Windows signing
+## Unsigned Windows releases
 
-Code signing uses a trusted certificate to bind a publisher identity to the
-binary and detect changes after signing. GitHub Actions runs the build and calls
-the signing provider; GitHub does not issue a Windows publisher certificate.
+GitHub Actions can build, test, package, and upload an unsigned Windows ZIP.
+There is no signing-provider setup or signing job in the initial release plan.
 
-| Option | Fit for Snitt | Enrollment |
-| --- | --- | --- |
-| Microsoft Artifact Signing, formerly Trusted Signing | Recommended paid option if eligible; Microsoft lists a starting price of US$9.99/month | Azure subscription, identity validation, Public Trust certificate profile |
-| SignPath Foundation | Free option for an approved open-source project | Apply after the public source and build process are ready; acceptance and timing are not guaranteed |
+Downloaded unsigned apps can trigger SmartScreen warnings. Enterprise policy or
+Windows 11 Smart App Control can block execution, so do not promise that every
+user can dismiss a warning. Explain the unsigned status in release notes and
+provide SHA-256 checksums; checksums verify the downloaded bytes but do not
+establish a trusted publisher identity. See
+[Microsoft's reputation guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
 
-Microsoft currently supports individual Public Trust applicants in the US and
-Canada. Confirm country eligibility before provisioning resources; use an Azure
-billing account of type Individual with matching legal identity details. The
-publisher name comes from verified identity, not an arbitrary product label.
-See Microsoft's [setup guide](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart),
-[pricing and reputation guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation),
-and the [SignPath Foundation application](https://signpath.org/apply).
+Signing can be reconsidered later if installation friction warrants it. The
+[Microsoft signing action](https://github.com/Azure/artifact-signing-action) and
+[SignPath Foundation](https://signpath.org/) are references for that future
+choice, not prerequisites for opening the source or releasing a Windows ZIP.
 
-Signing does not guarantee that a new app avoids SmartScreen warnings. Microsoft
-says reputation accumulates over time, and paying for an EV certificate no
-longer provides an automatic SmartScreen bypass. A local/self-signed certificate
-does not establish public publisher trust.
-[Microsoft's explanation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
+## GitHub Actions
 
-For Microsoft Artifact Signing:
+- `ci.yml` runs on pushes to `master`, pull requests, and manual dispatch. It
+  runs fast Python metadata/policy checks plus the existing Qt headless test
+  suites on Windows and Apple silicon macOS. It does not build the private media
+  runtimes or create release archives.
+- `build.yml` is the shared platform workflow. Release callers opt into building
+  the private media runtimes and packaging. The Windows SDK is checked against
+  Qt 6.11.2; macOS downloads the pinned official 6.11.2 SDK. Both jobs record
+  their toolchain inventory and retain diagnostics for 14 days.
+- `release.yml` runs for `v*` tags or a manual **Draft release** run naming an
+  existing tag. It requires a stable `vX.Y.Z` tag whose commit is on the default
+  branch's history, builds that exact commit, verifies both archives, generates
+  package definitions, and creates a **draft** GitHub Release. It never publishes
+  automatically. Reruns can refresh a draft with the same recorded source commit;
+  published releases are never overwritten.
+- `packages.yml` runs after a stable release is published, or through a manual
+  **Update Scoop and Homebrew** run naming the latest published release. It
+  requires a public repository, downloads both archives without authentication,
+  checks hashes, embedded versions, and source provenance, and opens a PR updating
+  `bucket/snitt.json` and `Casks/snitt.rb`. Older release retries cannot roll the
+  package definitions back. The PR does not merge automatically.
 
-1. Create an Azure subscription and an Artifact Signing account; complete
-   individual identity validation in the Azure portal.
-2. Create a **Public Trust** certificate profile, not a test or Private Trust
-   profile.
-3. Create an Entra application/service principal and a federated credential for
-   the GitHub release environment. Grant only the Certificate Profile Signer
-   role at the narrowest appropriate scope.
-4. Configure GitHub with the Azure client, tenant, and subscription IDs; signing
-   endpoint; signing account name; and certificate profile name. The IDs are
-   configuration values, not private signing keys.
-5. Use `azure/login` with OpenID Connect, followed by
-   `azure/artifact-signing-action`. This avoids a long-lived Azure client secret
-   or exporting the Windows signing key into GitHub.
-6. Enable SHA-256 signing and RFC 3161 timestamping. Timestamping is required for
-   signatures to remain valid beyond the service's short certificate lifetime.
+### CI scope
 
-Use the official [signing action](https://github.com/Azure/artifact-signing-action)
-and [OIDC setup](https://github.com/Azure/artifact-signing-action/blob/main/docs/OIDC.md)
-when implementing the workflow. Pin the chosen action versions to full commit
-SHAs. Limit the federated identity to `isaksky/snitt` and the release environment,
-and restrict that environment to authorized release refs. Pull-request jobs must
-not have signing access. See
+CI runs only the headless suites and metadata checks. It does **not** run the
+interactive package smoke script, real screen capture, hotkey/multiple-display
+checks, install/upgrade/uninstall exercises, GPU tests, or benchmarks. Perform
+those expensive checks locally against the exact draft assets before publishing.
+Headless test logs show expected interactive-only skips; these are not evidence
+that desktop behavior passed. Private FFmpeg/Qt runtime compilation is part of
+creating release packages, not a PR test requirement.
+
+The macOS job uses `SNITT_SIGN_IDENTITY=-` for ad-hoc bundle signatures. It needs
+no signing certificate, signing secrets, keychain setup, or notarization account.
+Normal local development installation retains its existing signing behavior.
+
+MSYS2 is a rolling distribution. The workflow records installed package versions
+and refuses an unexpected Qt/FFmpeg ABI rather than silently changing the release
+runtime. If its repositories move beyond the supported SDK, deliberately update
+and validate the runtime pins locally before using the newer SDK. The workflow
+is not a fully reproducible snapshot of every transitive SDK package.
+
+### First setup and release
+
+1. Commit and push the workflows and supporting scripts. Under repository
+   **Settings > Actions > General**, allow GitHub Actions to create pull requests
+   so `packages.yml` can open the package update PR. The workflows request only
+   the permissions each job needs and use the built-in `GITHUB_TOKEN`; no personal
+   access token is required. Repository or organization policy may restrict this
+   setting. Verify CI on the default branch before tagging.
+2. Tag the chosen default-branch commit with a new stable version such as
+   `v0.1.1` and push that tag, or manually run **Draft release** for an existing
+   tag that contains these workflows. macOS bundle version fields are stamped
+   in the disposable CI checkout; the tag's source tree is not rewritten.
+3. Download the resulting draft assets and run the local release checks listed
+   in `.github/release-notes.md`. Replace that checklist with the release notes
+   and results. CI cannot certify the desktop/install tests on your behalf.
+4. Publish the draft after validation. The package update workflow verifies that
+   its asset URLs work anonymously and opens a PR. Test normal Scoop/Homebrew
+   installation and upgrade from those URLs, then merge the PR to advertise the
+   release through the bucket and tap. For a private repository, keep the draft
+   private and defer the public package update until the repository is public.
+
+A package update PR created with `GITHUB_TOKEN` can leave its CI runs waiting for
+a maintainer to select **Approve workflows to run** in the PR. Its metadata and
+Ruby syntax checks already run inside `packages.yml` before PR creation. Approve
+the pending runs or use manual CI dispatch on its branch if needed; normal
+protected-branch requirements still apply. If a release was
+published by another workflow using `GITHUB_TOKEN`, manually dispatch the package
+update workflow because token-created events do not normally start new runs.
+See [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
+Both ZIPs, the combined SHA-256 list, generated `snitt.json` and `snitt.rb`, the
+private-download bootstrap, SDK inventories, and `release.json` are uploaded to
+the draft. `release.json` binds the two archive hashes and sizes to the source
+commit. The metadata generator rejects mismatched versions, missing platforms,
+duplicate checksums, and modified archives before generating package updates.
+Corresponding source and license material remain inside the platform archives.
+
+For local metadata verification without compiling the app:
+
+```sh
+python3 scripts/test-release-metadata.py
+python3 scripts/test-scoop-manifest.py
+python3 tests/windows_multimedia_runtime.py
+```
+
+Action revisions are pinned to full commit SHAs. Build jobs have read-only
+repository access; draft publication has `contents: write`, and package updates
+also have `pull-requests: write`. Checkout credentials are not persisted. Public
+forks run on ephemeral hosted runners, never the personal Windows VM. See
 [GitHub's workflow security guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 
-## Target release workflow
+## Homebrew and macOS signing
 
-Trigger a release from a protected version tag such as `v0.1.0`, resolving it to
-one commit. Initially produce a draft GitHub Release for final installation
-checks; publish after those checks pass.
+Developer ID enrollment and notarization are also deferred. The existing local
+development signing supports the current local install workflow and is not a
+publicly trusted signing identity. Installing a cask does not make the app
+notarized or exempt it from Gatekeeper. An unsigned or locally signed download
+can still need the user's explicit approval to open. Test and document the
+actual first-launch behavior; do not disable Gatekeeper or strip quarantine in
+the cask. See [Apple's guidance](https://support.apple.com/en-us/102445).
 
-1. **Build and test.** On a GitHub-hosted Windows runner, install the selected
-   MSYS2 UCRT64/Qt toolchain and run `bin/build.ps1 -Test`. Record dependency
-   versions, source hashes, and build configuration. Retain or pin the dependency
-   inputs so a moving MSYS2 repository is not the only record of the build.
-2. **Stage.** Deploy the application, Qt/QML plugins, approved playback runtime,
-   installer scripts, and license/source material into a clean package directory.
-3. **Check the package.** Validate dependencies with development paths removed.
-   Run interactive capture/recording and installation checks on an unlocked
-   Windows desktop. Hosted CI test success alone does not prove screen capture,
-   hotkeys, multiple displays, or login startup. The current
-   `tests/windows-package-smoke.ps1` includes interactive checks and needs a
-   suitable session; do not silently count skipped checks as passing.
-4. **Sign and timestamp.** Sign `snitt.exe`, shipped helper binaries, and installer
-   PowerShell scripts. Inventory bundled DLLs: preserve valid vendor signatures
-   and handle unsigned runtime DLLs under the chosen provider's signing policy.
-   A ZIP is a container; signing the executable inside it is what Windows checks.
-   `.cmd` wrappers do not support embedded Authenticode signatures. A future
-   MSI/EXE installer needs its own signature after its payload is finalized.
-5. **Verify.** Fail the release on missing/invalid required signatures, the wrong
-   publisher, or missing timestamps. Use Windows SDK SignTool, including
-   `signtool verify /pa /all /v`, and verify the payload extracted from the final
-   archive as well. See [SignTool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
-6. **Archive and hash.** Create the final ZIP only after signing. Compute SHA-256
-   from those bytes, then generate and check the public Scoop manifest with
-   `scripts/update-scoop-manifest.sh` without `--private`. Never rebuild or modify
-   files after signing or reuse the old unsigned archive's checksum.
-7. **Draft and publish.** Upload the final archives, checksums, Scoop manifest,
-   bootstrap script, and source/build material to a draft release for that commit.
-   Validate installation and update from the exact artifacts. Publish the
-   release, then update the public bucket to point to the available assets.
-
-`bin/package-windows.ps1` currently builds, stages, compresses, and hashes in one
-invocation. Split those phases before inserting signing; calling it again after
-signing would recreate the staging directory and discard the signatures. Add
-signature verification as a required release gate, with no fallback to an
-unsigned public release. Keep CI builds available without signing credentials.
-If runtime DLLs are signed, preserve their build provenance hashes and record
-the final signed hashes separately: Authenticode changes the DLL bytes. Package
-checks must distinguish the validated build from its signed release copy.
-
-Give only the signing job `id-token: write`, and only the publishing job
-`contents: write`. Pass artifacts between jobs by the current run and commit,
-not by an unqualified latest artifact. Public fork builds should use ephemeral
-hosted runners, not a personal Windows VM with access to local credentials.
-
-## macOS release path
-
-The current local certificate is for development. Public direct downloads need
-an Apple Developer ID Application identity, signing of nested code followed by
-the app, hardened runtime with the necessary Qt/QML entitlements, secure
-timestamps, notarization, and stapling before final archiving. Use a temporary CI
-keychain and keep Apple signing credentials in the release environment. See
-[Apple's Developer ID guidance](https://developer.apple.com/developer-id/) and
-[notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
-
-Setting `SNITT_SIGN_IDENTITY` alone is not the whole release implementation:
-`bin/sign-macos` currently signs the outer app without a notarization flow.
-Also adapt `bin/package-macos`'s byte-hash checks for the private runtime:
-re-signing nested Mach-O files changes their bytes. Validate the staged runtime
-before signing, then verify the final signed bundle without weakening provenance
-checks. Update the generated installation text, which currently describes a
-local development certificate, only once Developer ID and notarization succeed.
+The official `homebrew/cask` repository requires assessable macOS executables
+to pass its Gatekeeper checks. The personal tap is the initial distribution
+target while public signing is deferred; inclusion in the official repository
+is a separate future decision. See
+[Homebrew's cask requirements](https://docs.brew.sh/Acceptable-Casks).
 
 ## Remaining preparation
 
@@ -183,10 +249,9 @@ local development certificate, only once Developer ID and notarization succeed.
   physical GPU behavior still need release validation. One sparse-frame timing
   assertion failed on the VM and passed on repeat; investigate if it recurs.
 - Add contributor/build instructions and a vulnerability reporting route.
-- Set release versions consistently in application metadata, package names, and
-  the Scoop manifest; the macOS plist currently contains a fixed `0.1.0`.
-- Update the Scoop generator's license metadata when preparing the new artifacts.
-- Build a clean unsigned CI package first; then connect the selected signing
-  account and exercise the signed draft release process.
+- Validate the generated Homebrew cask locally, including install/upgrade/uninstall,
+  first launch, login startup, and screen-recording permissions.
+- Exercise the first hosted CI run, draft release, and bucket/tap update PR.
+  Public signing enrollment remains deferred.
 - Change private installation instructions to public downloads when the release
   is actually available. Confirm both clean installation and upgrade from xshot.

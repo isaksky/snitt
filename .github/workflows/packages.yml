@@ -1,0 +1,91 @@
+name: Update Scoop and Homebrew
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Latest published stable release (v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: package-definitions
+  cancel-in-progress: false
+
+jobs:
+  definitions:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Download and verify the public release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(gh repo view --json visibility --jq .visibility)" = PUBLIC
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == false'
+          # An old release event/retry must not roll the bucket back.
+          test "$(gh release view --json tagName --jq .tagName)" = "$RELEASE_TAG"
+          version=${RELEASE_TAG#v}
+          commit=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          mkdir -p build/public-release
+          # Download without authentication: these are the URLs package managers use.
+          for asset in "snitt_${version}_windows_amd64.zip" "snitt_${version}_macos_arm64.zip" \
+            "snitt_${version}_checksums.txt" release.json; do
+            curl --fail --location --retry 3 \
+              "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$asset" \
+              --output "build/public-release/$asset"
+          done
+          python scripts/release_metadata.py definitions "$version" \
+            --repository "$GITHUB_REPOSITORY" --commit "$commit" \
+            --release-directory build/public-release --output .
+          python scripts/check-scoop-manifest.py bucket/snitt.json
+          ruby -c Casks/snitt.rb
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Open package update pull request
+        id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: release/package-definitions
+          base: ${{ github.event.repository.default_branch }}
+          add-paths: |
+            bucket/snitt.json
+            Casks/snitt.rb
+          commit-message: 'Update package definitions for ${{ steps.release.outputs.tag }}'
+          title: 'Update Scoop and Homebrew for ${{ steps.release.outputs.tag }}'
+          body: |
+            Point Scoop and the Homebrew cask at the published release.
+            Both archives were downloaded without authentication and checked against
+            the release checksums, source commit, and embedded version metadata.
+            Scoop schema and cask Ruby syntax checks passed in this workflow.
+            Merge after the local installation and upgrade checks are complete.
+      - name: Link package update
+        env:
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          if [ -n "$PR_URL" ]; then
+            echo "Package definitions: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -423,7 +423,7 @@ thumbnail decoding, not screen capture or trimmed-video export.
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, default=ROOT / "build/package/macos/Snitt.app")
-    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--version", default="0.2.0")
     parser.add_argument("--release-directory", type=Path, default=ROOT / "build/release")
     parser.add_argument("--skip-checksum-manifest", action="store_true",
                         help="Print the digest without changing a shared platform checksum file")
@@ -469,6 +469,11 @@ def main():
         copy_file(ROOT / "README.md", payload / "README.md")
         copy_file(ROOT / "LICENSE", payload / "LICENSE")
         (payload / "VERSION").write_text(args.version + "\n")
+        signature = subprocess.run(["codesign", "-d", "--verbose=2", str(bundle)],
+                                   capture_output=True, text=True, check=True).stderr
+        signature_description = ("This release uses an ad-hoc code signature."
+                                 if "Signature=adhoc" in signature else
+                                 "This release is signed with a local development certificate.")
         (payload / "MACOS-INSTALL.txt").write_text("""Snitt for macOS 15 or later, Apple silicon (arm64)
 
 Move Snitt.app into your Applications folder, then open it. Snitt remains in the
@@ -479,8 +484,8 @@ Video recording uses macOS ScreenCaptureKit. Thumbnail and preview decoders
 are bundled; no separate FFmpeg installation is needed.
 Snitt's windows are automatically excluded from the recorded video.
 
-This release is signed with a persistent local development certificate. It is
-not signed with an Apple Developer ID and is not notarized. macOS Gatekeeper
+""" + signature_description + """
+It is not signed with an Apple Developer ID and is not notarized. macOS Gatekeeper
 may require approval in System Settings > Privacy & Security > Open Anyway.
 The archive contains no private signing key, certificate export, or keychain.
 
