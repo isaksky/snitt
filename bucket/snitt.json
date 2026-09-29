@@ -1,12 +1,12 @@
 {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Capture, annotate, combine, and record screen regions",
     "homepage": "https://github.com/isaksky/snitt",
-    "license": "Unknown",
+    "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/isaksky/snitt/releases/download/v0.1.0/snitt_0.1.0_windows_amd64.zip",
-            "hash": "6143234245cf9b50c377a1c033adbefaf2908bd960c2ca0e3aa6b09e1fb4aed3"
+            "url": "https://github.com/isaksky/snitt/releases/download/v0.2.0/snitt_0.2.0_windows_amd64.zip",
+            "hash": "1fde31573d045e6edcc8ba89df71cb2589a41f02f56ed78c618cfaeb7e83eaba"
         }
     },
     "depends": "main/ffmpeg",
@@ -29,8 +29,6 @@
     },
     "notes": [
         "Snitt starts at login. Press Ctrl+Print Screen, then drag a region. Press V in the picker to record video.",
-        "Before updating: finish the current session, then run Install-Scoop.ps1 again.",
-        "Private GitHub release; install and update with Install-Scoop.ps1 using your own gh authentication."
-    ],
-    "##": "Private GitHub release; install and update with Install-Scoop.ps1 using your own gh authentication."
+        "Before updating: finish the current session, run snitt --quit, then scoop update snitt."
+    ]
 }
