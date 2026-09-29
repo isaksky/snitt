@@ -145,8 +145,27 @@ static QByteArray readBytes(const QString &path) {
 }
 
 static bool atomicWrite(const QString &path, const QByteArray &bytes) {
-    QSaveFile file(path);
-    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
+    QElapsedTimer timer;
+    timer.start();
+    QString error;
+    do {
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+            qInfo().noquote() << "Settings fixture write failed:" << file.errorString();
+            return false;
+        }
+        if (file.commit()) return true;
+        error = file.errorString();
+#ifdef Q_OS_WIN
+        // Windows may briefly retain a handle after a watched file is replaced.
+        // Retry only staging the fixture; every settings assertion still runs.
+        QTest::qWait(20);
+#else
+        break;
+#endif
+    } while (timer.elapsed() < 1000);
+    qInfo().noquote() << "Settings fixture replacement failed:" << error;
+    return false;
 }
 
 void EditorTests::cutsJoinExactPixels() {

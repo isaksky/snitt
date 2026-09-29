@@ -138,6 +138,8 @@ choice, not prerequisites for opening the source or releasing a Windows ZIP.
   the private media runtimes and packaging. The Windows SDK is checked against
   Qt 6.11.2; macOS downloads the pinned official 6.11.2 SDK. Both jobs record
   their toolchain inventory and retain diagnostics for 14 days.
+  Windows release runs also retain `windows-test-probes`, containing the matching
+  editor test executable and Qt6Test DLL for the local package smoke script.
 - `release.yml` runs for `v*` tags or a manual **Draft release** run naming an
   existing tag. It requires a stable `vX.Y.Z` tag whose commit is on the default
   branch's history, builds that exact commit, verifies both archives, generates

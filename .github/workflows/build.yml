@@ -79,6 +79,9 @@ jobs:
         run: |
           ./bin/package-windows.ps1 -QtBin $env:SNITT_QT_BIN -Version $env:RELEASE_VERSION
           Copy-Item build/ci/windows-build-info.txt build/release/
+          New-Item -ItemType Directory -Force build/local-test-probes/windows | Out-Null
+          Copy-Item build/windows-app/tests/editor_tests.exe build/local-test-probes/windows/
+          Copy-Item "$env:SNITT_QT_BIN/Qt6Test.dll" build/local-test-probes/windows/
       - name: Upload release package
         if: inputs.package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -87,6 +90,14 @@ jobs:
           path: build/release/*
           if-no-files-found: error
           compression-level: 0
+          retention-days: 14
+      - name: Upload probes for local desktop checks
+        if: inputs.package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-probes
+          path: build/local-test-probes/windows/*
+          if-no-files-found: error
           retention-days: 14
       - name: Upload diagnostics
         if: always()
