@@ -1,26 +1,26 @@
 $ErrorActionPreference = 'Stop'
 $source = $PSScriptRoot
-$destination = Join-Path $env:LOCALAPPDATA 'Programs\xshot'
+$destination = Join-Path $env:LOCALAPPDATA 'Programs\snitt'
 if ([IO.Path]::GetFullPath($source).TrimEnd('\') -eq [IO.Path]::GetFullPath($destination).TrimEnd('\')) {
     throw 'Run Install.cmd from the extracted download, not the installed directory.'
 }
-$exe = Join-Path $destination 'xshot.exe'
+$exe = Join-Path $destination 'snitt.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$scoop = (Get-ItemProperty $runKey -Name 'xshot-Scoop' -ErrorAction SilentlyContinue).'xshot-Scoop'
-if ($scoop) { throw 'xshot is installed with Scoop. Use scoop update xshot, or scoop uninstall xshot before using Install.cmd.' }
+$scoop = (Get-ItemProperty $runKey -Name 'snitt-Scoop' -ErrorAction SilentlyContinue).'snitt-Scoop'
+if ($scoop) { throw 'Snitt is installed with Scoop. Use scoop update snitt, or scoop uninstall snitt before using Install.cmd.' }
 $sessionId = [Diagnostics.Process]::GetCurrentProcess().SessionId
-$other = @(Get-Process xshot -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId -and $_.Path -ne $exe })
-if ($other.Count) { throw 'Another installation of xshot is running. Quit it before running Install.cmd.' }
-$running = @(Get-Process xshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
+$other = @(Get-Process snitt -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId -and $_.Path -ne $exe })
+if ($other.Count) { throw 'Another installation of Snitt is running. Quit it before running Install.cmd.' }
+$running = @(Get-Process snitt -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 if ($running.Count) {
     $quit = Start-Process $exe -ArgumentList '--quit' -PassThru
-    if (!$quit.WaitForExit(5000)) { throw 'Quit xshot from its tray menu, then install again.' }
+    if (!$quit.WaitForExit(5000)) { throw 'Quit Snitt from its tray menu, then install again.' }
     for ($i = 0; $i -lt 30; $i++) {
-        $running = @(Get-Process xshot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
+        $running = @(Get-Process snitt -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
         if (!$running.Count) { break }
         Start-Sleep -Milliseconds 100
     }
-    if ($running.Count) { throw 'Quit xshot from its tray menu, then install again.' }
+    if ($running.Count) { throw 'Quit Snitt from its tray menu, then install again.' }
 }
 $stage = "$destination-install-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force $stage | Out-Null
@@ -30,13 +30,13 @@ if (Test-Path $backup) { throw "Previous installation backup still exists: $back
 if (Test-Path $destination) { Move-Item $destination $backup }
 Move-Item $stage $destination
 New-Item -Path $runKey -Force | Out-Null
-Set-ItemProperty -Path $runKey -Name 'xshot' -Value ('"' + $exe + '" --background')
+Set-ItemProperty -Path $runKey -Name 'snitt' -Value ('"' + $exe + '" --background')
 $shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'xshot.lnk'))
+$link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Snitt.lnk'))
 $link.TargetPath = $exe
 $link.WorkingDirectory = $destination
-$link.Description = 'Capture a region with xshot'
+$link.Description = 'Capture a region with Snitt'
 $link.Save()
 if (Test-Path $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }
 Start-Process $exe -ArgumentList '--background'
-Write-Output 'xshot is installed and starts at login. Press Ctrl+Print Screen to capture.'
+Write-Output 'Snitt is installed and starts at login. Press Ctrl+Print Screen to capture.'

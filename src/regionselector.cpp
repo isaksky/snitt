@@ -79,7 +79,7 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
       m_image(std::move(image)), m_settings(settings) {
     setObjectName("regionSelector");
-    setWindowTitle("xshot — Select a region");
+    setWindowTitle("Snitt — Select a region");
     // paintEvent covers the entire window with the frozen desktop.
     setAttribute(Qt::WA_OpaquePaintEvent);
     m_image.setDevicePixelRatio(1);
@@ -345,7 +345,7 @@ void RegionSelector::setNotice(const QString &notice) { m_notice = notice; updat
 
 void RegionSelector::setVideo(bool video) {
     m_video = video;
-    setWindowTitle(video ? "xshot — Select a recording region" : "xshot — Select a region");
+    setWindowTitle(video ? "Snitt — Select a recording region" : "Snitt — Select a region");
     updateToolbar();
     update();
 }

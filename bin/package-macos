@@ -209,7 +209,7 @@ def download_source(package, cache):
     if not archive.exists() or digest(archive) != expected:
         print(f"Fetching license source for {package.parent.name} {package.name}", flush=True)
         partial = archive.with_suffix(".download")
-        request = urllib.request.Request(source.group(1), headers={"User-Agent": "xshot-release-packager"})
+        request = urllib.request.Request(source.group(1), headers={"User-Agent": "snitt-release-packager"})
         with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as handle:
             shutil.copyfileobj(response, handle)
         if digest(partial) != expected:
@@ -229,7 +229,7 @@ def official_source(module, version, cache):
     if not archive.is_file() or digest(archive) != expected:
         print(f"Fetching Qt source notices for {module} {version}", flush=True)
         partial = cache / (name + ".download")
-        request = urllib.request.Request(url, headers={"User-Agent": "xshot-release-packager"})
+        request = urllib.request.Request(url, headers={"User-Agent": "snitt-release-packager"})
         with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as output:
             shutil.copyfileobj(response, output)
         if digest(partial) != expected:
@@ -349,7 +349,7 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
                       "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
                       "source_sha256": ffmpeg_sha256,
                       "license": "LGPL-2.1-or-later"})
-    private_sources = payload / "xshot.app/Contents/Resources/Sources"
+    private_sources = payload / "Snitt.app/Contents/Resources/Sources"
     private_notices = licenses / "private-playback"
     private_notices.mkdir(parents=True)
     copy_file(PRIVATE_RUNTIME, private_notices / "manifest.json")
@@ -371,19 +371,19 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
                       "binaries": ["Contents/PlugIns/multimedia/libffmpegmediaplugin.dylib"],
                       "source_url": qt_info["url"],
                       "source_sha256": qt_info["sha256"],
-                      "sdk_patch": "xshot.app/Contents/Resources/Sources/qtmultimedia-6.11-sdk26.patch"})
+                      "sdk_patch": "Snitt.app/Contents/Resources/Sources/qtmultimedia-6.11-sdk26.patch"})
     (payload / "DEPENDENCIES.json").write_text(json.dumps({"packages": inventory, "linkage": dependencies}, indent=2) + "\n")
-    (payload / "THIRD-PARTY-NOTICES.txt").write_text("""xshot includes dynamically linked Qt frameworks and may include Homebrew runtime libraries.
+    (payload / "THIRD-PARTY-NOTICES.txt").write_text("""Snitt includes dynamically linked Qt frameworks and may include Homebrew runtime libraries.
 Their exact versions, bundled binaries, and link dependencies are listed in
 DEPENDENCIES.json. License texts, copyright notices, Qt component attributions,
 Qt SBOMs, and source package information are under licenses/.
 The Qt source material includes notices for its complete modules, including
 components that may not be part of this application. These notices apply to
-the named third-party components, not to xshot itself.
+the named third-party components, not to Snitt itself.
 
 The original frameworks and libraries remain separate and may be replaced by
 compatible builds. After replacing a signed library, sign the modified bundle
-locally (for example codesign --force --deep --sign - xshot.app). The original
+locally (for example codesign --force --deep --sign - Snitt.app). The original
 publisher's private signing key is neither included nor needed to do this.
 Modified signing identities may require renewing macOS screen-capture permission.
 
@@ -395,7 +395,7 @@ Homebrew source recipes and patches, when present: https://github.com/Homebrew/h
 DEPENDENCIES.json identifies exact upstream source URLs and checksums.
 Qt's installed SBOMs identify additional component source locations.
 
-Lucide SVG icons are bundled in xshot under the Lucide/Feather terms in
+Lucide SVG icons are bundled in Snitt under the Lucide/Feather terms in
 licenses/lucide/LICENSE. Source: https://github.com/lucide-icons/lucide
 
 The bundled media helpers are independent LGPL FFmpeg executables.
@@ -406,7 +406,7 @@ FFmpeg package is required on macOS. Source: https://ffmpeg.org/
 The recording preview uses a private Qt Multimedia FFmpeg plugin and five
 separate LGPL FFmpeg 7.1.3 libraries for software decoding. Their complete
 corresponding source archives, build flags, SDK patch, and manifest are in
-xshot.app/Contents/Resources/Sources/ and licenses/private-playback/.
+Snitt.app/Contents/Resources/Sources/ and licenses/private-playback/.
 No user-installed FFmpeg package is required for preview playback.
 
 The recording trim filmstrip and time formatter are adapted from omacut under
@@ -422,7 +422,7 @@ thumbnail decoding, not screen capture or trimmed-video export.
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bundle", type=Path, default=ROOT / "build/package/macos/xshot.app")
+    parser.add_argument("--bundle", type=Path, default=ROOT / "build/package/macos/Snitt.app")
     parser.add_argument("--version", default="0.1.0")
     parser.add_argument("--release-directory", type=Path, default=ROOT / "build/release")
     parser.add_argument("--skip-checksum-manifest", action="store_true",
@@ -439,7 +439,7 @@ def main():
         raise RuntimeError("Bundle version does not match the requested release version")
     binaries, dependencies = verify_bundle(bundle)
     private_manifest = private_runtime_manifest(bundle)
-    qmake_file = ROOT / "build/.xshot-qmake"
+    qmake_file = ROOT / "build/.snitt-qmake"
     if not qmake_file.is_file():
         raise RuntimeError("Selected Qt SDK is unknown; run bin/build first")
     qmake = Path(qmake_file.read_text().strip())
@@ -450,7 +450,9 @@ def main():
     cellar = Path(run("brew", "--cellar")).resolve()
     official_sdk = None
     official_files = None
-    if sdk.is_relative_to(cellar):
+    # Homebrew qmake can report the shared /opt/homebrew prefix. Its resolved
+    # executable still identifies the keg that supplied the selected SDK.
+    if sdk.is_relative_to(cellar) or qmake.resolve().is_relative_to(cellar):
         packages = source_packages(bundle, binaries, cellar)
     else:
         official_sdk = sdk
@@ -460,21 +462,22 @@ def main():
     release.mkdir(parents=True, exist_ok=True)
     cache = ROOT / "build/package/license-sources"
     cache.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="xshot-macos-release-", dir=release) as temporary:
+    with tempfile.TemporaryDirectory(prefix="snitt-macos-release-", dir=release) as temporary:
         payload = Path(temporary) / "payload"
         payload.mkdir()
-        subprocess.run(["ditto", str(bundle), str(payload / "xshot.app")], check=True)
+        subprocess.run(["ditto", str(bundle), str(payload / "Snitt.app")], check=True)
         copy_file(ROOT / "README.md", payload / "README.md")
+        copy_file(ROOT / "LICENSE", payload / "LICENSE")
         (payload / "VERSION").write_text(args.version + "\n")
-        (payload / "MACOS-INSTALL.txt").write_text("""xshot for macOS 15 or later, Apple silicon (arm64)
+        (payload / "MACOS-INSTALL.txt").write_text("""Snitt for macOS 15 or later, Apple silicon (arm64)
 
-Move xshot.app into your Applications folder, then open it. xshot remains in the
+Move Snitt.app into your Applications folder, then open it. Snitt remains in the
 menu bar. Use Ctrl+Print Screen (F13 on Mac) to select a region.
-Grant Screen & System Audio Recording permission to xshot when macOS requests it.
-For login startup, add xshot in System Settings > General > Login Items.
+Grant Screen & System Audio Recording permission to Snitt when macOS requests it.
+For login startup, add Snitt in System Settings > General > Login Items.
 Video recording uses macOS ScreenCaptureKit. Thumbnail and preview decoders
 are bundled; no separate FFmpeg installation is needed.
-xshot's windows are automatically excluded from the recorded video.
+Snitt's windows are automatically excluded from the recorded video.
 
 This release is signed with a persistent local development certificate. It is
 not signed with an Apple Developer ID and is not notarized. macOS Gatekeeper
@@ -487,20 +490,20 @@ See README.md for tools and shortcuts and THIRD-PARTY-NOTICES.txt for licenses.
 """)
         add_notices(payload, packages, cache, dependencies, private_manifest,
                     official_sdk, official_files)
-        verify_bundle(payload / "xshot.app")
+        verify_bundle(payload / "Snitt.app")
         copy_file(ROOT / "README.md", payload / "README.md")
-        archive_name = f"xshot_{args.version}_macos_arm64.zip"
+        archive_name = f"snitt_{args.version}_macos_arm64.zip"
         staged_archive = Path(temporary) / archive_name
         subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", str(payload), str(staged_archive)], check=True)
         # Verify the actual archived app, including framework symlinks and code signature.
         extracted = Path(temporary) / "verified"
         subprocess.run(["ditto", "-x", "-k", str(staged_archive), str(extracted)], check=True)
-        verify_bundle(extracted / "xshot.app")
+        verify_bundle(extracted / "Snitt.app")
         archive = release / archive_name
         staged_archive.replace(archive)
     sha256 = digest(archive)
     if not args.skip_checksum_manifest:
-        manifest = release / f"xshot_{args.version}_checksums.txt"
+        manifest = release / f"snitt_{args.version}_checksums.txt"
         existing = manifest.read_text().splitlines() if manifest.exists() else []
         # Preserve Windows/other platform entries, replacing only this archive's line.
         lines = [line for line in existing if line.strip() and line.split()[-1].lstrip("*") != archive_name]

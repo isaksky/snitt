@@ -3,7 +3,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 [ "$(uname -s)" = Darwin ] || { echo 'Use the Windows package Install.cmd on Windows.' >&2; exit 1; }
 "$ROOT/bin/build"
-QMAKE="$(cat "$ROOT/build/.xshot-qmake")"
+QMAKE="$(cat "$ROOT/build/.snitt-qmake")"
 QT_BINS="$("$QMAKE" -query QT_INSTALL_BINS)"
 QT_LIBS="$("$QMAKE" -query QT_INSTALL_LIBS)"
 DEPLOY="$QT_BINS/macdeployqt"
@@ -11,8 +11,8 @@ DEPLOY="$QT_BINS/macdeployqt"
 PACKAGE="$ROOT/build/package/macos"
 mkdir -p "$PACKAGE"
 # Only the generated staging bundle is replaced here.
-rm -rf "$PACKAGE/xshot.app"
-ditto "$ROOT/build/xshot.app" "$PACKAGE/xshot.app"
+rm -rf "$PACKAGE/Snitt.app"
+ditto "$ROOT/build/Snitt.app" "$PACKAGE/Snitt.app"
 # Homebrew places Qt Quick Timeline in a separate keg. macdeployqt searches
 # one explicit libpath, so expose those frameworks in our existing build rpath.
 mkdir -p "$ROOT/build/lib"
@@ -27,31 +27,31 @@ for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
     fi
     ln -sfn "$source" "$ROOT/build/lib/$framework.framework"
 done
-"$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
+"$DEPLOY" "$PACKAGE/Snitt.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
 # The Quick Timeline blend-trees plugin can be found only after its parent
 # Timeline framework has been copied on the first pass.
-if [ ! -f "$PACKAGE/xshot.app/Contents/Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees" ]; then
-    "$DEPLOY" "$PACKAGE/xshot.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
+if [ ! -f "$PACKAGE/Snitt.app/Contents/Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees" ]; then
+    "$DEPLOY" "$PACKAGE/Snitt.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
 fi
 # Official Qt SDKs can deploy every optional SQL driver, including drivers
-# linked to database clients that are absent on the target Mac. xshot uses no
+# linked to database clients that are absent on the target Mac. Snitt uses no
 # Qt SQL API; omit that unused plugin family from the standalone bundle.
-rm -rf "$PACKAGE/xshot.app/Contents/PlugIns/sqldrivers"
+rm -rf "$PACKAGE/Snitt.app/Contents/PlugIns/sqldrivers"
 for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
-    [ -f "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework/Versions/A/$framework" ] || {
+    [ -f "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework/Versions/A/$framework" ] || {
         echo "Qt deployment did not bundle $framework" >&2
         exit 1
     }
     # Depending on which pass copied BlendTrees, macdeployqt can retain its
     # upstream signature after changing the framework resource directory.
     # Repair only that invalid nested signature before signing the app.
-    if ! codesign --verify "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework" >/dev/null 2>&1; then
-        codesign --force --sign - "$PACKAGE/xshot.app/Contents/Frameworks/$framework.framework"
+    if ! codesign --verify "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework" >/dev/null 2>&1; then
+        codesign --force --sign - "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework"
     fi
 done
 # macdeployqt deploys the selected SDK's Darwin multimedia plugin. Add the
 # private software playback backend after deployment so its FFmpeg libraries
 # and pinned source material remain exactly as built and signed.
-ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$PACKAGE/xshot.app/Contents"
-"$ROOT/bin/sign-macos" "$PACKAGE/xshot.app"
-echo "Staged $PACKAGE/xshot.app"
+ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$PACKAGE/Snitt.app/Contents"
+"$ROOT/bin/sign-macos" "$PACKAGE/Snitt.app"
+echo "Staged $PACKAGE/Snitt.app"

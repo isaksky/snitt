@@ -1,16 +1,50 @@
-# xshot
+# Snitt
 
 A small screenshot and screen-recording app for macOS and Windows. Select a region,
 edit or combine screenshots, or record a video. Built with C++17, Qt 6 Quick/QML,
 and Material controls.
 
+The product is **Snitt**; the executable, repository, and Scoop package are named
+`snitt`. macOS ships `Snitt.app`, containing the `snitt` executable.
+
+Snitt's original code is available under the [MIT license](LICENSE).
+Third-party code and bundled dependencies retain their own licenses, including
+the notices in `src/OMACUT-LICENSE` and `src/icons/LICENSE`. Windows packaging
+builds an [LGPL-only FFmpeg playback runtime](docs/windows-multimedia-runtime.md)
+and includes its source and build instructions. See the
+[public release preparation plan](docs/releasing.md) for GitHub Actions and code
+signing setup.
+
+## Upgrading from xshot
+
+Finish any capture or recording, then quit and uninstall the old xshot app before
+installing Snitt so its login entry and global shortcut do not remain active.
+Use the old checkout's `bin/uninstall` on macOS, `scoop uninstall xshot` for Scoop,
+or `%LOCALAPPDATA%\Programs\xshot\Uninstall.cmd` for the standalone Windows install.
+Snitt's uninstaller only removes Snitt.
+
+Snitt uses a new settings directory and new default media folders. Existing
+screenshots, recordings, and xshot settings stay in their original locations.
+To retain custom settings, quit both apps and copy the old `settings.ini` into
+Snitt's configuration directory, backing up any Snitt settings first:
+
+| Platform | Old settings directory | Snitt settings directory |
+| --- | --- | --- |
+| macOS | `~/Library/Preferences/xshot/xshot` | `~/Library/Preferences/snitt/snitt` |
+| Windows | `%LOCALAPPDATA%\xshot\xshot` | `%LOCALAPPDATA%\snitt\snitt` |
+
+Copied `Save/picturesRoot` and `Save/videosRoot` values keep their existing paths;
+clear those values to use Snitt's new defaults. macOS requires a new screen
+recording permission for Snitt. Build environment variables now use the `SNITT_`
+prefix, such as `SNITT_QMAKE`, `SNITT_QT_BIN`, and `SNITT_SIGN_IDENTITY`.
+
 ## Install and keep it ready
 
-xshot lives in the menu bar on macOS or the system tray on Windows. It starts at
+Snitt lives in the menu bar on macOS or the system tray on Windows. It starts at
 login and stays running after you finish editing. **Ctrl+Print Screen** starts
 region selection from any app. **C** copies the screenshot and finishes the session
 when you are not typing an annotation. Finalizing a video reveals it in Finder or Explorer.
-Choose **Quit xshot** from its icon menu to stop it until the next launch/login.
+Choose **Quit Snitt** from its icon menu to stop it until the next launch/login.
 Only one instance runs per user desktop session; launching it again requests a
 capture from the existing instance.
 
@@ -21,44 +55,44 @@ From this checkout:
 ```sh
 brew install cmake pkgconf python  # build tools; Xcode command-line tools are also required
 ./bin/setup-macos-qt             # private, pinned Qt 6.11.2 SDK in build/tools
-XSHOT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6" ./bin/install
+SNITT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6" ./bin/install
 ```
 
 The setup command downloads the official Qt 6.11.2 SDK into this checkout; it
-does not replace a Homebrew Qt installation. Use the same `XSHOT_QMAKE` setting
+does not replace a Homebrew Qt installation. Use the same `SNITT_QMAKE` setting
 for `./bin/build` or `./bin/stage-macos` when testing without installing.
 The build checks that the selected Qt frameworks and the private playback plugin
 match before compiling. Qt 6.11.1 is also supported when an existing SDK is
 selected explicitly; a newer unpinned Qt release is rejected with setup guidance.
 
-The install command builds and bundles Qt into `~/Applications/xshot.app`, installs a per-user
-LaunchAgent at `~/Library/LaunchAgents/local.xshot.plist`, and starts xshot in the
+The install command builds and bundles Qt into `~/Applications/Snitt.app`, installs a per-user
+LaunchAgent at `~/Library/LaunchAgents/local.snitt.plist`, and starts Snitt in the
 background. Qt is bundled; macOS 15+ recording uses native ScreenCaptureKit.
 The first build also fetches and compiles small LGPL FFmpeg helpers for thumbnails, stream-copy trimming,
 and probing, plus a private Qt Multimedia playback plugin with LGPL FFmpeg libraries. This
 can take several minutes; later builds reuse the compiled sources. Both are
-bundled with the app, so no separate FFmpeg install is needed to use xshot.
+bundled with the app, so no separate FFmpeg install is needed to use Snitt.
 Re-run the same command to update; use `./bin/uninstall` to remove the app and login
 entry.
 
 On a PC keyboard, Print Screen usually arrives as **F13** on macOS, so the binding
 is **Control+F13**. This uses the actual Control key, not Command.
 macOS may request Screen & System
-Audio Recording permission for xshot or the terminal launching a development build.
-If capture opens an error dialog, enable the installed `~/Applications/xshot.app`
+Audio Recording permission for Snitt or the terminal launching a development build.
+If capture opens an error dialog, enable the installed `~/Applications/Snitt.app`
 in System Settings → Privacy & Security → Screen & System Audio Recording, then
-quit and reopen xshot. The installer creates a persistent local signing identity
-in `~/Library/Application Support/xshot/signing`; macOS may authenticate its first
+quit and reopen Snitt. The installer creates a persistent local signing identity
+in `~/Library/Application Support/snitt/signing`; macOS may authenticate its first
 setup. Keep that directory across rebuilds so updates retain the same identity.
 Trust is limited to code signing by Apple's `codesign` tool. This is a local
 development certificate, not an Apple Developer ID or notarized release. Set
-`XSHOT_SIGN_IDENTITY` to use your own signing identity instead. Migrating from
+`SNITT_SIGN_IDENTITY` to use your own signing identity instead. Migrating from
 an older ad-hoc signed build requires renewing screen-recording permission once.
 
 ### Windows 10/11 x64
 
 Video recording requires Windows 10 version 2004 (build 19041) or later. On
-older Windows 10 versions, xshot stops before recording because the startup
+older Windows 10 versions, Snitt stops before recording because the startup
 indicator and controls cannot be excluded from the captured screen. Screenshot
 capture and editing still work.
 
@@ -67,23 +101,23 @@ with a GitHub account that can access this repository, then run:
 
 ```powershell
 gh auth login
-gh release download --repo isaksky/xshot --pattern Install-Scoop.ps1
-& .\Install-Scoop.ps1 -Repository isaksky/xshot
+gh release download --repo isaksky/snitt --pattern Install-Scoop.ps1
+& .\Install-Scoop.ps1 -Repository isaksky/snitt
 ```
 
-This installs xshot through Scoop, including FFmpeg, bundled Qt, and a login entry.
+This installs Snitt through Scoop, including FFmpeg, bundled Qt, and a login entry.
 The installer checks the release's SHA-256 hashes and uses GitHub CLI's existing
 authentication without copying a token. Run `Install-Scoop.ps1` again to update;
-ordinary `scoop update xshot` cannot download private release assets. Uninstall
-with `scoop uninstall xshot`. If switching from the standalone installer, run its
+ordinary `scoop update snitt` cannot download private release assets. Uninstall
+with `scoop uninstall snitt`. If switching from the standalone installer, run its
 **Uninstall.cmd** first.
 
 For a standalone installation, download the ZIP from the GitHub release instead.
-Extract `xshot_0.1.0_windows_amd64.zip` and double-click **Install.cmd**. It installs the
-app and bundled runtime into `%LOCALAPPDATA%\Programs\xshot`, adds a Start menu
+Extract `snitt_0.1.0_windows_amd64.zip` and double-click **Install.cmd**. It installs the
+app and bundled runtime into `%LOCALAPPDATA%\Programs\snitt`, adds a Start menu
 shortcut and a per-user login entry, and starts the tray app. No administrator
 rights or Qt installation are needed. Run **Uninstall.cmd** in the installed
-folder to remove it. To run without installing, launch `xshot.exe --background`
+folder to remove it. To run without installing, launch `snitt.exe --background`
 from the extracted folder.
 
 Install FFmpeg for video recording:
@@ -92,11 +126,11 @@ Install FFmpeg for video recording:
 scoop install ffmpeg
 ```
 
-Before updating, finish the current session and quit xshot from its tray menu,
-or run `xshot --quit`.
+Before updating, finish the current session and quit Snitt from its tray menu,
+or run `snitt --quit`.
 
-**Ctrl+Print Screen** is registered with Windows. If another app owns it, xshot
-reports the conflict; disable that binding in the other app, then restart xshot.
+**Ctrl+Print Screen** is registered with Windows. If another app owns it, Snitt
+reports the conflict; disable that binding in the other app, then restart Snitt.
 The tray's **New screenshot** action is always available. The Windows region
 picker supports selecting within any connected monitor and accounts for display
 scaling. A region currently stays within one monitor.
@@ -160,12 +194,12 @@ Enter adds a line.
 
 - From Arrange or Annotate, **Copy and close (C)** copies the full-resolution
   combined image to the clipboard. **Save and close (S)** writes a unique PNG to
-  `Pictures/xshot/<year>/<month>` and reveals it in Finder or Explorer; month
+  `Pictures/snitt/<year>/<month>` and reveals it in Finder or Explorer; month
   folders use unpadded numbers, and saving does not change the clipboard.
 - The editor closes and the session's editing history and original regions are cleared.
 - Preview numbers and selection outlines are not included in the exported image.
 - If saving fails, the editor stays open with the image and edits intact.
-- xshot stays running in the menu bar or system tray, ready for the next capture.
+- Snitt stays running in the menu bar or system tray, ready for the next capture.
 
 ## Recording
 
@@ -178,7 +212,7 @@ on macOS) to save the clip and open its review. Choose **Cancel** to discard it.
 A red outline sits just outside the selected region while recording. The outline
 and recording controls are excluded from the saved video. The clipboard keeps
 its previous contents.
-On macOS, ScreenCaptureKit excludes all xshot windows automatically, including
+On macOS, ScreenCaptureKit excludes all Snitt windows automatically, including
 the startup indicator and controls; they can remain over the selected region.
 
 After Stop, preview the video and drag the filmstrip's blue handles to choose the
@@ -194,13 +228,13 @@ recording. Canceling an export or an export error also keeps the original. The
 final file is selected in Finder or Explorer after Keep original or a successful
 trim; previewing and trimming never change the clipboard.
 
-Recordings are silent MP4 files saved under `~/Movies/xshot/<year>/<month>` on
-macOS or your Windows **Videos\xshot\<year>\<month>** folder. The year and
+Recordings are silent MP4 files saved under `~/Movies/snitt/<year>/<month>` on
+macOS or your Windows **Videos\snitt\<year>\<month>** folder. The year and
 unpadded month come from the local time when saving or recording starts. Both
 platforms capture the selected region and pointer at 30 fps and encode H.264. macOS 15+ uses native ScreenCaptureKit;
 Windows runs FFmpeg as a separate process. Recordings are kept after the session;
-xshot does not upload them or delete completed clips. On Windows, install FFmpeg
-with `scoop install ffmpeg`; xshot checks PATH and the usual Scoop locations,
+Snitt does not upload them or delete completed clips. On Windows, install FFmpeg
+with `scoop install ffmpeg`; Snitt checks PATH and the usual Scoop locations,
 including when started at login.
 
 ## Editing
@@ -216,7 +250,7 @@ including when started at login.
 | Green / good | G | Applies to new rectangles, arrows, and text. |
 | Red / bad | B | Applies to new rectangles, arrows, and text. |
 | Copy and close | C | Copies the full-resolution image, hides the editor, and clears its editing history. Inactive while typing an annotation. |
-| Save and close | S | Saves a PNG in Pictures/xshot/<year>/<month>, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
+| Save and close | S | Saves a PNG in Pictures/snitt/<year>/<month>, reveals it in the file manager, and closes the editor. Inactive while typing an annotation. |
 | Undo | Command/Ctrl+Z | Reverts the last edit. |
 | Redo | Shift+Command+Z on macOS; Ctrl+Y on Windows | Reapplies the last undone edit. |
 | New capture | Command/Ctrl+N | Starts a new region selection. |
@@ -231,7 +265,7 @@ Pasting text into an annotation still works.
 The footer shows preview zoom and the current image's natural pixel dimensions.
 Zoom changes only the editor view. Copy and Save keep those dimensions for
 unannotated images, including cuts, arranged regions, Pixelate, and erase. When
-visible shapes or text remain on a small image, xshot renders them fresh at a
+visible shapes or text remain on a small image, Snitt renders them fresh at a
 larger output size: it raises the
 shorter edge toward 720 pixels, never more than 3×, 16,384 pixels on either edge,
 or 32 million output pixels. Images already at least 720 pixels on the shorter
@@ -273,7 +307,7 @@ you copy and finish. Smart erase samples the starting pixel, including its alpha
 and is intended for extending a matching background.
 
 Screenshots use macOS's built-in screenshot tool or Qt screen capture on Windows,
-followed by xshot's frozen selection overlay. FFmpeg is a Windows video runtime
+followed by Snitt's frozen selection overlay. FFmpeg is a Windows video runtime
 dependency; macOS recording uses ScreenCaptureKit.
 Nothing is uploaded.
 
@@ -298,10 +332,14 @@ Windows, from PowerShell with MSYS2's UCRT64 GCC/Qt toolchain:
 ```
 
 The scripts find Scoop's MSYS2 installation automatically. Alternatively set
-`XSHOT_QT_BIN` or pass `-QtBin` with a matching MinGW Qt 6 bin directory on PATH
+`SNITT_QT_BIN` or pass `-QtBin` with a matching MinGW Qt 6 bin directory on PATH
 alongside `mingw32-make`. The package script uses `windeployqt` and follows PE
-imports to include MSYS2's non-Qt runtime libraries. It produces
-`build/release/xshot_0.1.0_windows_amd64.zip` and its SHA-256 checksum file.
+imports to include MSYS2's non-Qt runtime libraries. Release packaging currently
+requires UCRT64 Qt 6.11.2 and builds pinned LGPL-only FFmpeg 9.0.2 DLLs for playback;
+it excludes the SDK's GPL-configured FFmpeg DLLs. The first runtime build takes
+several minutes; subsequent builds reuse it. The package includes the exact
+FFmpeg source and build instructions. It produces
+`build/release/snitt_0.1.0_windows_amd64.zip` and its SHA-256 checksum file.
 Pass `-Version` to package a different release version.
 
 MSYS2 UCRT64 dependencies:
@@ -309,7 +347,8 @@ MSYS2 UCRT64 dependencies:
 ```sh
 pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
   mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-declarative \
-  mingw-w64-ucrt-x86_64-qt6-multimedia
+  mingw-w64-ucrt-x86_64-qt6-multimedia mingw-w64-ucrt-x86_64-python \
+  mingw-w64-ucrt-x86_64-nasm make diffutils
 ```
 
 Tests cover exact pixel joins, undo/redo, annotations, privacy-mask independence,

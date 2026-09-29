@@ -2,7 +2,7 @@
 """Build a private, relocatable Qt FFmpeg playback plugin for the Mac bundle.
 
 This never installs into Homebrew or the user's Applications directory. The
-result is a Contents subtree that can be copied into a staged xshot.app before
+result is a Contents subtree that can be copied into a staged Snitt.app before
 the bundle is signed.
 """
 
@@ -47,7 +47,7 @@ FFMPEG_FLAGS = [
     "--disable-debug", "--disable-autodetect", "--disable-network",
     "--disable-gpl", "--disable-nonfree", "--disable-hwaccels",
     # Qt's Darwin plugin refers to FFmpeg's VideoToolbox format mapping even
-    # when xshot disables hardware decoding at runtime.
+    # when Snitt disables hardware decoding at runtime.
     "--enable-videotoolbox", "--disable-audiotoolbox", "--disable-everything",
     "--enable-avcodec", "--enable-avformat", "--enable-avutil",
     "--enable-swresample", "--enable-swscale", "--enable-protocol=file",
@@ -97,11 +97,11 @@ def source_tree(base, name):
             raise RuntimeError(f"Source checksum mismatch: {url}")
         pending.replace(archive)
     tree = base / "sources" / directory
-    if not (tree / ".xshot-extracted").exists():
+    if not (tree / ".snitt-extracted").exists():
         if tree.exists():
             shutil.rmtree(tree)
         run(["tar", "-xf", archive, "-C", archive.parent])
-        (tree / ".xshot-extracted").touch()
+        (tree / ".snitt-extracted").touch()
     return archive, tree
 
 
@@ -201,12 +201,12 @@ def stage_runtime(base, qt_build, ffmpeg_prefix, archives, qt_version):
 
 def sdk_version(qmake):
     if not qmake or not Path(qmake).is_file():
-        raise RuntimeError("Qt qmake6 was not found; set XSHOT_QMAKE to a supported SDK's bin/qmake6")
+        raise RuntimeError("Qt qmake6 was not found; set SNITT_QMAKE to a supported SDK's bin/qmake6")
     version = capture(qmake, "-query", "QT_VERSION")
     if version not in SUPPORTED_QT:
         raise RuntimeError(
             f"Qt SDK {version} is unsupported; select matching Qt {', '.join(SUPPORTED_QT)} "
-            "with XSHOT_QMAKE before building")
+            "with SNITT_QMAKE before building")
     libs = Path(capture(qmake, "-query", "QT_INSTALL_LIBS"))
     for module in ("QtCore", "QtGui", "QtQuick", "QtMultimedia", "QtQuickTimeline",
                    "QtQuickTimelineBlendTrees", "QtShaderTools", "QtSvg"):
@@ -227,7 +227,7 @@ def main():
     parser.add_argument("--build-dir", type=Path,
                         default=ROOT / "build/tools/mac-multimedia-runtime")
     parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--qmake", default=os.environ.get("XSHOT_QMAKE") or shutil.which("qmake6"))
+    parser.add_argument("--qmake", default=os.environ.get("SNITT_QMAKE") or shutil.which("qmake6"))
     parser.add_argument("--check-sdk", action="store_true",
                         help="validate the selected Qt SDK before building the app or helper")
     args = parser.parse_args()
@@ -244,14 +244,14 @@ def main():
     base.mkdir(parents=True, exist_ok=True)
     ffmpeg_archive, ffmpeg_source = source_tree(base, "ffmpeg")
     qt_archive, qt_source = source_tree(base, "qtmultimedia-" + qt_version)
-    patch_stamp = qt_source / ".xshot-sdk26-patched"
+    patch_stamp = qt_source / ".snitt-sdk26-patched"
     patch_digest = sha256(PATCH)
     if not patch_stamp.exists() or patch_stamp.read_text() != patch_digest:
         # Re-extract the pinned source when our patch changes. Applying a new
         # patch over a partially patched tree can silently mix versions.
         shutil.rmtree(qt_source)
         run(["tar", "-xf", qt_archive, "-C", qt_archive.parent])
-        (qt_source / ".xshot-extracted").touch()
+        (qt_source / ".snitt-extracted").touch()
         old_build = base / f"qtmultimedia-build-{qt_version}"
         if old_build.exists():
             shutil.rmtree(old_build)
@@ -263,7 +263,7 @@ def main():
     ffmpeg_build.mkdir(exist_ok=True)
     configure = [ffmpeg_source / "configure", f"--prefix={ffmpeg_prefix}"] + FFMPEG_FLAGS
     fingerprint = "\n".join(map(str, configure))
-    flag_stamp = ffmpeg_build / ".xshot-flags"
+    flag_stamp = ffmpeg_build / ".snitt-flags"
     if not flag_stamp.exists() or flag_stamp.read_text() != fingerprint:
         run(configure, cwd=ffmpeg_build, log=base / "ffmpeg-configure.log")
         flag_stamp.write_text(fingerprint)

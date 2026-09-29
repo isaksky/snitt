@@ -1,25 +1,25 @@
 {
     "version": "0.1.0",
     "description": "Capture, annotate, combine, and record screen regions",
-    "homepage": "https://github.com/isaksky/xshot",
+    "homepage": "https://github.com/isaksky/snitt",
     "license": "Unknown",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/isaksky/xshot/releases/download/v0.1.0/xshot_0.1.0_windows_amd64.zip",
-            "hash": "da6db679df35b1e4941201e666c11fc70828d3d828e148d3b23d4a5e5fe5e385"
+            "url": "https://github.com/isaksky/snitt/releases/download/v0.1.0/snitt_0.1.0_windows_amd64.zip",
+            "hash": "6143234245cf9b50c377a1c033adbefaf2908bd960c2ca0e3aa6b09e1fb4aed3"
         }
     },
     "depends": "main/ffmpeg",
-    "bin": "xshot.exe",
+    "bin": "snitt.exe",
     "shortcuts": [
         [
-            "xshot.exe",
-            "xshot",
+            "snitt.exe",
+            "Snitt",
             "--show"
         ]
     ],
     "pre_install": [
-        "if ($global) { throw 'xshot uses a per-user desktop session. Install without --global.' }",
+        "if ($global) { throw 'Snitt uses a per-user desktop session. Install without --global.' }",
         "& \"$dir\\Scoop.ps1\" -Action Check -InstallDirectory $dir"
     ],
     "post_install": "& \"$dir\\Scoop.ps1\" -Action Install -InstallDirectory $dir",
@@ -28,7 +28,7 @@
         "script": "& \"$dir\\Scoop.ps1\" -Action Uninstall -InstallDirectory $dir"
     },
     "notes": [
-        "xshot starts at login. Press Ctrl+Print Screen, then drag a region. Press V in the picker to record video.",
+        "Snitt starts at login. Press Ctrl+Print Screen, then drag a region. Press V in the picker to record video.",
         "Before updating: finish the current session, then run Install-Scoop.ps1 again.",
         "Private GitHub release; install and update with Install-Scoop.ps1 using your own gh authentication."
     ],

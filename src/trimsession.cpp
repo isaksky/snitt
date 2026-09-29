@@ -322,7 +322,7 @@ void TrimSession::exportRange(qint64 startMs, qint64 endMs) {
     m_canceling = false;
     m_busy = true;
     m_tempOutput = QFileInfo(m_path).dir().filePath(
-        QStringLiteral(".xshot-trim-%1.mp4").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        QStringLiteral(".snitt-trim-%1.mp4").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     emit changed();
     const QString ffmpeg = mediaToolPath("ffmpeg");
     if (ffmpeg.isEmpty()) {
@@ -404,7 +404,7 @@ void TrimSession::replaceOutput() {
 bool TrimSession::replaceFile(const QString &temporary, const QString &original, QString *problem) {
 #ifdef Q_OS_WIN
     const QString backup = QFileInfo(original).dir().filePath(
-        QStringLiteral(".xshot-original-%1.mp4").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        QStringLiteral(".snitt-original-%1.mp4").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     const bool replaced = ReplaceFileW(reinterpret_cast<LPCWSTR>(original.utf16()),
                                        reinterpret_cast<LPCWSTR>(temporary.utf16()),
                                        reinterpret_cast<LPCWSTR>(backup.utf16()), 0, nullptr, nullptr) != FALSE;

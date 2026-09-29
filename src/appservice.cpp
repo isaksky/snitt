@@ -15,7 +15,7 @@
 
 QString AppService::serverName() {
     const QByteArray user = QCryptographicHash::hash(QDir::homePath().toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
-    QString name = QStringLiteral("xshot-") + QString::fromLatin1(user);
+    QString name = QStringLiteral("snitt-") + QString::fromLatin1(user);
 #ifdef Q_OS_WIN
     DWORD session = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &session);
@@ -45,7 +45,7 @@ AppService::AppService(QLocalServer *server, QObject *window, AppSettings *setti
     m_hotkeyAction = m_menu.addAction(QString());
     m_hotkeyAction->setEnabled(false);
     m_menu.addSeparator();
-    m_menu.addAction(QStringLiteral("Quit xshot"), qApp, &QCoreApplication::quit);
+    m_menu.addAction(QStringLiteral("Quit Snitt"), qApp, &QCoreApplication::quit);
     QPixmap pixmap(32, 32); pixmap.fill(Qt::transparent);
     QPainter p(&pixmap); p.setRenderHint(QPainter::Antialiasing);
 #ifdef Q_OS_MACOS
@@ -63,11 +63,11 @@ AppService::AppService(QLocalServer *server, QObject *window, AppSettings *setti
     m_tray.setIcon(icon);
     const auto refreshShortcutText = [this] {
         m_hotkeyAction->setText(m_hotkey.description());
-        m_tray.setToolTip(QStringLiteral("xshot · ") + m_hotkey.description());
+        m_tray.setToolTip(QStringLiteral("Snitt · ") + m_hotkey.description());
     };
     connect(m_settings, &AppSettings::settingsChanged, this, refreshShortcutText);
     connect(m_settings, &AppSettings::reloadFailed, this, [this](const QString &message) {
-        m_tray.showMessage(QStringLiteral("xshot settings not applied"), message, QSystemTrayIcon::Warning);
+        m_tray.showMessage(QStringLiteral("Snitt settings not applied"), message, QSystemTrayIcon::Warning);
     });
     m_settings->attachGlobalHotkey(&m_hotkey);
     refreshShortcutText();
@@ -78,13 +78,13 @@ AppService::AppService(QLocalServer *server, QObject *window, AppSettings *setti
     m_tray.show();
     if (!m_hotkey.registered()) {
         QTimer::singleShot(500, this, [this] {
-            m_tray.showMessage(QStringLiteral("xshot shortcut unavailable"),
+            m_tray.showMessage(QStringLiteral("Snitt shortcut unavailable"),
                               m_hotkey.description() + QStringLiteral(". Use Capture region in this menu."), QSystemTrayIcon::Warning);
         });
     }
     if (!m_settings->lastError().isEmpty())
         QTimer::singleShot(750, this, [this] {
-            m_tray.showMessage(QStringLiteral("xshot settings not applied"), m_settings->lastError(), QSystemTrayIcon::Warning);
+            m_tray.showMessage(QStringLiteral("Snitt settings not applied"), m_settings->lastError(), QSystemTrayIcon::Warning);
         });
     connect(server, &QLocalServer::newConnection, this, [this, server] {
         while (auto *socket = server->nextPendingConnection()) {

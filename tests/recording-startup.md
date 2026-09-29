@@ -10,13 +10,13 @@ release handler. A monotonic clock records:
   `-debug_ts`. This is the earliest input frame observable at FFmpeg's
   demuxer, rather than an OS-level capture timestamp.
 - **Readiness**: the first positive `frame=` on `-progress pipe:1`, matching
-  the FFmpeg readiness signal used by xshot.
+  the FFmpeg readiness signal used by Snitt.
 
 Both modes use `-debug_ts -loglevel info` for measurement and the same
 capture, filter, encoder, and output options. The baseline uses the original
 0.2-second progress interval and default input probing. The tuned mode uses
 the 0.05-second interval, `-probesize 32`, and `-analyzeduration 0` added for
-xshot-7. Run each mode multiple times in alternating order on an interactive
+`xshot-7` (the original issue ID). Run each mode multiple times in alternating order on an interactive
 desktop; the benchmark removes its temporary MP4 after exit.
 
 From the repository root, create and enter `build/recording-startup`, then
@@ -45,7 +45,7 @@ about 655 ms and the readiness report by about 249 ms. The remaining gap
 between its first packet and readiness is FFmpeg's encoding/progress path.
 On macOS, FFmpeg's capture packet time was almost unchanged by probing,
 while readiness improved about 170 ms. The native ScreenCaptureKit recorder
-removes that FFmpeg path and excludes xshot's own windows from the stream.
+removes that FFmpeg path and excludes Snitt's own windows from the stream.
 
 In the actual interactive macOS app test, the earlier FFmpeg version reached
 process launch 46–48 ms and positive progress/readiness 1270–1375 ms after

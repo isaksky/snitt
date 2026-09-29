@@ -1,7 +1,7 @@
 QT += core gui widgets network qml quick quickcontrols2 svg multimedia
 
 CONFIG += c++17 release
-TARGET = xshot
+TARGET = snitt
 TEMPLATE = app
 
 # Match the minimum macOS version of the Homebrew Qt Quick libraries.
@@ -22,6 +22,7 @@ macx {
     SOURCES += src/macrecorder.mm
     QMAKE_CXXFLAGS += -fobjc-arc
     LIBS += -framework Carbon -framework CoreGraphics -framework CoreMedia -framework ScreenCaptureKit -framework AVFoundation -framework AppKit
+    QMAKE_APPLICATION_BUNDLE_NAME = Snitt
     QMAKE_INFO_PLIST = platform/macos/Info.plist
 }
 win32: LIBS += -luser32 -ldwmapi -lshell32 -lole32

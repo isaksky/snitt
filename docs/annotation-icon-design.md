@@ -3,7 +3,7 @@
 This is the original design discussion. The [implemented icon set](annotation-icons.md)
 uses the approved v1 gesture geometry and includes a contact sheet of the finished toolbar.
 
-Editable design brief for seven custom xshot annotation icons. Edit the proposed descriptions directly or use the **Your edits** lines. The images show the **current icons**; the proposed custom artwork is described below.
+Editable design brief for seven custom Snitt annotation icons. Edit the proposed descriptions directly or use the **Your edits** lines. The images show the **current icons**; the proposed custom artwork is described below.
 
 ## Current icons at a glance
 

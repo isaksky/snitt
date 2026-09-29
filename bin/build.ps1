@@ -1,4 +1,4 @@
-param([string]$QtBin = $env:XSHOT_QT_BIN, [switch]$Test)
+param([string]$QtBin = $env:SNITT_QT_BIN, [switch]$Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if (!$QtBin) {
@@ -19,7 +19,7 @@ $build = Join-Path $root 'build\windows-app'
 New-Item -ItemType Directory -Force $build | Out-Null
 Push-Location $build
 try {
-    & $qmake "$root\xshot.pro" 'CONFIG+=release' 'CONFIG-=debug_and_release'
+    & $qmake "$root\snitt.pro" 'CONFIG+=release' 'CONFIG-=debug_and_release'
     if ($LASTEXITCODE -ne 0) { throw 'qmake failed' }
     & $make '-j4'
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
@@ -44,4 +44,4 @@ if ($Test) {
         } finally { $env:QT_QPA_PLATFORM = $oldPlatform; Pop-Location }
     }
 }
-Write-Output "Built $build\xshot.exe"
+Write-Output "Built $build\snitt.exe"

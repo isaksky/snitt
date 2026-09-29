@@ -111,10 +111,10 @@ bool Backend::beginProtectedRecording(QObject *indicator, QObject *controls, QOb
     if (!m_pendingRecording) return false;
     QString problem;
     if (!windowsExclusionSupported())
-        problem = QStringLiteral("Video recording needs Windows 10 version 2004 or later so xshot's controls can be excluded from the captured screen.");
+        problem = QStringLiteral("Video recording needs Windows 10 version 2004 or later so Snitt's controls can be excluded from the captured screen.");
     else if (!protectRecordingControls(indicator) || !protectRecordingControls(controls)
              || (outline && !protectRecordingControls(outline)))
-        problem = QStringLiteral("Could not exclude xshot's recording controls from the captured screen. Recording was canceled; try again after updating Windows or your display driver.");
+        problem = QStringLiteral("Could not exclude Snitt's recording controls from the captured screen. Recording was canceled; try again after updating Windows or your display driver.");
     if (!problem.isEmpty()) {
         m_pendingRecording = false;
         emit recordingChanged();
@@ -182,7 +182,7 @@ void Backend::capture(bool multiple, bool video) {
 #ifdef Q_OS_MACOS
     // Without permission macOS can return a successful wallpaper-only image.
     if (!CGPreflightScreenCaptureAccess() && !CGRequestScreenCaptureAccess()) {
-        emit error(QStringLiteral("Allow xshot in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen xshot."));
+        emit error(QStringLiteral("Allow Snitt in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen Snitt."));
         emit captureFinished(false);
         return;
     }
@@ -203,7 +203,7 @@ void Backend::capture(bool multiple, bool video) {
     for (QScreen *screen : QGuiApplication::screens()) m_screens.append({screen->geometry(), {}});
     QTimer::singleShot(0, this, [this] {
 #ifdef Q_OS_MACOS
-        // The non-interactive system tool snapshots each display; xshot owns
+        // The non-interactive system tool snapshots each display; Snitt owns
         // selection so M can switch to multiple regions on that frozen desktop.
         captureNextScreen();
 #else
@@ -368,7 +368,7 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     finish();
     return;
 #endif
-    // The native macOS recorder excludes every xshot window. The selector is
+    // The native macOS recorder excludes every Snitt window. The selector is
     // also hidden promptly so the live desktop is visible to the user.
     for (auto overlay : m_selectors) if (overlay) overlay->hide();
 #ifdef Q_OS_WIN

@@ -3,14 +3,14 @@
 set -eu
 [ "$(uname -s)" = Darwin ] || exit 1
 [ "$#" -eq 1 ] || { echo 'Usage: sign-macos app-bundle' >&2; exit 1; }
-if [ -n "${XSHOT_SIGN_IDENTITY:-}" ]; then
-    codesign --force --sign "$XSHOT_SIGN_IDENTITY" "$1"
+if [ -n "${SNITT_SIGN_IDENTITY:-}" ]; then
+    codesign --force --sign "$SNITT_SIGN_IDENTITY" "$1"
     codesign --verify --deep --strict "$1"
     exit
 fi
 
 umask 077
-SIGNING_DIR="$HOME/Library/Application Support/xshot/signing"
+SIGNING_DIR="$HOME/Library/Application Support/snitt/signing"
 KEYCHAIN="$SIGNING_DIR/local.keychain-db"
 mkdir -p "$SIGNING_DIR"
 chmod 700 "$SIGNING_DIR"
@@ -29,7 +29,7 @@ distinguished_name = subject
 x509_extensions = codesign
 prompt = no
 [subject]
-CN = xshot Local Development
+CN = Snitt Local Development
 [codesign]
 basicConstraints = critical,CA:false
 keyUsage = critical,digitalSignature

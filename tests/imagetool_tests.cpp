@@ -119,7 +119,7 @@ void ImageToolTests::pixelateWheelPreviewAndExport() {
     canvas.begin(start.x(), start.y()); canvas.move(end.x(), end.y());
     const QRgb live = snapshot().pixel(point({18, 18}).toPoint());
     canvas.end(end.x(), end.y());
-    if (qEnvironmentVariableIsSet("XSHOT_RENDER_PREVIEW"))
+    if (qEnvironmentVariableIsSet("SNITT_RENDER_PREVIEW"))
         QVERIFY(snapshot().save(QDir::current().filePath("pixelate-preview.png")));
     QCOMPARE(snapshot().pixel(point({18, 18}).toPoint()), live);
     QVERIFY(canvas.copy());
@@ -1060,7 +1060,7 @@ void ImageToolTests::savePngUsesLocalYearAndMonthFolders() {
         QVERIFY2(!saved.isEmpty(), qPrintable(error));
         QCOMPARE(QFileInfo(saved).absolutePath(), pictures.filePath(entry.second));
         QVERIFY(QFileInfo(saved).fileName().startsWith(
-            QStringLiteral("xshot-%1-").arg(entry.first.toLocalTime().toString("yyyyMMdd-HHmmss-zzz"))));
+            QStringLiteral("snitt-%1-").arg(entry.first.toLocalTime().toString("yyyyMMdd-HHmmss-zzz"))));
         QCOMPARE(QImage(saved).convertToFormat(original.format()), original);
     }
     QVERIFY(QFileInfo::exists(legacyPath));

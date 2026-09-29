@@ -1,6 +1,6 @@
-# Interactive design prompt: seven xshot annotation icons
+# Interactive design prompt: seven Snitt annotation icons
 
-Help me design a cohesive set of seven custom toolbar icons for **xshot**, a desktop screenshot annotation app. Work with me interactively before creating the full set. This brief is self-contained; no files or prior conversation are required.
+Help me design a cohesive set of seven custom toolbar icons for **Snitt**, a desktop screenshot annotation app. Work with me interactively before creating the full set. This brief is self-contained; no files or prior conversation are required.
 
 ## Visual direction
 

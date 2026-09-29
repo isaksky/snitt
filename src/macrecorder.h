@@ -6,7 +6,7 @@
 #include <QString>
 #include "videorecorder.h"
 
-// ScreenCaptureKit can exclude xshot's own windows from the recorded image.
+// ScreenCaptureKit can exclude Snitt's own windows from the recorded image.
 // FFmpeg's AVFoundation display input cannot, even with NSWindowSharingNone.
 class MacRecorder final : public QObject {
     Q_OBJECT

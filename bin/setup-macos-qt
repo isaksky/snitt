@@ -17,4 +17,4 @@ if [ ! -x "$QMAKE" ] || [ ! -f "$SDK/6.11.2/macos/lib/QtShaderTools.framework/Ve
         -m qtshadertools --noarchives -O "$SDK" --timeout 30
 fi
 "$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE" --check-sdk
-echo "Use XSHOT_QMAKE=$QMAKE with bin/stage-macos, bin/install, or bin/build."
+echo "Use SNITT_QMAKE=$QMAKE with bin/stage-macos, bin/install, or bin/build."

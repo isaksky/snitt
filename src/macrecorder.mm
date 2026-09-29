@@ -14,7 +14,7 @@
 #include <cmath>
 #include <unistd.h>
 
-@interface XShotCaptureSession : NSObject <SCStreamDelegate, SCStreamOutput, SCRecordingOutputDelegate>
+@interface SnittCaptureSession : NSObject <SCStreamDelegate, SCStreamOutput, SCRecordingOutputDelegate>
 @property(nonatomic, assign) MacRecorder *owner;
 @property(nonatomic, assign) quint64 generation;
 @property(nonatomic, strong) SCStream *stream;
@@ -27,7 +27,7 @@
 - (void)discardFile;
 @end
 
-@implementation XShotCaptureSession
+@implementation SnittCaptureSession
 - (instancetype)initWithOwner:(MacRecorder *)owner generation:(quint64)generation {
     if ((self = [super init])) { _owner = owner; _generation = generation; }
     return self;
@@ -109,8 +109,8 @@
 }
 @end
 
-static XShotCaptureSession *sessionFor(void *pointer) {
-    return (__bridge XShotCaptureSession *)pointer;
+static SnittCaptureSession *sessionFor(void *pointer) {
+    return (__bridge SnittCaptureSession *)pointer;
 }
 
 MacRecorder::MacRecorder(QObject *parent) : QObject(parent) {
@@ -129,7 +129,7 @@ MacRecorder::MacRecorder(QObject *parent) : QObject(parent) {
 
 MacRecorder::~MacRecorder() {
     if (m_session) {
-        XShotCaptureSession *session = sessionFor(m_session);
+        SnittCaptureSession *session = sessionFor(m_session);
         session.owner = nullptr;
         [session requestStop];
         CFRelease(m_session);
@@ -139,7 +139,7 @@ MacRecorder::~MacRecorder() {
 void MacRecorder::start(const recording::Source &source, const QString &saveRoot) {
     if (m_active) return;
     if (saveRoot.isEmpty()) {
-        emit error(QStringLiteral("The configured video save folder is empty. Correct Save/videosRoot in xshot's settings file."));
+        emit error(QStringLiteral("The configured video save folder is empty. Correct Save/videosRoot in Snitt's settings file."));
         return;
     }
     const QDateTime startedAt = QDateTime::currentDateTime();
@@ -148,7 +148,7 @@ void MacRecorder::start(const recording::Source &source, const QString &saveRoot
         emit error(QStringLiteral("Could not create the recordings folder: %1").arg(directory));
         return;
     }
-    m_output = QDir(directory).filePath(QStringLiteral("xshot-%1-%2.mp4")
+    m_output = QDir(directory).filePath(QStringLiteral("snitt-%1-%2.mp4")
         .arg(startedAt.toString("yyyyMMdd-HHmmss"),
              QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
     m_source = source;
@@ -157,7 +157,7 @@ void MacRecorder::start(const recording::Source &source, const QString &saveRoot
     m_recordingStarted = m_firstFrame = m_recordingFinished = m_stopped = false;
     m_elapsed = 0;
     ++m_generation;
-    auto *session = [[XShotCaptureSession alloc] initWithOwner:this generation:m_generation];
+    auto *session = [[SnittCaptureSession alloc] initWithOwner:this generation:m_generation];
     m_session = (__bridge_retained void *)session;
     emit elapsedChanged();
     emit changed();
@@ -183,7 +183,7 @@ void MacRecorder::nativePrepared(quint64 generation, void *contentPointer, const
     for (SCRunningApplication *candidate in content.applications)
         if (candidate.processID == getpid()) { ownApp = candidate; break; }
     if (!display || !ownApp) {
-        fail(QStringLiteral("Could not identify the selected display or exclude xshot's windows from the recording."));
+        fail(QStringLiteral("Could not identify the selected display or exclude Snitt's windows from the recording."));
         return;
     }
     const QRectF relative = m_source.relativeRegion;
@@ -205,7 +205,7 @@ void MacRecorder::nativePrepared(quint64 generation, void *contentPointer, const
     configuration.showsCursor = YES;
     configuration.capturesAudio = NO;
 
-    XShotCaptureSession *session = sessionFor(m_session);
+    SnittCaptureSession *session = sessionFor(m_session);
     session.stream = [[SCStream alloc] initWithFilter:filter configuration:configuration delegate:session];
     SCRecordingOutputConfiguration *recordingConfig = [SCRecordingOutputConfiguration new];
     recordingConfig.outputURL = [NSURL fileURLWithPath:m_output.toNSString()];
@@ -271,7 +271,7 @@ void MacRecorder::cancel() {
     m_recordingFinished = true; // Cancellation discards output, even if encoder never started.
     emit changed();
     m_timeout.start(3000);
-    XShotCaptureSession *session = sessionFor(m_session);
+    SnittCaptureSession *session = sessionFor(m_session);
     session.discardPath = m_output.toNSString();
     if (session.stream) [session requestStop];
     else { m_stopped = true; maybeComplete(); }
@@ -327,7 +327,7 @@ void MacRecorder::fail(const QString &message) {
     const QString path = m_output;
     const bool wasCanceling = m_canceling;
     const bool keepPartial = !wasCanceling && m_firstFrame && QFileInfo(path).size() > 0;
-    XShotCaptureSession *session = sessionFor(m_session);
+    SnittCaptureSession *session = sessionFor(m_session);
     if (session && session.stream) [session requestStop];
     reset();
     if (!keepPartial && !discardOutput(path)) {
@@ -347,7 +347,7 @@ void MacRecorder::reset() {
     m_ready = false;
     m_finishing = false;
     if (m_session) {
-        XShotCaptureSession *session = sessionFor(m_session);
+        SnittCaptureSession *session = sessionFor(m_session);
         session.owner = nullptr;
         CFRelease(m_session);
         m_session = nullptr;

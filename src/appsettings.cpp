@@ -140,16 +140,16 @@ bool sameSequence(const QString &left, const QString &right) {
 AppSettings::Paths AppSettings::standardPaths() {
     Paths paths;
     QString config = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    if (config.isEmpty()) config = QDir(QDir::homePath()).filePath(QStringLiteral(".config/xshot"));
+    if (config.isEmpty()) config = QDir(QDir::homePath()).filePath(QStringLiteral(".config/snitt"));
     paths.settingsFile = QDir(config).filePath(QStringLiteral("settings.ini"));
     paths.guideFile = QDir(config).filePath(QStringLiteral("settings-format.md"));
 
     QString pictures = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (pictures.isEmpty()) pictures = QDir(QDir::homePath()).filePath(QStringLiteral("Pictures"));
-    paths.defaultPicturesRoot = QDir(pictures).filePath(QStringLiteral("xshot"));
+    paths.defaultPicturesRoot = QDir(pictures).filePath(QStringLiteral("snitt"));
     QString videos = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
     if (videos.isEmpty()) videos = QDir::homePath();
-    paths.defaultVideosRoot = QDir(videos).filePath(QStringLiteral("xshot"));
+    paths.defaultVideosRoot = QDir(videos).filePath(QStringLiteral("snitt"));
     return paths;
 }
 
@@ -191,9 +191,9 @@ AppSettings::Candidate AppSettings::defaults() const {
 QString AppSettings::initialIni() const {
     const Candidate initial = defaults();
     QString contents = QStringLiteral(
-        "; xshot application settings (UTF-8 INI format).\n"
+        "; Snitt application settings (UTF-8 INI format).\n"
         "; AI agents: read settings-format.md in this same directory before editing.\n"
-        "; Preserve unrelated keys and comments. Unknown keys are ignored by xshot.\n\n"
+        "; Preserve unrelated keys and comments. Unknown keys are ignored by Snitt.\n\n"
         "[Shortcuts]\n");
     for (const auto &definition : shortcutDefinitions) {
         const QString key = QString::fromLatin1(definition.name);
@@ -271,7 +271,7 @@ void AppSettings::initialize() {
 bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
     *candidate = defaults();
     if (!QFileInfo::exists(m_paths.settingsFile)) {
-        if (error) *error = QStringLiteral("The settings file is missing. Restore it at %1; xshot is keeping the last valid settings.")
+        if (error) *error = QStringLiteral("The settings file is missing. Restore it at %1; Snitt is keeping the last valid settings.")
             .arg(QDir::toNativeSeparators(m_paths.settingsFile));
         return false;
     }
@@ -280,13 +280,13 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
     // edit can retain the same timestamp and otherwise return stale values.
     QFile settingsFile(m_paths.settingsFile);
     if (!settingsFile.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; xshot is keeping the last valid settings.")
+        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; Snitt is keeping the last valid settings.")
             .arg(QDir::toNativeSeparators(m_paths.settingsFile));
         return false;
     }
     const QByteArray bytes = settingsFile.readAll();
     if (settingsFile.error() != QFileDevice::NoError) {
-        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; xshot is keeping the last valid settings.")
+        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; Snitt is keeping the last valid settings.")
             .arg(QDir::toNativeSeparators(m_paths.settingsFile));
         return false;
     }
@@ -305,7 +305,7 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
     // status so malformed unused sections cannot slip through a reload.
     input.allKeys();
     if (input.status() != QSettings::NoError) {
-        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; xshot is keeping the last valid settings.")
+        if (error) *error = QStringLiteral("Could not parse or read %1. Correct the INI syntax; Snitt is keeping the last valid settings.")
             .arg(QDir::toNativeSeparators(m_paths.settingsFile));
         return false;
     }
@@ -477,7 +477,7 @@ void AppSettings::attachGlobalHotkey(GlobalHotkey *hotkey) {
     const QString safe = fallback.configuredShortcuts.value(QStringLiteral("globalCapture")).toStringList().value(0);
     m_hotkey->setShortcut(qtSequence(safe), &fallbackError);
     publish(fallback);
-    const QString message = QStringLiteral("The configured capture shortcut (%1) could not be registered: %2. xshot restored its default shortcut; correct Shortcuts/globalCapture in %3.")
+    const QString message = QStringLiteral("The configured capture shortcut (%1) could not be registered: %2. Snitt restored its default shortcut; correct Shortcuts/globalCapture in %3.")
         .arg(wantedHint, error, QDir::toNativeSeparators(m_paths.settingsFile));
     setError(message);
     emit reloadFailed(message);

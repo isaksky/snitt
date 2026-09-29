@@ -4,7 +4,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 "$ROOT/bin/build"
 
-if [ -x "$ROOT/build/xshot.app/Contents/MacOS/xshot" ]; then
-    exec "$ROOT/build/xshot.app/Contents/MacOS/xshot" "$@"
+if [ -x "$ROOT/build/Snitt.app/Contents/MacOS/snitt" ]; then
+    exec "$ROOT/build/Snitt.app/Contents/MacOS/snitt" "$@"
 fi
-exec "$ROOT/build/xshot" "$@"
+exec "$ROOT/build/snitt" "$@"

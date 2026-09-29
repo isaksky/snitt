@@ -4,23 +4,23 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 [ "$(uname -s)" = Darwin ] || { echo 'Use the Windows package Install.cmd on Windows.' >&2; exit 1; }
 "$ROOT/bin/stage-macos"
 PACKAGE="$ROOT/build/package/macos"
-DEST="$HOME/Applications/xshot.app"
-AGENT="$HOME/Library/LaunchAgents/local.xshot.plist"
+DEST="$HOME/Applications/Snitt.app"
+AGENT="$HOME/Library/LaunchAgents/local.snitt.plist"
 DOMAIN="gui/$(id -u)"
 if [ -f "$AGENT" ]; then launchctl bootout "$DOMAIN" "$AGENT" 2>/dev/null || true; fi
-"$ROOT/build/xshot.app/Contents/MacOS/xshot" --quit
+"$ROOT/build/Snitt.app/Contents/MacOS/snitt" --quit
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 if [ -d "$DEST" ]; then
     [ ! -e "$DEST.previous" ] || { echo "Existing backup: $DEST.previous" >&2; exit 1; }
     mv "$DEST" "$DEST.previous"
 fi
-ditto "$PACKAGE/xshot.app" "$DEST"
+ditto "$PACKAGE/Snitt.app" "$DEST"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
 # plutil handles XML escaping in the user's home path.
 plutil -create xml1 "$AGENT"
-plutil -insert Label -string local.xshot "$AGENT"
+plutil -insert Label -string local.snitt "$AGENT"
 plutil -insert ProgramArguments -array "$AGENT"
-plutil -insert ProgramArguments.0 -string "$DEST/Contents/MacOS/xshot" "$AGENT"
+plutil -insert ProgramArguments.0 -string "$DEST/Contents/MacOS/snitt" "$AGENT"
 plutil -insert ProgramArguments.1 -string --background "$AGENT"
 plutil -insert RunAtLoad -bool YES "$AGENT"
 launchctl bootstrap "$DOMAIN" "$AGENT"

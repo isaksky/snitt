@@ -36,8 +36,8 @@ if [ ! -x "$HELPER" ] || [ ! -x "$TOOL_DIR/ffprobe-media" ] || [ ! -f "$STAMP" ]
     cp ffprobe "$TOOL_DIR/ffprobe-media"
     touch "$STAMP"
 fi
-DEST="$ROOT/build/xshot.app/Contents/MacOS/ffmpeg-media"
-[ -d "$(dirname "$DEST")" ] || { echo 'Build xshot before copying its media helpers.' >&2; exit 1; }
+DEST="$ROOT/build/Snitt.app/Contents/MacOS/ffmpeg-media"
+[ -d "$(dirname "$DEST")" ] || { echo 'Build Snitt before copying its media helpers.' >&2; exit 1; }
 cp "$HELPER" "$DEST"
 # macOS verifies nested executable signatures separately from the outer app.
 codesign --force --sign - "$DEST" >/dev/null

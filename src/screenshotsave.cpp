@@ -25,7 +25,7 @@ QString screenshots::savePng(const QImage &image, const QString &picturesDirecto
         return {};
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
-        const QString path = QDir(directory).filePath(QStringLiteral("xshot-%1-%2.png")
+        const QString path = QDir(directory).filePath(QStringLiteral("snitt-%1-%2.png")
             .arg(localSaveTime.toString(QStringLiteral("yyyyMMdd-HHmmss-zzz")),
                  QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
         QFile file(path);

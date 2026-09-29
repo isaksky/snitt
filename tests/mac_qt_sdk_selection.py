@@ -32,9 +32,9 @@ def main():
     if sys.platform != "darwin":
         print("macOS SDK selection check skipped")
         return
-    real = Path(os.environ.get("XSHOT_QMAKE") or shutil.which("qmake6") or "")
+    real = Path(os.environ.get("SNITT_QMAKE") or shutil.which("qmake6") or "")
     if not real.is_file():
-        raise RuntimeError("Select an installed SDK with XSHOT_QMAKE")
+        raise RuntimeError("Select an installed SDK with SNITT_QMAKE")
     actual = subprocess.check_output([str(real), "-query", "QT_VERSION"], text=True).strip()
     result = check(real)
     assert result.returncode == 0, result.stderr

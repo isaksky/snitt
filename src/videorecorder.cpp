@@ -134,7 +134,7 @@ void VideoRecorder::start(const recording::Source &source, const QString &saveRo
         return;
     }
     if (saveRoot.isEmpty()) {
-        emit error(QStringLiteral("The configured video save folder is empty. Correct Save/videosRoot in xshot's settings file."));
+        emit error(QStringLiteral("The configured video save folder is empty. Correct Save/videosRoot in Snitt's settings file."));
         return;
     }
     const QDateTime startedAt = QDateTime::currentDateTime();
@@ -143,7 +143,7 @@ void VideoRecorder::start(const recording::Source &source, const QString &saveRo
         emit error(QStringLiteral("Could not create the recordings folder: %1").arg(directory));
         return;
     }
-    m_output = QDir(directory).filePath(QStringLiteral("xshot-%1-%2.mp4")
+    m_output = QDir(directory).filePath(QStringLiteral("snitt-%1-%2.mp4")
         .arg(startedAt.toString("yyyyMMdd-HHmmss"),
              QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
     m_stderr.clear();

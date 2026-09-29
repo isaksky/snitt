@@ -51,7 +51,7 @@
 class EditorTests : public QObject {
     Q_OBJECT
 private slots:
-    void initTestCase() { qmlRegisterType<PlaybackClock>("XShot", 1, 0, "PlaybackClock"); }
+    void initTestCase() { qmlRegisterType<PlaybackClock>("Snitt", 1, 0, "PlaybackClock"); }
     void cutsJoinExactPixels();
     void invalidCutsDoNotAlterHistory();
     void undoRedoAndBranch();
@@ -121,8 +121,8 @@ static AppSettings &isolatedSettings() {
         AppSettings::Paths paths;
         paths.settingsFile = directory->filePath("config/settings.ini");
         paths.guideFile = directory->filePath("config/settings-format.md");
-        paths.defaultPicturesRoot = directory->filePath("Pictures/xshot");
-        paths.defaultVideosRoot = directory->filePath("Videos/xshot");
+        paths.defaultPicturesRoot = directory->filePath("Pictures/snitt");
+        paths.defaultVideosRoot = directory->filePath("Videos/snitt");
         return new AppSettings(paths);
     }();
     Q_ASSERT(directory->isValid());
@@ -133,8 +133,8 @@ static AppSettings::Paths settingsPaths(const QString &directory) {
     AppSettings::Paths paths;
     paths.settingsFile = QDir(directory).filePath("config/settings.ini");
     paths.guideFile = QDir(directory).filePath("config/settings-format.md");
-    paths.defaultPicturesRoot = QDir(directory).filePath("Pictures/xshot");
-    paths.defaultVideosRoot = QDir(directory).filePath("Videos/xshot");
+    paths.defaultPicturesRoot = QDir(directory).filePath("Pictures/snitt");
+    paths.defaultVideosRoot = QDir(directory).filePath("Videos/snitt");
     return paths;
 }
 
@@ -267,8 +267,8 @@ void EditorTests::makePreviewFixture() {
     }
     p.end();
     QVERIFY(image.save("preview.png"));
-    if (qEnvironmentVariableIsEmpty("XSHOT_RENDER_PREVIEW")) return;
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    if (qEnvironmentVariableIsEmpty("SNITT_RENDER_PREVIEW")) return;
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&isolatedSettings());
     QQmlApplicationEngine engine;
@@ -342,7 +342,7 @@ void EditorTests::qmlLoadsAndPlacesText() {
 #endif
     // The offscreen platform cannot raise native windows; QML warnings still fail.
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
@@ -417,7 +417,7 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support (?:raise|propagateSizeHints)\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir source;
     const QString imagePath = source.filePath("input.png");
@@ -518,7 +518,7 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
             QVERIFY(tools->mapToItem(toolbar, QPointF(0, tools->height())).y() <
                     modeButtons->mapToItem(toolbar, QPointF(0, 0)).y());
         }
-        const QString previewDir = qEnvironmentVariable("XSHOT_TOOLBAR_PREVIEW_DIR",
+        const QString previewDir = qEnvironmentVariable("SNITT_TOOLBAR_PREVIEW_DIR",
                                                          QDir::current().filePath("toolbar-layout-previews"));
         QVERIFY(QDir().mkpath(previewDir));
         QTest::qWait(100);
@@ -604,7 +604,7 @@ void EditorTests::qmlPasteReplacesTextDraft() {
 #else
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
@@ -681,7 +681,7 @@ void EditorTests::qmlPasteReplacesTextDraft() {
 #ifdef Q_OS_WIN
 void EditorTests::windowsRecordingOverlayExclusionFailure() {
     QGuiApplication::setFont(QFont("Segoe UI"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     for (const auto mode : {Backend::ExclusionTestMode::ForceLegacyVersion,
                             Backend::ExclusionTestMode::ForceFailure}) {
@@ -714,7 +714,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
         QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 3000);
         const QString message = errors.first().first().toString();
         QVERIFY(message.contains(mode == Backend::ExclusionTestMode::ForceLegacyVersion
-                                 ? "version 2004" : "exclude xshot"));
+                                 ? "version 2004" : "exclude Snitt"));
         QVERIFY(!backend.recording());
         QVERIFY(!backend.startingRecording());
         QVERIFY(!backend.recordingProtectionPending());
@@ -736,7 +736,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
 #endif
 
 void EditorTests::qmlResizeTextDraft() {
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QImage original(800, 600, QImage::Format_ARGB32_Premultiplied);
     original.fill(Qt::white);
@@ -807,7 +807,7 @@ void EditorTests::qmlWheelSizes() {
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QImage image(480, 360, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::white);
@@ -893,7 +893,7 @@ void EditorTests::qmlSaveAndClose() {
         QSKIP("File-manager reveal requires an interactive Windows desktop");
 #endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir source;
     const QString inputPath = source.filePath("input.png");
@@ -932,7 +932,7 @@ void EditorTests::qmlSaveAndClose() {
     const QString savedRoot = isolatedSettings().picturesRoot();
     const auto savedFiles = [&]() {
         QSet<QString> files;
-        QDirIterator iterator(savedRoot, {"xshot-*.png"}, QDir::Files, QDirIterator::Subdirectories);
+        QDirIterator iterator(savedRoot, {"snitt-*.png"}, QDir::Files, QDirIterator::Subdirectories);
         while (iterator.hasNext()) files.insert(iterator.next());
         return files;
     };
@@ -1025,7 +1025,7 @@ void EditorTests::qmlKeyboardCommands() {
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
@@ -1229,7 +1229,7 @@ void EditorTests::qmlKeyboardCommands() {
 
 void EditorTests::qmlDismissal() {
     QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
     const QString path = dir.filePath("input.png");
@@ -1410,7 +1410,7 @@ void EditorTests::qmlRecordingReview() {
         if (ready == 12 && allThumbsMs < 0) allThumbsMs = loadTimer.elapsed();
     });
     trim->open(clip);
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
@@ -1528,7 +1528,7 @@ void EditorTests::qmlRecordingReview() {
     })(), 45000);
     qInfo("review load: first frame=%lld ms, first thumbnail=%lld ms, all thumbnails=%lld ms",
           firstFrameMs, firstThumbMs, allThumbsMs);
-    if (qEnvironmentVariableIsSet("XSHOT_CHECK_LOAD_TIMES")) {
+    if (qEnvironmentVariableIsSet("SNITT_CHECK_LOAD_TIMES")) {
         QVERIFY(firstFrameMs < 2000);
         QVERIFY(firstThumbMs < 2000);
         QVERIFY(allThumbsMs < 5000);
@@ -1561,7 +1561,7 @@ void EditorTests::qmlRecordingReview() {
         QTest::qWait(250); // The canceled release timer must not start an export.
         QVERIFY(review->isVisible());
         QVERIFY(!trim->busy());
-        QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+        QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files).isEmpty());
         QVERIFY(originalClip.open(QIODevice::ReadOnly));
         QCOMPARE(QCryptographicHash::hash(originalClip.readAll(), QCryptographicHash::Sha256), originalHash);
         originalClip.close();
@@ -1616,7 +1616,7 @@ void EditorTests::qmlRecordingReview() {
         return false;
     })(), 10000);
     qInfo("trimmed review first frame: %lld ms", copiedLoad.elapsed());
-    if (qEnvironmentVariableIsSet("XSHOT_CHECK_LOAD_TIMES"))
+    if (qEnvironmentVariableIsSet("SNITT_CHECK_LOAD_TIMES"))
         QVERIFY(copiedLoad.elapsed() < 2000);
     QTRY_VERIFY(!player->property("priming").toBool());
     QVERIFY(player->property("duration").toLongLong() >= 1400);
@@ -1659,7 +1659,7 @@ void EditorTests::qmlRecordingReview() {
 
 void EditorTests::qmlRecordingControls() {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Recording controls require FFmpeg and an unlocked desktop");
     QVERIFY2(!recording::toolPath("ffmpeg").isEmpty(), "Interactive recording tests require FFmpeg");
 #ifdef Q_OS_WIN
@@ -1668,7 +1668,7 @@ void EditorTests::qmlRecordingControls() {
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
     QTest::failOnWarning(QRegularExpression(".*"));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&isolatedSettings());
     QString error;
@@ -1861,7 +1861,8 @@ void EditorTests::qmlRecordingControls() {
     QSignalSpy finalized(trimSession, &TrimSession::finalized);
     QVERIFY(QMetaObject::invokeMethod(backend.trim(), "keepOriginal"));
     QCOMPARE(finalized.size(), 1);
-    QCOMPARE(finalized.first().first().toString(), path);
+    QCOMPARE(QDir::fromNativeSeparators(finalized.first().first().toString()),
+             QDir::fromNativeSeparators(path));
     QTRY_VERIFY(!review->isVisible());
     QTest::qWait(250); // Let Finder/Explorer select the completed file before cleanup.
     QVERIFY(QFile::remove(path));
@@ -1882,10 +1883,10 @@ void EditorTests::qmlRecordingHotkeyStop_data() {
 
 void EditorTests::qmlRecordingHotkeyStop() {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Recording controls require an interactive desktop");
     QFETCH(bool, duringStartup);
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&isolatedSettings());
     QString error;
@@ -2295,8 +2296,8 @@ void EditorTests::regionSelectionScalesAndCancels() {
 
 void EditorTests::windowsHotkeyRegistration() {
 #ifdef Q_OS_WIN
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
-        QSKIP("Native hotkeys require an interactive Windows desktop; set XSHOT_INTERACTIVE_TESTS=1");
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
+        QSKIP("Native hotkeys require an interactive Windows desktop; set SNITT_INTERACTIVE_TESTS=1");
     {
         GlobalHotkey hotkey;
         QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
@@ -2321,7 +2322,7 @@ void EditorTests::windowsHotkeyRegistration() {
 
 void EditorTests::desktopMultipleCapture() {
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Multiple-region capture requires a real desktop");
     QWidget marker;
     marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -2378,7 +2379,7 @@ void EditorTests::desktopMultipleCapture() {
 
 void EditorTests::windowsDesktopCapture() {
 #ifdef Q_OS_WIN
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Real screen capture requires an interactive Windows desktop");
     QWidget marker;
     marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -2435,7 +2436,7 @@ void EditorTests::windowsDesktopCapture() {
 
 void EditorTests::windowsCaptureLatency() {
 #ifdef Q_OS_WIN
-    if (qEnvironmentVariableIsEmpty("XSHOT_INTERACTIVE_TESTS"))
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Capture latency requires an interactive Windows desktop");
     class PaintProbe : public QObject {
     public:
@@ -2457,7 +2458,7 @@ void EditorTests::windowsCaptureLatency() {
     } probe;
     Backend backend(&isolatedSettings());
     // Include the real QML capture/hide path used by the resident app.
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
@@ -2515,12 +2516,12 @@ void EditorTests::settingsCreateDefaultsAndPreserveEdits() {
     QVERIFY(settings.settingsFile() == QFileInfo(paths.settingsFile).absoluteFilePath());
     QVERIFY(settings.guideFile() == QFileInfo(paths.guideFile).absoluteFilePath());
     const QByteArray ini = readBytes(paths.settingsFile);
-    QVERIFY(ini.startsWith("; xshot application settings"));
+    QVERIFY(ini.startsWith("; Snitt application settings"));
     QVERIFY(ini.contains("AI agents: read settings-format.md"));
     QFile guide(paths.guideFile);
     QVERIFY(guide.open(QIODevice::ReadOnly));
     const QByteArray guideBytes = guide.readAll();
-    QVERIFY(guideBytes.contains("# xshot settings file"));
+    QVERIFY(guideBytes.contains("# Snitt settings file"));
     QVERIFY(guideBytes.contains("## Shortcuts"));
     QVERIFY(guideBytes.contains("## Save roots"));
 
@@ -2665,7 +2666,7 @@ void EditorTests::settingsUpdateEditorShortcutsHintsAndColorsLive() {
     QTemporaryDir imageDirectory;
     const QString imagePath = imageDirectory.filePath("input.png");
     QVERIFY(pattern().save(imagePath));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&settings);
     QQmlApplicationEngine engine;
@@ -2739,7 +2740,7 @@ void EditorTests::settingsShortcutAlternativesAndDisable() {
     QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
     const QString imagePath = directory.filePath("input.png");
     QVERIFY(pattern().save(imagePath));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&settings);
     QQmlApplicationEngine engine;
@@ -2833,7 +2834,7 @@ void EditorTests::macSettingsUseCommandActions() {
     QVERIFY(readBytes(paths.settingsFile).contains("pasteImage=Meta+V\n"));
     const QString imagePath = directory.filePath("input.png");
     QVERIFY(pattern().save(imagePath));
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&settings);
     QQmlApplicationEngine engine;

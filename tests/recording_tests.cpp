@@ -56,8 +56,8 @@ static AppSettings &isolatedRecordingSettings() {
         AppSettings::Paths paths;
         paths.settingsFile = directory->filePath("config/settings.ini");
         paths.guideFile = directory->filePath("config/settings-format.md");
-        paths.defaultPicturesRoot = directory->filePath("Pictures/xshot");
-        paths.defaultVideosRoot = directory->filePath("Videos/xshot");
+        paths.defaultPicturesRoot = directory->filePath("Pictures/snitt");
+        paths.defaultVideosRoot = directory->filePath("Videos/snitt");
         return new AppSettings(paths);
     }();
     Q_ASSERT(directory->isValid());
@@ -113,7 +113,7 @@ void RecordingTests::trimKeepsOriginalOnDismissAndInvalidRange() {
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256), original);
     file.close();
-    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files).isEmpty());
     finalized.clear();
     trim.open(path);
     if (trim.duration() == 0) trim.setDuration(4000);
@@ -175,7 +175,7 @@ void RecordingTests::trimHeadAndTailWithStreamCopy() {
              qPrintable(QStringLiteral("First frame %1 was not green").arg(first.name())));
     QVERIFY2(last.blue() > last.red() * 1.5 && last.blue() > last.green() * 1.5,
              qPrintable(QStringLiteral("Last frame %1 was not blue").arg(last.name())));
-    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files).isEmpty());
 }
 
 void RecordingTests::trimCopiesAudioAndVideo() {
@@ -292,7 +292,7 @@ void RecordingTests::trimReorderedFrames() {
         sawGreen |= g > r * 2;
     }
     QCOMPARE(sawGreen, endMs > 4000);
-    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files | QDir::Hidden).isEmpty());
+    QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files | QDir::Hidden).isEmpty());
 }
 
 void RecordingTests::mp4DurationBounds_data() {
@@ -589,7 +589,7 @@ void RecordingTests::trimCancellationPreservesOriginal() {
     QVERIFY(source.open(QIODevice::ReadOnly));
     QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
     source.close();
-    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files).isEmpty());
     trim.keepOriginal();
     QCOMPARE(finalized.size(), 1);
 }
@@ -623,7 +623,7 @@ void RecordingTests::trimReplacementFailurePreservesOriginal() {
     QVERIFY(source.open(QIODevice::ReadOnly));
     QCOMPARE(QCryptographicHash::hash(source.readAll(), QCryptographicHash::Sha256), original);
     source.close();
-    QVERIFY(QDir(directory.path()).entryList({".xshot-trim-*.mp4"}, QDir::Files).isEmpty());
+    QVERIFY(QDir(directory.path()).entryList({".snitt-trim-*.mp4"}, QDir::Files).isEmpty());
 }
 
 void RecordingTests::trimThumbnailsResumeAfterCancelAndFailure() {
@@ -642,7 +642,7 @@ void RecordingTests::trimThumbnailsResumeAfterCancelAndFailure() {
         return true;
     };
     const auto noTemporaryOutput = [&] {
-        return QDir(directory.path()).entryList({".xshot-trim-*.mp4", ".xshot-original-*.mp4"}, QDir::Files).isEmpty();
+        return QDir(directory.path()).entryList({".snitt-trim-*.mp4", ".snitt-original-*.mp4"}, QDir::Files).isEmpty();
     };
     {
         TrimSession trim;
@@ -895,7 +895,7 @@ void RecordingTests::videoSelectorIsSingleRegion() {
 }
 
 void RecordingTests::desktopRecording() {
-    if (!qEnvironmentVariableIsSet("XSHOT_INTERACTIVE_TESTS"))
+    if (!qEnvironmentVariableIsSet("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Recording requires an interactive desktop and FFmpeg");
     QVERIFY2(!recording::toolPath("ffmpeg").isEmpty(), "FFmpeg must be installed for recording integration tests");
     QWidget marker;
@@ -1132,7 +1132,7 @@ void RecordingTests::cancellationTimeoutDiscards() {
 }
 
 void RecordingTests::interactiveCancellationTimeout() {
-    if (!qEnvironmentVariableIsSet("XSHOT_INTERACTIVE_TESTS"))
+    if (!qEnvironmentVariableIsSet("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Requires an interactive desktop and ScreenCaptureKit permission");
     QWidget marker;
     marker.setGeometry(QRect(QApplication::primaryScreen()->geometry().topLeft() + QPoint(80, 80),

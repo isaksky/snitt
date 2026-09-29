@@ -18,8 +18,9 @@
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    app.setApplicationName("xshot");
-    app.setOrganizationName("xshot");
+    app.setApplicationName("snitt");
+    app.setApplicationDisplayName("Snitt");
+    app.setOrganizationName("snitt");
     app.setQuitOnLastWindowClosed(false);
 
 #ifdef Q_OS_MACOS
@@ -48,7 +49,7 @@ int main(int argc, char *argv[]) {
             QThread::msleep(100);
             if (AppService::sendCommand(args)) return 0;
         }
-        qWarning("Another xshot instance is starting or is unresponsive.");
+        qWarning("Another Snitt instance is starting or is unresponsive.");
         return 1;
     }
     QLocalServer server;
@@ -57,8 +58,8 @@ int main(int argc, char *argv[]) {
     if (!server.listen(AppService::serverName())) return 1;
 
     QQuickStyle::setStyle("Material");
-    qmlRegisterType<EditorCanvas>("XShot", 1, 0, "EditorCanvas");
-    qmlRegisterType<PlaybackClock>("XShot", 1, 0, "PlaybackClock");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    qmlRegisterType<PlaybackClock>("Snitt", 1, 0, "PlaybackClock");
 
     AppSettings settings;
     Backend backend(&settings);

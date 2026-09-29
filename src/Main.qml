@@ -5,7 +5,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtMultimedia
 import "Format.js" as Format
-import XShot 1.0
+import Snitt 1.0
 
 ApplicationWindow {
     id: win
@@ -14,7 +14,7 @@ ApplicationWindow {
     minimumWidth: 860
     minimumHeight: 560
     visible: false
-    title: "xshot"
+    title: "Snitt"
     color: "#111317"
     Material.theme: Material.Dark
     Material.accent: "#91bff0"
@@ -154,7 +154,7 @@ ApplicationWindow {
     Window {
         id: recordingOutline
         objectName: "recordingOutline"
-        title: "xshot — Recording region"
+        title: "Snitt — Recording region"
         transientParent: null
         readonly property int outlineWidth: 3
         flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -191,7 +191,7 @@ ApplicationWindow {
         property bool completing: false
         property int diameter: 0
         function complete() { completing = true; completionTimer.restart() }
-        title: "xshot — Preparing recording"
+        title: "Snitt — Preparing recording"
         transientParent: null
         width: diameter; height: diameter
         flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput
@@ -267,7 +267,7 @@ ApplicationWindow {
     Window {
         id: recordingWindow
         objectName: "recordingWindow"
-        title: "xshot — Recording"
+        title: "Snitt — Recording"
         transientParent: null
         width: backend.recordingControlsGeometry.width
         height: backend.recordingControlsGeometry.height
@@ -332,7 +332,7 @@ ApplicationWindow {
     Window {
         id: reviewWindow
         objectName: "recordingReviewWindow"
-        title: "xshot — Review recording"
+        title: "Snitt — Review recording"
         transientParent: null
         width: 960; height: 690
         minimumWidth: 680; minimumHeight: 520
@@ -922,7 +922,7 @@ ApplicationWindow {
                 visible: canvas.arranging
                 Layout.fillWidth: true
                 spacing: 12
-                Label { text: "xshot"; font.pixelSize: 20; font.weight: Font.DemiBold }
+                Label { text: "Snitt"; font.pixelSize: 20; font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 ActionButton {
                     objectName: "backToArrangeButton"
