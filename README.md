@@ -41,7 +41,7 @@ prefix, such as `SNITT_QMAKE`, `SNITT_QT_BIN`, and `SNITT_SIGN_IDENTITY`.
 
 ## Install and keep it ready
 
-Snitt lives in the menu bar on macOS or the system tray on Windows. It starts at
+Snitt lives in the menu bar on macOS or the system tray on Windows. It can start at
 login and stays running after you finish editing. **Ctrl+Print Screen** starts
 region selection from any app. **C** copies the screenshot and finishes the session
 when you are not typing an annotation. Finalizing a video reveals it in Finder or Explorer.
@@ -51,7 +51,23 @@ capture from the existing instance.
 
 ### macOS 15+
 
-From this checkout:
+Install the Apple silicon release through the Homebrew tap:
+
+```sh
+brew tap isaksky/snitt https://github.com/isaksky/snitt.git
+brew install --cask isaksky/snitt/snitt
+```
+
+Open `Snitt.app` and grant screen-recording permission when prompted. The app is
+not notarized, so macOS may require approval on its first launch. To start at
+login, add Snitt in System Settings → General → Login Items. Qt and the media
+helpers are bundled; no separate FFmpeg installation is needed.
+
+Finish captures and quit Snitt before updating with `brew update` followed by
+`brew upgrade --cask isaksky/snitt/snitt`. Remove it with
+`brew uninstall --cask isaksky/snitt/snitt`.
+
+To build and install from this checkout instead:
 
 ```sh
 brew install cmake pkgconf python  # build tools; Xcode command-line tools are also required
@@ -97,24 +113,22 @@ older Windows 10 versions, Snitt stops before recording because the startup
 indicator and controls cannot be excluded from the captured screen. Screenshot
 capture and editing still work.
 
-The releases are currently private. With Scoop and GitHub CLI installed, sign in
-with a GitHub account that can access this repository, then run:
+With [Scoop](https://scoop.sh/) installed, add the public bucket and install Snitt:
 
 ```powershell
-gh auth login
-gh release download --repo isaksky/snitt --pattern Install-Scoop.ps1
-& .\Install-Scoop.ps1 -Repository isaksky/snitt
+scoop bucket add snitt https://github.com/isaksky/snitt.git
+scoop install snitt/snitt
 ```
 
 This installs Snitt through Scoop, including FFmpeg, bundled Qt, and a login entry.
-The installer checks the release's SHA-256 hashes and uses GitHub CLI's existing
-authentication without copying a token. Run `Install-Scoop.ps1` again to update;
-ordinary `scoop update snitt` cannot download private release assets. Uninstall
-with `scoop uninstall snitt`. If switching from the standalone installer, run its
-**Uninstall.cmd** first.
+Scoop verifies the release's SHA-256 hash. Finish captures and quit Snitt before
+updating with `scoop update snitt`; uninstall with `scoop uninstall snitt`.
+Windows binaries are unsigned. If switching from the standalone installer, run
+its **Uninstall.cmd** first.
 
-For a standalone installation, download the ZIP from the GitHub release instead.
-Extract `snitt_0.1.0_windows_amd64.zip` and double-click **Install.cmd**. It installs the
+For a standalone installation, download the Windows ZIP from the
+[latest GitHub release](https://github.com/isaksky/snitt/releases/latest).
+Extract it and double-click **Install.cmd**. It installs the
 app and bundled runtime into `%LOCALAPPDATA%\Programs\snitt`, adds a Start menu
 shortcut and a per-user login entry, and starts the tray app. No administrator
 rights or Qt installation are needed. Run **Uninstall.cmd** in the installed

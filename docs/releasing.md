@@ -1,11 +1,10 @@
-# Preparing public releases
+# Public releases
 
-This is the implementation plan for public Snitt releases, reviewed on
+This is the release process for the public Snitt repository, reviewed on
 2026-09-28. The chosen license for Snitt's original code is MIT. Public code
 signing is deferred by choice: the initial Windows releases will be unsigned
 ZIPs. No signing account, certificate enrollment, or signing credentials are
-needed for this plan. The workflows are defined in `.github/workflows`; they
-become active when committed and pushed to GitHub.
+needed for this process. The active workflows are defined in `.github/workflows`.
 The intended installation channels are Scoop on Windows and a Homebrew cask
 on macOS, backed by versioned GitHub Release assets.
 
@@ -13,14 +12,14 @@ on macOS, backed by versioned GitHub Release assets.
 
 | Area | Current state | Work before a public binary release |
 | --- | --- | --- |
-| Source license | Root MIT license; upstream notices retained | Review third-party inventory and Git history before changing repository visibility |
-| Windows build | CI runs `bin/build.ps1 -Test` with MSYS2 UCRT64/Qt 6.11.2 | Confirm the first hosted run; package versions are recorded |
+| Source license | Public repository with root MIT license; upstream notices retained | Keep the third-party inventory current |
+| Windows build | CI runs `bin/build.ps1 -Test` with MSYS2 UCRT64/Qt 6.11.2; v0.2.0 hosted build passed | Package versions are recorded |
 | Windows packaging | `bin/package-windows.ps1`, private LGPL FFmpeg build, ZIP, checksums, source and notices | Validate the exact release ZIP |
 | Windows signing | Deferred; unsigned ZIPs are the chosen release path | Describe unsigned status in release notes |
 | Scoop | New generated manifests use MIT; historical `Unknown` manifests remain readable | Test public install/update/uninstall, then merge the package update PR |
 | macOS | Local development signing and bundle validation; arm64 ZIP | Public signing/notarization deferred; validate downloaded builds separately |
-| Homebrew | Release automation generates an arm64 cask | Test locally, then merge the first package update PR to add `Casks/snitt.rb` |
-| Automation | CI, shared platform builds, draft releases, and package update PRs | Push workflows and enable Actions to create pull requests |
+| Homebrew | `Casks/snitt.rb` installs the arm64 release | Validate installation/reinstallation/uninstall locally for new releases |
+| Automation | CI, shared platform builds, draft releases, and package update PRs | Enable Actions to create pull requests; see first setup below |
 
 The packaging scripts now include the root MIT license in future Windows and
 macOS archives. Existing archives have not been rebuilt or re-licensed.
@@ -38,7 +37,7 @@ an explicit Git URL for a tap, so a separate `homebrew-*` repository is optional
 See [Scoop manifests](https://github.com/ScoopInstaller/Scoop/wiki/App-Manifests)
 and [Homebrew taps](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap).
 
-The intended commands **after the public assets and definitions are ready** are:
+The public installation commands are:
 
 ```powershell
 scoop bucket add snitt https://github.com/isaksky/snitt.git
