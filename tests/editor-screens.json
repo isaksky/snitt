@@ -1,0 +1,7 @@
+{
+    "screens": [
+        {"name": "Primary", "x": 0, "y": 0, "width": 1920, "height": 1080},
+        {"name": "Left", "x": -2560, "y": 0, "width": 2560, "height": 1440, "logicalDpi": 144, "logicalBaseDpi": 96, "dpr": 1.5},
+        {"name": "Above", "x": 0, "y": -1440, "width": 2560, "height": 1440, "logicalDpi": 192, "logicalBaseDpi": 96, "dpr": 2}
+    ]
+}

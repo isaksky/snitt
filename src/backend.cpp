@@ -238,13 +238,14 @@ void Backend::showSelectors() {
         m_selectors.append(selector);
         if (screen.geometry.contains(QCursor::pos())) active = selector;
         connect(selector, &RegionSelector::canceled, this, [this] { finish(); });
-        connect(selector, &RegionSelector::selected, this, [this](const QImage &image) {
+        connect(selector, &RegionSelector::selected, this, [this, selector](const QImage &image) {
             if (!m_capturing) return;
             if (!image.save(m_output, "PNG")) {
                 emit error(QStringLiteral("Could not save the captured region."));
                 finish();
                 return;
             }
+            m_captureScreenGeometry = selector->geometry();
             emit captured(QUrl::fromLocalFile(m_output));
             finish(true);
         });
@@ -283,6 +284,7 @@ void Backend::showSelectors() {
             if (m_selections.isEmpty()) return;
             QVariantList images;
             for (const auto &selection : m_selections) images.append(selection.image);
+            m_captureScreenGeometry = m_selections.last().owner->geometry();
             emit regionsCaptured(images);
             finish(true);
         });
@@ -309,6 +311,27 @@ void Backend::updateSelections() {
         selector->setSelections(m_multiple, areas, m_selections.size());
         selector->setVideo(m_video);
     }
+}
+
+QRect Backend::editorGeometry(const QRect &available, const QSize &size) {
+    // Leave room for the native title bar and window borders. Coordinates are
+    // logical desktop coordinates, including monitors above/left of primary.
+    const QRect bounds = available.adjusted(16, 32, -16, -16);
+    const QSize fitted = size.boundedTo(bounds.size());
+    return QRect(bounds.x() + (bounds.width() - fitted.width()) / 2,
+                 bounds.y() + (bounds.height() - fitted.height()) / 2,
+                 fitted.width(), fitted.height());
+}
+
+void Backend::positionEditorForCapture(QObject *editor) {
+    auto *window = qobject_cast<QWindow *>(editor);
+    if (!window || !m_captureScreenGeometry.isValid()) return;
+    QScreen *screen = QGuiApplication::screenAt(m_captureScreenGeometry.center());
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
+    const QSize size = window->size();
+    window->setScreen(screen);
+    window->setGeometry(editorGeometry(screen->availableGeometry(), size));
 }
 
 void Backend::startRecording(RegionSelector *selector, const QRectF &area) {

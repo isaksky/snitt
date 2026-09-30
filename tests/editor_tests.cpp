@@ -66,6 +66,8 @@ private slots:
     void qmlSaveAndClose();
     void qmlKeyboardCommands();
     void qmlDismissal();
+    void captureEditorPlacement();
+    void settingsCopySaveAliases();
     void qmlRecordingControls();
     void qmlRecordingHotkeyStop_data();
     void qmlRecordingHotkeyStop();
@@ -1011,6 +1013,22 @@ void EditorTests::qmlSaveAndClose() {
     QCOMPARE(QImage(fromShortcut).convertToFormat(pattern().format()), pattern());
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
 
+    // Native Save must preserve the rendered annotations and the clipboard.
+    QVERIFY(canvas->load(QUrl::fromLocalFile(inputPath)));
+    canvas->addText(4, 4, 70, 40, "Save", 16);
+    QVERIFY(canvas->copy());
+    const QImage aliasImage = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QTest::keySequence(window, QKeySequence(QKeySequence::Save));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    const QString fromAlias = newSavedFile();
+    QVERIFY(!fromAlias.isEmpty()); created.append(fromAlias);
+    QCOMPARE(QImage(fromAlias).convertToFormat(aliasImage.format()), aliasImage);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep screenshot clipboard"));
+
     emit backend.regionsCaptured({pattern(), pattern()});
     QVERIFY(canvas->arranging());
     window->show();
@@ -1138,14 +1156,24 @@ void EditorTests::qmlKeyboardCommands() {
     auto *copyButton = visualItem(window->contentItem(), "copyButton");
     QVERIFY(copyButton);
     QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
-    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
-    QCoreApplication::processEvents();
-    QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
     QTest::keyClick(window, Qt::Key_C);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->image(), expectedImage);
     for (const QString &action : inputActions)
         QVERIFY(window->findChild<QObject *>(action + "Shortcut")->property("enabled").toBool());
+
+    // The native Copy alias exports annotations and finishes the same session.
+    QVERIFY(canvas->load(QUrl::fromLocalFile(path)));
+    canvas->addText(4, 4, 60, 30, "Copy", 14);
+    QVERIFY(canvas->copy());
+    const QImage aliasImage = QGuiApplication::clipboard()->image();
+    QGuiApplication::clipboard()->setText("not submitted");
+    QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    canvas->forceActiveFocus();
+    QTRY_VERIFY(window->isActive());
+    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+    QCOMPARE(QGuiApplication::clipboard()->image(), aliasImage);
 
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     QVERIFY(canvas->loadRegions({pattern(), pattern(), pattern(), pattern(), pattern(), pattern(), pattern()}));
@@ -1193,6 +1221,11 @@ void EditorTests::qmlKeyboardCommands() {
     auto *annotationText = window->findChild<QObject *>("annotationText");
     QVERIFY(annotationText);
     QTRY_COMPARE(annotationText->property("text").toString(), QString("chpbd"));
+    QTest::keySequence(window, QKeySequence(QKeySequence::SelectAll));
+    QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
+    QTRY_COMPARE(QGuiApplication::clipboard()->text(), QString("chpbd"));
+    QTest::keySequence(window, QKeySequence(QKeySequence::Save));
+    QVERIFY(window->property("editingText").toBool());
     QCOMPARE(canvas->tool(), QString("text"));
     QCOMPARE(canvas->ink(), textInk);
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
@@ -2537,6 +2570,119 @@ void EditorTests::windowsCaptureLatency() {
 #else
     QSKIP("Windows capture latency test");
 #endif
+}
+
+void EditorTests::settingsCopySaveAliases() {
+    QTemporaryDir directory;
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    const QByteArray defaults = readBytes(paths.settingsFile);
+    for (const auto &entry : {qMakePair(QString("copyClose"), QKeySequence(QKeySequence::Copy)),
+                              qMakePair(QString("saveClose"), QKeySequence(QKeySequence::Save))}) {
+        const QString letter = entry.first == "copyClose" ? "C" : "S";
+        const QString alias = entry.second.toString(QKeySequence::PortableText);
+        QCOMPARE(settings.shortcuts().value(entry.first).toStringList(), (QStringList{letter, alias}));
+        QCOMPARE(settings.shortcutHints().value(entry.first).toString(), letter);
+        QVERIFY(defaults.contains((entry.first + "=" + letter + "\n").toUtf8()));
+    }
+    // An existing file is never rewritten; disabled actions stay disabled.
+    QByteArray changed = defaults;
+    changed.replace("copyClose=C\n", "copyClose=\n");
+    changed.replace("saveClose=S\n", "saveClose=\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    QVERIFY(settings.shortcuts().value("copyClose").toStringList().isEmpty());
+    QVERIFY(settings.shortcuts().value("saveClose").toStringList().isEmpty());
+    QCOMPARE(readBytes(paths.settingsFile), changed);
+
+    // Explicit editor/global bindings take priority over automatic aliases.
+#ifdef Q_OS_MACOS
+    const QByteArray modifier = "Meta+";
+#else
+    const QByteArray modifier = "Ctrl+";
+#endif
+    changed = defaults;
+    changed.replace("toolRectangle=R\n", "toolRectangle=" + modifier + "C\n");
+    changed.replace("globalCapture=Ctrl+Print\n", "globalCapture=" + modifier + "S\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY2(settings.reloadNow(), qPrintable(settings.lastError()));
+    QCOMPARE(settings.shortcuts().value("copyClose").toStringList(), QStringList{"C"});
+    QCOMPARE(settings.shortcuts().value("saveClose").toStringList(), QStringList{"S"});
+    changed = defaults;
+    changed.replace("copyClose=C\n", "copyClose=C|" + modifier + "C\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    QCOMPARE(settings.shortcuts().value("copyClose").toStringList().size(), 2);
+}
+
+void EditorTests::captureEditorPlacement() {
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    Backend backend(&isolatedSettings());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    // Exercise the selector -> Backend -> QML path on every available monitor.
+    // Frozen fixture pixels avoid requiring screen-recording permission here.
+    const auto screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        for (bool multiple : {false, true}) {
+            window->hide();
+            window->setScreen(screens.first());
+            window->setPosition(screens.first()->availableGeometry().topLeft());
+            window->resize(1100, 760);
+            const QSize expectedSize = Backend::editorGeometry(screen->availableGeometry(), window->size())
+                .size();
+            const QSize nativeMinimumSize = expectedSize.expandedTo(window->minimumSize());
+            backend.m_capturing = true;
+            backend.m_multiple = multiple;
+            backend.m_output = backend.m_temp.filePath("placement.png");
+            backend.m_screens = {{screen->geometry(), pattern()}};
+            backend.showSelectors();
+            QCOMPARE(backend.m_selectors.size(), 1);
+            RegionSelector *selector = backend.m_selectors.first();
+            if (multiple) {
+                emit selector->regionAdded(QRectF(10, 10, 20, 20));
+                emit selector->accepted();
+            } else {
+                emit selector->selected(pattern());
+            }
+            QTRY_VERIFY(window->isVisible() && canvas->hasImage());
+            QCOMPARE(backend.m_captureScreenGeometry, screen->geometry());
+            QTRY_COMPARE(window->screen(), screen);
+            // Native window managers may enforce the editor's minimum size on
+            // a small display; offscreen can fit below that minimum.
+            QTRY_VERIFY(window->width() >= expectedSize.width() && window->width() <= nativeMinimumSize.width());
+            QTRY_VERIFY(window->height() >= expectedSize.height() && window->height() <= nativeMinimumSize.height());
+            QTRY_VERIFY(screen->availableGeometry().contains(window->geometry().center()));
+            const QPoint position = window->position();
+            window->hide();
+            emit backend.captureFinished(false);
+            QCOMPARE(window->position(), position); // Cancellation never relocates.
+            canvas->clear();
+        }
+    }
+    // Cover logical coordinates used by negative-origin and scaled displays.
+    for (const QRect available : {QRect(-1920, 0, 1920, 1040), QRect(0, -1440, 2560, 1400),
+                                  QRect(1920, 40, 1280, 680)}) {
+        const QRect placed = Backend::editorGeometry(available, QSize(1600, 1000));
+        QVERIFY(available.contains(placed));
+        QVERIFY(placed.top() >= available.top() + 32);
+        QVERIFY(placed.width() <= 1600 && placed.height() <= 1000);
+    }
+    backend.m_captureScreenGeometry = QRect(-100000, -100000, 100, 100);
+    backend.positionEditorForCapture(window);
+    QCOMPARE(window->screen(), QGuiApplication::primaryScreen());
+    QVERIFY(QGuiApplication::primaryScreen()->availableGeometry().contains(window->geometry().center()));
 }
 
 void EditorTests::settingsCreateDefaultsAndPreserveEdits() {

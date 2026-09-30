@@ -30,4 +30,9 @@ for SUITE in editor_tests imagetool_tests recording_tests; do
     QT_QPA_PLATFORM=offscreen "./$SUITE" -o results.txt,txt -o results.xml,junitxml || TEST_EXIT=$?
     cat results.txt
     [ "$TEST_EXIT" -eq 0 ] || exit "$TEST_EXIT"
+    if [ "$SUITE" = editor_tests ]; then
+        ./editor_tests -platform "offscreen:configfile=$ROOT/tests/editor-screens.json" \
+            captureEditorPlacement -o placement-results.txt,txt -o placement-results.xml,junitxml
+        cat placement-results.txt
+    fi
 done

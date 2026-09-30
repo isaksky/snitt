@@ -41,6 +41,14 @@ if ($Test) {
             $code = $LASTEXITCODE
             Get-Content results.txt
             if ($code -ne 0) { throw "${suite} failed: $code" }
+            if ($suite -eq 'editor_tests') {
+                Copy-Item "$root\tests\editor-screens.json" $testDir
+                & .\editor_tests.exe '-platform' 'offscreen:configfile=editor-screens.json' `
+                    'captureEditorPlacement' '-o' 'placement-results.txt,txt' '-o' 'placement-results.xml,junitxml'
+                $code = $LASTEXITCODE
+                Get-Content placement-results.txt
+                if ($code -ne 0) { throw "Multi-screen editor placement failed: $code" }
+            }
         } finally { $env:QT_QPA_PLATFORM = $oldPlatform; Pop-Location }
     }
 }

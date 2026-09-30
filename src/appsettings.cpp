@@ -431,6 +431,27 @@ void AppSettings::publish(const Candidate &candidate) {
         m_shortcuts.insert(it.key(), sequences);
         m_shortcutHints.insert(it.key(), labels.join(QStringLiteral(" / ")));
     }
+    // Keep the configured hints (C/S by default), while accepting the native
+    // Copy/Save keys for existing settings files too. Explicit bindings win.
+    for (const auto &alias : {qMakePair(QStringLiteral("copyClose"), QKeySequence(QKeySequence::Copy)),
+                              qMakePair(QStringLiteral("saveClose"), QKeySequence(QKeySequence::Save))}) {
+        QStringList sequences = m_shortcuts.value(alias.first).toStringList();
+        if (sequences.isEmpty()) continue;
+        const QString key = alias.second.toString(QKeySequence::PortableText);
+        bool claimed = false;
+        for (const auto &definition : shortcutDefinitions) {
+            const QString context = QString::fromLatin1(definition.context);
+            if ((context == QStringLiteral("global") || context.startsWith(QStringLiteral("editor")))
+                && m_shortcuts.value(QString::fromLatin1(definition.name)).toStringList().contains(key)) {
+                claimed = true;
+                break;
+            }
+        }
+        if (!claimed) {
+            sequences.append(key);
+            m_shortcuts.insert(alias.first, sequences);
+        }
+    }
     m_goodColor = candidate.goodColor;
     m_badColor = candidate.badColor;
     m_picturesRoot = candidate.picturesRoot;

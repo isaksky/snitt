@@ -49,6 +49,8 @@ public:
     QRect recordingControlsGeometry() const { return m_recordingControlsGeometry; }
     static QRect indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available);
     static QRect controlsGeometry(const QRect &available);
+    static QRect editorGeometry(const QRect &available, const QSize &size);
+    Q_INVOKABLE void positionEditorForCapture(QObject *editor);
     Q_INVOKABLE void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
@@ -94,6 +96,7 @@ private:
     ExclusionTestMode m_exclusionTestMode = ExclusionTestMode::Native;
 #endif
     QRect m_recordingRegion;
+    QRect m_captureScreenGeometry;
     QRect m_recordingIndicatorGeometry;
     QRect m_recordingControlsGeometry;
     bool m_stopWhenReady = false;

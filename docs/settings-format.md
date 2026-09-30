@@ -38,6 +38,8 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | `reviewMarkStart` / `reviewMarkEnd` | Set trim start / end at the playhead | `Ctrl+Space` / `Alt+Space` | Same | Trim review |
 | `reviewCancel` | Cancel export or keep the original recording | `Escape` | Same | Trim review |
 
+Copy and Save also accept Ctrl+C / Ctrl+S on Windows and Command+C / Command+S on macOS. The displayed hints remain the configured shortcuts (C / S by default). These aliases are inactive while editing text, when the corresponding action is disabled, or when an explicit editor or global binding already uses that key. Existing settings files need no changes.
+
 For example, this changes the Pixelate tool and preserves the other shortcut entries:
 
 ```ini

@@ -133,6 +133,7 @@ ApplicationWindow {
             captureErrorDialog.open()
         }
         function onCaptureFinished(captured) {
+            if (captured && !backend.recording) backend.positionEditorForCapture(win)
             if (!backend.recording && (captured || win.restoreAfterCapture || win.notice !== "")) win.showEditor()
         }
         function onRecordingSaved(path) { win.hide(); canvas.clear() }
