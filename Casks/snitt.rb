@@ -1,6 +1,6 @@
 cask "snitt" do
-  version "0.2.0"
-  sha256 "d81f703c053f224d3695792a2c815170ecddca9fc905809c29cdcbd8496481d3"
+  version "0.2.1"
+  sha256 "082e2de44a507d7cb232d3aef55269975463e112aeafa5f7f9fe1a6ed1590121"
 
   url "https://github.com/isaksky/snitt/releases/download/v#{version}/snitt_#{version}_macos_arm64.zip"
   name "Snitt"
