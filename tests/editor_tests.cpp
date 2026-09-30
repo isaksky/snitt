@@ -1283,6 +1283,8 @@ void EditorTests::qmlDismissal() {
     QVERIFY(canvas->loadRegions({pattern(), pattern()}));
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     canvas->forceActiveFocus();
+    // Native activation is asynchronous; window shortcuts need it before Escape.
+    QTRY_VERIFY(window->isActive());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(canvas->regionCount(), 0);
@@ -1343,6 +1345,7 @@ void EditorTests::qmlDismissal() {
     reopen(); // The next screenshot session still opens normally.
     window->close();
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QTRY_VERIFY(window->isActive());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 }

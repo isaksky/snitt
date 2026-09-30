@@ -13,6 +13,17 @@ if [ -x "$ROOT/build/Snitt.app/Contents/MacOS/snitt" ]; then
         # Development builds need the same stable identity as installed builds;
         # ad-hoc signatures invalidate screen-capture grants after each rebuild.
         "$ROOT/bin/sign-macos" "$ROOT/build/Snitt.app"
+        # Launch Services resets the working directory. Resolve image paths
+        # here, while they still refer to the directory that invoked this script.
+        CALLER_DIR="$(pwd -P)"
+        for arg in "$@"; do
+            shift
+            case "$arg" in
+                ''|/*|-*) ;;
+                *) arg="$CALLER_DIR/$arg" ;;
+            esac
+            set -- "$@" "$arg"
+        done
         # Direct execution makes the terminal responsible for capture access.
         # A fresh instance still forwards commands to our single-instance server.
         exec open -W -n "$ROOT/build/Snitt.app" --args "$@"
