@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# Shared parallelism for the application, tests, and macOS media helpers.
+set -eu
+
+JOBS="${SNITT_BUILD_JOBS:-}"
+if [ -z "$JOBS" ]; then
+    if command -v nproc >/dev/null 2>&1; then
+        JOBS="$(nproc 2>/dev/null || echo 1)"
+    elif command -v sysctl >/dev/null 2>&1; then
+        JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
+    else
+        JOBS=1
+    fi
+fi
+
+case "$JOBS" in
+    ''|*[!0-9]*) echo 'SNITT_BUILD_JOBS must be a positive integer.' >&2; exit 1 ;;
+esac
+if ! [ "$JOBS" -gt 0 ] 2>/dev/null; then
+    echo 'SNITT_BUILD_JOBS must be a positive integer.' >&2
+    exit 1
+fi
+printf '%s\n' "$JOBS"

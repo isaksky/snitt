@@ -28,6 +28,8 @@ private slots:
     void annotationFontSelectionAndTextReplay();
     void replayedAnnotationsAndExportPolicy();
     void replayedEditsKeepOperationOrder();
+    void cutsKeepSmoothImageScaling();
+    void repeatedCutsPreserveImageQuality();
     void fractionalCutsKeepPrivacyMasksAligned();
     void eraseReplayKeepsExactSample();
     void annotationPreviewDoesNotSoftenOnRelease();
@@ -503,6 +505,96 @@ void ImageToolTests::replayedEditsKeepOperationOrder() {
     QVERIFY(clean.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
     QVERIFY(changed.annotate("arrow", {25, 40}, {55, 40}, Qt::red, 2));
     QCOMPARE(clean.render(1.5), changed.render(1.5));
+}
+
+void ImageToolTests::cutsKeepSmoothImageScaling() {
+    QImage original(160, 120, QImage::Format_ARGB32_Premultiplied);
+    for (int y = 0; y < original.height(); ++y)
+        for (int x = 0; x < original.width(); ++x)
+            original.setPixel(x, y, (x + y) % 2 ? qRgb(255, 255, 255) : qRgb(0, 0, 0));
+
+    for (const bool vertical : {true, false}) {
+        const QPoint offset = vertical ? QPoint(4, 0) : QPoint(0, 4);
+        const QImage remainder = original.copy(QRect(offset, original.size() - QSize(offset.x(), offset.y())));
+        ImageDocument cutOnly;
+        cutOnly.reset(original);
+        QVERIFY(cutOnly.cut(vertical, 0, 4));
+        QCOMPARE(cutOnly.image(), remainder);
+        QCOMPARE(cutOnly.render(), remainder);
+        QCOMPARE(cutOnly.exportScale(), 1.0);
+        for (const qreal scale : {0.5, 0.75, 1.25, 1.5, 3.0}) {
+            const QSize size(qRound(remainder.width() * scale), qRound(remainder.height() * scale));
+            const QImage smooth = remainder.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            QVERIFY(smooth != remainder.scaled(size, Qt::IgnoreAspectRatio, Qt::FastTransformation));
+            QCOMPARE(cutOnly.render(scale), smooth);
+            ImageDocument fresh;
+            fresh.reset(remainder);
+            const auto preview = [&](ImageDocument &document) {
+                QImage frame(size, original.format());
+                frame.fill(Qt::transparent);
+                QPainter painter(&frame);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform);
+                painter.scale(scale, scale);
+                document.paint(painter, scale);
+                painter.end();
+                return frame;
+            };
+            QCOMPARE(preview(cutOnly), preview(fresh));
+        }
+
+        for (const bool annotateFirst : {false, true}) {
+            for (const bool text : {false, true}) {
+                const auto addAnnotation = [&](ImageDocument &document, QPointF shift) {
+                    return text ? document.text(QRectF(QPointF(70, 60) - shift, QSizeF(80, 40)), "Sharp", Qt::red, 20)
+                                : document.annotate("arrow", QPointF(70.25, 60.25) - shift,
+                                                    QPointF(140.25, 100.25) - shift, Qt::red, 2);
+                };
+                ImageDocument edited, fresh;
+                edited.reset(original);
+                if (annotateFirst) QVERIFY(addAnnotation(edited, {}));
+                QVERIFY(edited.cut(vertical, 0, 4));
+                if (!annotateFirst) QVERIFY(addAnnotation(edited, offset));
+                fresh.reset(remainder);
+                QVERIFY(addAnnotation(fresh, offset));
+                for (const qreal scale : {0.5, 0.75, 1.0, 1.25, 1.5, 3.0})
+                    QCOMPARE(edited.render(scale), fresh.render(scale));
+                QCOMPARE(edited.render(edited.exportScale()), fresh.render(fresh.exportScale()));
+            }
+        }
+    }
+}
+
+void ImageToolTests::repeatedCutsPreserveImageQuality() {
+    QImage original(320, 240, QImage::Format_ARGB32_Premultiplied);
+    for (int y = 0; y < original.height(); ++y)
+        for (int x = 0; x < original.width(); ++x)
+            original.setPixelColor(x, y, QColor((37 * x + 13 * y) % 256, (17 * x + 43 * y) % 256,
+                                                (71 * x + 29 * y) % 256, (19 * x + 23 * y) % 256));
+    ImageDocument cutOnly, marked;
+    cutOnly.reset(original); marked.reset(original);
+    QVERIFY(marked.annotate("arrow", {180.25, 150.25}, {280.25, 210.25}, Qt::red, 2));
+    QVERIFY(marked.text(QRectF(140, 90, 150, 40), "Sharp", Qt::green, 20));
+    for (int i = 0; i < 120; ++i) {
+        QVERIFY(cutOnly.cut(i % 2 == 0, 0, 1));
+        QVERIFY(marked.cut(i % 2 == 0, 0, 1));
+        const QPoint offset((i + 2) / 2, (i + 1) / 2);
+        QCOMPARE(cutOnly.image(), original.copy(QRect(offset, original.size() - QSize(offset.x(), offset.y()))));
+        QCOMPARE(cutOnly.render(cutOnly.exportScale()), cutOnly.image());
+    }
+    // More than 50 edits also exercises rendering after old undo frames expire.
+    ImageDocument fresh;
+    fresh.reset(original.copy(60, 60, 260, 180));
+    QVERIFY(fresh.annotate("arrow", {120.25, 90.25}, {220.25, 150.25}, Qt::red, 2));
+    QVERIFY(fresh.text(QRectF(80, 30, 150, 40), "Sharp", Qt::green, 20));
+    for (const qreal scale : {0.5, 1.0, 1.25, 1.5, 3.0})
+        QCOMPARE(marked.render(scale), fresh.render(scale));
+    const QImage exported = marked.render(marked.exportScale());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString error;
+    const QString path = screenshots::savePng(exported, temporary.path(), &error);
+    QVERIFY2(!path.isEmpty(), qPrintable(error));
+    QCOMPARE(QImage(path).convertToFormat(exported.format()), exported);
 }
 
 void ImageToolTests::fractionalCutsKeepPrivacyMasksAligned() {

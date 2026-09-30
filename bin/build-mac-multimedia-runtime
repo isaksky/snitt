@@ -226,20 +226,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path,
                         default=ROOT / "build/tools/mac-multimedia-runtime")
-    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--jobs", type=int,
+                        help="parallel jobs (default: SNITT_BUILD_JOBS or available CPUs)")
     parser.add_argument("--qmake", default=os.environ.get("SNITT_QMAKE") or shutil.which("qmake6"))
     parser.add_argument("--check-sdk", action="store_true",
                         help="validate the selected Qt SDK before building the app or helper")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("This runtime is built on macOS only")
+    if args.jobs is None:
+        args.jobs = int(capture(ROOT / "bin/build-jobs"))
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
     qt_version = sdk_version(args.qmake)
     if args.check_sdk:
         print(f"Qt SDK {qt_version}: {capture(args.qmake, '-query', 'QT_INSTALL_PREFIX')}")
         return
-    if args.jobs < 1:
-        parser.error("--jobs must be positive")
-
     base = args.build_dir.resolve()
     base.mkdir(parents=True, exist_ok=True)
     ffmpeg_archive, ffmpeg_source = source_tree(base, "ffmpeg")

@@ -2,9 +2,21 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+# Quitting must not rebuild or replace the bundle of the running process.
+if [ "$#" -eq 1 ] && [ "$1" = --quit ] && [ -x "$ROOT/build/Snitt.app/Contents/MacOS/snitt" ]; then
+    exec "$ROOT/build/Snitt.app/Contents/MacOS/snitt" --quit
+fi
 "$ROOT/bin/build"
 
 if [ -x "$ROOT/build/Snitt.app/Contents/MacOS/snitt" ]; then
+    if [ "$(uname -s)" = Darwin ]; then
+        # Development builds need the same stable identity as installed builds;
+        # ad-hoc signatures invalidate screen-capture grants after each rebuild.
+        "$ROOT/bin/sign-macos" "$ROOT/build/Snitt.app"
+        # Direct execution makes the terminal responsible for capture access.
+        # A fresh instance still forwards commands to our single-instance server.
+        exec open -W -n "$ROOT/build/Snitt.app" --args "$@"
+    fi
     exec "$ROOT/build/Snitt.app/Contents/MacOS/snitt" "$@"
 fi
 exec "$ROOT/build/snitt" "$@"

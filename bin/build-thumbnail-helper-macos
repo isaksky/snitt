@@ -4,6 +4,7 @@
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo 'macOS is required.' >&2; exit 1; }
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+JOBS="$("$ROOT/bin/build-jobs")"
 VERSION=7.1.3
 SHA256=f0bf043299db9e3caacb435a712fc541fbb07df613c4b893e8b77e67baf3adbe
 TOOL_DIR="$ROOT/build/tools/ffmpeg-thumbnail"
@@ -31,7 +32,7 @@ if [ ! -x "$HELPER" ] || [ ! -x "$TOOL_DIR/ffprobe-media" ] || [ ! -f "$STAMP" ]
         --enable-decoder=h264,hevc --enable-parser=h264,hevc \
         --enable-encoder=mjpeg --enable-muxer=image2,mp4 \
         --enable-filter=scale,format,reverse
-    make -j"$(sysctl -n hw.ncpu)" ffmpeg ffprobe
+    make -j"$JOBS" ffmpeg ffprobe
     cp ffmpeg "$HELPER"
     cp ffprobe "$TOOL_DIR/ffprobe-media"
     touch "$STAMP"

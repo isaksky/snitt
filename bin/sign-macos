@@ -11,6 +11,14 @@ fi
 
 umask 077
 SIGNING_DIR="$HOME/Library/Application Support/snitt/signing"
+# Reuse the identity from before the app rename when Snitt has no setup yet.
+# Leave its keychain in place: moving it can break its registration and trust.
+LEGACY_SIGNING_DIR="$HOME/Library/Application Support/xshot/signing"
+if [ ! -e "$SIGNING_DIR" ] && [ -f "$LEGACY_SIGNING_DIR/local.keychain-db" ] \
+    && [ -f "$LEGACY_SIGNING_DIR/certificate.pem" ] && [ -f "$LEGACY_SIGNING_DIR/password" ] \
+    && [ -f "$LEGACY_SIGNING_DIR/trust-configured" ]; then
+    SIGNING_DIR="$LEGACY_SIGNING_DIR"
+fi
 KEYCHAIN="$SIGNING_DIR/local.keychain-db"
 mkdir -p "$SIGNING_DIR"
 chmod 700 "$SIGNING_DIR"

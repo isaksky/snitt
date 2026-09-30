@@ -2,6 +2,8 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+JOBS="$("$ROOT/bin/build-jobs")"
+export SNITT_BUILD_JOBS="$JOBS"
 
 if [ -n "${SNITT_QMAKE:-}" ]; then
     QMAKE="$SNITT_QMAKE"
@@ -34,13 +36,7 @@ else
     esac
 fi
 
-JOBS=1
-if command -v nproc >/dev/null 2>&1; then
-    JOBS="$(nproc)"
-elif command -v sysctl >/dev/null 2>&1; then
-    JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
-fi
-
+printf 'Building with %s parallel jobs.\n' "$JOBS"
 mkdir -p "$ROOT/build"
 printf '%s\n' "$QMAKE" > "$ROOT/build/.snitt-qmake"
 if [ "$(uname -s)" = Darwin ]; then
@@ -61,7 +57,7 @@ make -j"$JOBS"
 # metadata even when an older development bundle already exists.
 if [ "$(uname -s)" = Darwin ]; then
     cp "$ROOT/platform/macos/Info.plist" "$APP_BUILD/Snitt.app/Contents/Info.plist"
-    "$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE"
+    "$ROOT/bin/build-mac-multimedia-runtime" --qmake "$QMAKE" --jobs "$JOBS"
     rm -rf "$ROOT/build/Snitt.app"
     ditto "$APP_BUILD/Snitt.app" "$ROOT/build/Snitt.app"
     "$ROOT/bin/build-thumbnail-helper-macos"

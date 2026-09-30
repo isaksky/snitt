@@ -185,16 +185,22 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     };
     const auto &ops = m_operationHistory[m_index];
     int lastRasterEdit = -1;
+    bool hasPrivacyEdit = false;
     QSize outputSize = m_source.size();
     for (int i = 0; i < operationCount; ++i) {
         if (ops[i].kind == Operation::Cut || ops[i].kind == Operation::Blur
             || ops[i].kind == Operation::Erase) lastRasterEdit = i;
+        if (ops[i].kind == Operation::Blur || ops[i].kind == Operation::Erase) hasPrivacyEdit = true;
         if (ops[i].kind == Operation::Cut) {
             const int removed = ops[i].end - ops[i].start;
             if (ops[i].vertical) outputSize.rwidth() -= removed;
             else outputSize.rheight() -= removed;
         }
     }
+    // A cut only relocates intact pixels, so keep the original smooth scaling.
+    // Privacy edits retain nearest-neighbor scaling for hard block boundaries
+    // and exact erase samples, including edits followed by cuts.
+    const auto transformation = hasPrivacyEdit ? Qt::FastTransformation : Qt::SmoothTransformation;
     // Cuts replay at native resolution; only their remainder is enlarged. Using
     // the original capture here incorrectly rejects a small, zoomed-in preview
     // and makes paint() fall back to flattened, low-resolution annotations.
@@ -279,7 +285,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
             }
         }
         QImage result = raster.image().scaled(scaledSize(raster.image().size()),
-                                              Qt::IgnoreAspectRatio, Qt::FastTransformation);
+                                              Qt::IgnoreAspectRatio, transformation);
         if (result.isNull()) return {};
         QPainter p(&result);
         p.scale(scale, scale);
@@ -343,8 +349,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
             base = replay.image();
         }
     }
-    QImage result = base.scaled(scaledSize(base.size()), Qt::IgnoreAspectRatio,
-                                lastRasterEdit >= 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
+    QImage result = base.scaled(scaledSize(base.size()), Qt::IgnoreAspectRatio, transformation);
     if (result.isNull()) return {};
     for (int i = lastRasterEdit + 1; i < operationCount; ++i) {
         const auto &op = ops[i];

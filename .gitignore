@@ -1,4 +1,5 @@
 /build/
+/example-sites/
 .DS_Store
 *.pro.user
 __pycache__/

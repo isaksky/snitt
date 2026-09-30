@@ -31,13 +31,14 @@ bundled with the app, so no separate FFmpeg install is needed to use Snitt.
 Re-run the same command to update; use `./bin/uninstall` to remove the app and login
 entry.
 
-macOS may request Screen & System Audio Recording permission for Snitt or the
-terminal launching a development build.
+macOS may request Screen & System Audio Recording permission for Snitt.
 If capture opens an error dialog, enable the installed `~/Applications/Snitt.app`
 in System Settings → Privacy & Security → Screen & System Audio Recording, then
-quit and reopen Snitt. The installer creates a persistent local signing identity
+quit and reopen Snitt. Both the installer and development launcher use a persistent local signing identity
 in `~/Library/Application Support/snitt/signing`; macOS may authenticate its first
-setup. Keep that directory across rebuilds so updates retain the same identity.
+setup. Existing xshot installations reuse their identity in
+`~/Library/Application Support/xshot/signing` when Snitt has no signing setup yet.
+Keep the signing directory across rebuilds so updates retain the same identity.
 Trust is limited to code signing by Apple's `codesign` tool. This is a local
 development certificate, not an Apple Developer ID or notarized release. Set
 `SNITT_SIGN_IDENTITY` to use your own signing identity instead. Migrating from
@@ -53,6 +54,26 @@ Run and test:
 ./bin/run --quit             # quit the running instance
 ./bin/test
 ```
+
+The macOS build steps and `./bin/test` use the available CPU count for parallel
+compilation, including the private multimedia plugin and FFmpeg helpers. To
+set a lower limit, use `SNITT_BUILD_JOBS=8 ./bin/build` (or `./bin/run`,
+`./bin/install`, or `./bin/test`). The limit must be a positive integer; the
+multimedia builder also accepts an explicit `--jobs` override when run directly.
+
+On macOS, `./bin/run` signs the development bundle and launches it through
+Launch Services, so screen-capture permission belongs to Snitt rather than the
+terminal. It uses the same persistent local signing identity as the installer,
+or `SNITT_SIGN_IDENTITY` when set. The first run may authenticate signing setup.
+Enable `build/Snitt.app` in System Settings → Privacy & Security → Screen &
+System Audio Recording and quit and relaunch it after granting access.
+When moving from an older ad-hoc build, remove its Snitt entry and add the newly
+signed app if macOS still rejects capture. The renamed app needs its own Snitt
+permission entry even if xshot is already enabled.
+
+Snitt forwards commands to an already-running instance. To test a new build,
+save any open work, run `./bin/run --quit`, then `./bin/run --show`. The quit
+command skips rebuilding and signing, so it also works while fixing permissions.
 
 ## Windows
 
