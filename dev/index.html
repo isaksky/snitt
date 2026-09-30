@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Snitt annotation demo — Relay</title>
+  <style>
+    :root {
+      --ink: #202a36;
+      --muted: #75808d;
+      --line: #e5e9ed;
+      --paper: #ffffff;
+      --soft: #f6f8fa;
+      --accent: #455dc5;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell { width: min(1180px, calc(100% - 64px)); margin: 0 auto; }
+    .topbar { border-bottom: 1px solid var(--line); }
+    .topbar-inner { height: 68px; display: flex; align-items: center; gap: 52px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-size: 23px; font-weight: 750; letter-spacing: -1px; }
+    .brand-icon { width: 31px; height: 31px; color: var(--accent); }
+    .tabs { height: 100%; display: flex; align-items: center; gap: 28px; color: var(--muted); font-size: 14px; }
+    .tab { height: 100%; display: flex; align-items: center; }
+    .tab.active { border-bottom: 2px solid var(--accent); color: var(--ink); font-weight: 600; }
+    .workspace { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: #586372; }
+    .avatar { width: 30px; height: 30px; display: grid; place-items: center; background: #eef0f8; border-radius: 50%; font-size: 11px; color: #526190; font-weight: 700; }
+    .intro { display: flex; justify-content: space-between; align-items: flex-start; padding: 24px 0 22px; gap: 24px; }
+    .eyebrow { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 1.4px; text-transform: uppercase; }
+    h1 { font-size: 28px; font-weight: 680; letter-spacing: -1.2px; line-height: 1.2; margin: 8px 0 9px; }
+    .intro p { margin: 0; color: #6e7987; font-size: 14px; }
+    /* Flat white padding around the draft label is a Smart erase target. */
+    .draft { margin-top: 4px; padding: 17px 30px; color: #a0a8b2; background: #fff; font-size: 12px; white-space: nowrap; }
+    .integrations { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .card-heading { display: flex; align-items: center; gap: 12px; padding: 18px 24px 13px; }
+    .service-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: #697887; }
+    .service-icon svg { width: 20px; height: 20px; }
+    h2 { font-size: 17px; font-weight: 650; letter-spacing: -.35px; margin: 0 0 4px; }
+    .service-caption { font-size: 12px; color: var(--muted); }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+    .card-heading .status { margin-left: auto; }
+    .status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .status.good { color: #527466; }
+    .status.bad { color: #9a6a5b; }
+    .fields { margin: 0; padding: 0 24px; }
+    .field { padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .field:last-child { border-bottom: none; }
+    dt { margin-bottom: 7px; font-size: 10px; font-weight: 650; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+    dd { margin: 0; font-size: 15px; }
+    .mono, code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; letter-spacing: -.2px; }
+    .credential { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .demo-tag { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 9px; letter-spacing: .7px; text-transform: uppercase; color: #98a1ab; }
+    .signing { display: flex; align-items: center; gap: 7px; }
+    .signing svg { width: 14px; height: 14px; color: #798693; }
+    .failure-detail { margin-left: 80px; }
+    .annotation-space { height: 46px; margin: 0 24px; }
+    .card-bottom { height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-top: 1px solid var(--line); background: #fafbfc; font-size: 11px; color: #8a949f; }
+    /* A self-contained full-width strip can be cut without crossing other content. */
+    .announcement { margin: 18px 0; height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 20px; background: #f4f5f8; border: 1px solid #e9ebf0; border-radius: 6px; font-size: 12px; color: #7b8494; }
+    .announcement strong { color: #596477; font-weight: 600; margin-right: 8px; }
+    .announcement-note { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: #a2a9b5; white-space: nowrap; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 13px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading span { font-size: 11px; color: var(--muted); }
+    .table-wrap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+    th { background: #fafbfc; padding: 11px 20px; color: #8a949e; font-weight: 550; font-size: 10px; text-transform: uppercase; letter-spacing: .7px; }
+    td { height: 47px; padding: 0 20px; border-top: 1px solid var(--line); }
+    .event-name { color: #55606e; }
+    .response { display: inline-block; min-width: 56px; padding: 4px 7px; background: #f4f6f7; border-radius: 4px; font-size: 11px; color: #65717c; }
+    .result { white-space: nowrap; }
+    .time, .duration { color: #8a949e; }
+    footer { min-height: 54px; display: flex; justify-content: space-between; align-items: center; gap: 20px; color: #a1a9b3; font-size: 10px; }
+    footer .footer-status { display: flex; gap: 6px; align-items: center; }
+    .tiny-dot { height: 4px; width: 4px; border-radius: 50%; background: #98afa3; }
+
+    @media (max-width: 1100px) {
+      .shell { width: calc(100% - 48px); }
+      .topbar-inner { gap: 32px; }
+      .card-heading, .card-bottom { padding-left: 18px; padding-right: 18px; }
+      .fields { padding-left: 18px; padding-right: 18px; }
+      dd { font-size: 12px; }
+      th, td { padding-left: 14px; padding-right: 14px; }
+      .workspace-name { display: none; }
+    }
+    @media (max-width: 760px) {
+      .shell { width: calc(100% - 32px); }
+      .topbar-inner { height: 64px; gap: 24px; }
+      .tabs { gap: 16px; font-size: 12px; }
+      .tab:last-child { display: none; }
+      .intro { padding-top: 24px; flex-wrap: wrap; gap: 4px; }
+      .draft { margin: 0; padding: 14px 20px; }
+      .integrations { grid-template-columns: 1fr; gap: 18px; }
+      .announcement { height: auto; min-height: 48px; padding: 12px 16px; line-height: 1.6; }
+      .announcement-note { display: none; }
+      .table-wrap { overflow-x: auto; }
+      table { min-width: 680px; }
+      footer { align-items: flex-start; padding: 24px 0; line-height: 1.6; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M4 7h12a8 8 0 0 1 8 8v2" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+          <path d="M28 25H16a8 8 0 0 1-8-8v-2" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+          <path d="m20 13 4 5 4-5M4 19l4-5 4 5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Relay
+      </div>
+      <div class="tabs" aria-label="Workspace sections">
+        <span class="tab active" aria-current="page">Overview</span>
+        <span class="tab">Endpoints</span>
+        <span class="tab">Event logs</span>
+      </div>
+      <div class="workspace"><span class="workspace-name">Northstar workspace</span><span class="avatar">NS</span></div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="intro">
+      <div>
+        <div class="eyebrow">Developer console / Sandbox</div>
+        <h1>Webhook overview</h1>
+        <p>Your events, connected to the right places.</p>
+      </div>
+      <div class="draft" id="draft-label">Internal draft · review 07</div>
+    </div>
+
+    <section class="integrations" aria-label="Webhook integrations">
+      <article class="card">
+        <div class="card-heading">
+          <div class="service-icon">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 7 8-4 8 4v10l-8 4-8-4V7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m4 7 8 4 8-4M12 11v10M8 5l8 4" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <div><h2>Order fulfillment</h2><div class="service-caption">order.created · order.updated</div></div>
+          <span class="status good">Connected</span>
+        </div>
+        <dl class="fields">
+          <div class="field"><dt>Endpoint URL</dt><dd class="mono">https://fulfillment.example.com/webhooks</dd></div>
+          <div class="field"><dt>Request security</dt><dd class="signing"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m8 2 5 2v4c0 3-5 6-5 6S3 11 3 8V4l5-2Z" stroke="currentColor" stroke-width="1.2"/><path d="m5.5 7.5 1.7 1.7 3.4-3.4" stroke="currentColor" stroke-width="1.2"/></svg><span id="signing-enabled">Request signing enabled</span></dd></div>
+          <div class="field"><dt>API key</dt><dd class="credential"><code id="api-key">demo_FAKE_7f42a91c83e6</code><span class="demo-tag">Demo credential</span></dd></div>
+        </dl>
+        <div class="annotation-space" id="good-note" role="group" aria-label="Good annotation space"></div>
+        <div class="card-bottom"><span>Created by Alex Morgan</span><span>3 events subscribed</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-heading">
+          <div class="service-icon">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="14" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <div><h2>Legacy inventory</h2><div class="service-caption">inventory.updated</div></div>
+          <span class="status bad">Needs attention</span>
+        </div>
+        <dl class="fields">
+          <div class="field"><dt>Endpoint URL</dt><dd class="mono" id="insecure-endpoint">http://legacy.example.com/hooks</dd></div>
+          <div class="field"><dt>Request security</dt><dd id="signing-disabled">Request signing disabled</dd></div>
+          <div class="field"><dt>Latest response</dt><dd><span class="mono" id="failed-response">500</span><span class="failure-detail">Internal Server Error</span></dd></div>
+        </dl>
+        <div class="annotation-space" id="bad-note" role="group" aria-label="Bad annotation space"></div>
+        <div class="card-bottom"><span>Last successful delivery: 2 days ago</span><span>1 event subscribed</span></div>
+      </article>
+    </section>
+
+    <aside id="announcement" class="announcement" aria-label="Workspace announcement">
+      <span><strong>From the team</strong> Our September workspace newsletter is here. See what’s new across Relay.</span>
+      <span class="announcement-note">Workspace announcement</span>
+    </aside>
+
+    <section aria-labelledby="deliveries-title">
+      <div class="section-heading"><h2 id="deliveries-title">Recent deliveries</h2><span>Last 30 minutes · all integrations</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Integration</th><th scope="col">Response</th><th scope="col">Result</th><th scope="col">Duration</th></tr></thead>
+          <tbody>
+            <tr><td class="time mono">10:42:08</td><td class="event-name mono">order.created</td><td>Order fulfillment</td><td><span class="response mono">200 OK</span></td><td class="result"><span id="delivered">Delivered successfully</span></td><td class="duration mono">142 ms</td></tr>
+            <tr><td class="time mono">10:40:31</td><td class="event-name mono">inventory.updated</td><td>Legacy inventory</td><td><span class="response mono">500</span></td><td class="result"><span id="retries">Retries exhausted</span></td><td class="duration mono">8,420 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer><span class="footer-status"><span class="tiny-dot" aria-hidden="true"></span> Sandbox workspace · all data is fictional</span><span>Last synced at 10:42 AM</span></footer>
+  </main>
+</body>
+</html>

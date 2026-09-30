@@ -7,6 +7,8 @@ Snitt stays in the macOS menu bar or Windows system tray. **Ctrl+Print Screen**
 starts a capture from any app; on macOS with a PC keyboard, use **Control+F13**
 (the Control key).
 
+![Snitt annotation demo](dev/demo.gif)
+
 ## Install
 
 ### macOS 15+ · Apple silicon

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# macOS 15+: Swift + ScreenCaptureKit capture, FFmpeg delivery files.
+# Raw takes live under build/; the current MP4, GIF, and PNG are exported to dev/.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+BUILD="$ROOT/build/annotation-demo"
+MODE="${1:-help}"
+
+usage() {
+  cat <<'USAGE'
+Usage: dev/run-demo MODE [OPTIONS]
+
+  preflight                 Check macOS input/capture permissions.
+  prepare [--replace-demo]  Open the Safari fixture and calibrate Snitt.
+  rehearse [--replace-demo] Run the 26-second annotation timeline; save checkpoints.
+  record [--replace-demo]   Record and export a ~30-second MP4 and looping GIF.
+  export TAKE_DIRECTORY    Re-export a completed take without driving the UI.
+
+Requires macOS 15+, Xcode command-line tools, a built build/Snitt.app,
+and FFmpeg/ffprobe on PATH. Grant Accessibility and Screen Recording to
+the invoking terminal/app if preflight reports missing access.
+
+Only the exact Safari demo content and Snitt editor windows are captured.
+No desktop/display capture, browser chrome, other apps, child windows, or
+audio are recorded. Switching focus or moving the editor aborts input.
+Finish any existing Snitt image first. --replace-demo explicitly permits
+replacing an image left by a previous prepare/rehearsal, not personal work.
+The final annotated PNG is copied to the clipboard, just like Snitt's Copy.
+
+Edit dev/index.html and dev/timeline.json to adjust the demo. No app source
+changes or Safari JavaScript/Apple Events permissions are needed.
+Actions run consecutively. movementDuration controls cursor travel; each
+action's duration controls its drag. Only the finished result has a hold.
+USAGE
+}
+
+export_take() {
+  local take="$1"
+  command -v ffmpeg >/dev/null
+  command -v ffprobe >/dev/null
+  for file in safari.mp4 editor.mp4 source.png annotated.png; do
+    [[ -f "$take/$file" ]] || { echo "Missing $take/$file" >&2; exit 1; }
+  done
+  # Each input was captured with desktopIndependentWindow. These filters never
+  # read a screen device. Fit into a stable frame with a neutral background.
+  ffmpeg -hide_banner -loglevel warning -y \
+    -i "$take/safari.mp4" -i "$take/editor.mp4" \
+    -loop 1 -framerate 60 -t 2 -i "$take/source.png" \
+    -filter_complex \
+    '[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,fps=60,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[a];[1:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=26,trim=duration=26,fps=60,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[b];[2:v]trim=duration=2,setpts=PTS-STARTPTS,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[c];[a][b][c]concat=n=3:v=1:a=0[v]' \
+    -map '[v]' -an -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p \
+    -movflags +faststart "$take/demo.mp4"
+  ffmpeg -hide_banner -loglevel warning -y -i "$take/demo.mp4" \
+    -filter_complex \
+    '[0:v]fps=15,scale=960:-1:flags=lanczos,colorspace=all=bt709:trc=iec61966-2-1,split[a][b];[a]palettegen=stats_mode=diff:max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle' \
+    -loop 0 "$take/demo.gif"
+  ffprobe -v error -show_entries format=duration,size:stream=codec_name,width,height,avg_frame_rate \
+    -of json "$take/demo.mp4" > "$take/video-info.json"
+  # Keep one reviewable, tracked delivery set beside the source and timeline.
+  # Raw recordings, calibration images, and older takes remain in build/.
+  cp "$take/demo.mp4" "$ROOT/dev/demo.mp4"
+  cp "$take/demo.gif" "$ROOT/dev/demo.gif"
+  cp "$take/annotated.png" "$ROOT/dev/annotated.png"
+  printf '\nMP4: %s\nGIF: %s\nPNG: %s\n' "$ROOT/dev/demo.mp4" "$ROOT/dev/demo.gif" "$ROOT/dev/annotated.png"
+}
+
+case "$MODE" in
+  help|-h|--help) usage; exit 0 ;;
+  export) [[ $# == 2 ]] || { usage; exit 1; }; export_take "$2"; exit 0 ;;
+  preflight|prepare|rehearse|record) ;;
+  *) usage; exit 1 ;;
+esac
+[[ "$(uname -s)" == Darwin ]] || { echo 'Recording requires macOS.' >&2; exit 1; }
+[[ $# -le 2 && ( $# == 1 || "$2" == --replace-demo ) ]] || { usage; exit 1; }
+mkdir -p "$BUILD"
+if [[ ! -x "$BUILD/driver" || "$ROOT/dev/annotation-demo.swift" -nt "$BUILD/driver" ]]; then
+  swiftc -O -swift-version 5 -parse-as-library "$ROOT/dev/annotation-demo.swift" -o "$BUILD/driver"
+fi
+if [[ "$MODE" == preflight ]]; then exec "$BUILD/driver" preflight; fi
+TAKE="$BUILD/$MODE-$(date +%Y%m%d-%H%M%S)-$$"
+mkdir -p "$TAKE"
+shift
+"$BUILD/driver" "$MODE" "$ROOT" "$TAKE" "$@" 2>&1 | tee "$TAKE/run.log"
+if [[ "$MODE" == record ]]; then export_take "$TAKE"; fi
+printf '\nTake: %s\n' "$TAKE"

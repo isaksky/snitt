@@ -1,0 +1,15 @@
+{
+  "duration": 26,
+  "movementDuration": 0.7,
+  "actions": [
+    {"tool": "Pixelate", "target": "apiKey", "duration": 1.0},
+    {"tool": "Smart erase", "target": "draft", "duration": 1.0},
+    {"tool": "Rectangle", "mode": "good", "target": "signing", "duration": 1.0},
+    {"tool": "Highlight", "target": "delivered", "duration": 1.0},
+    {"tool": "Rectangle", "mode": "bad", "target": "endpoint", "duration": 1.0},
+    {"tool": "Highlight", "target": "retries", "duration": 1.0},
+    {"tool": "Arrow", "target": "response", "duration": 1.0},
+    {"tool": "Text", "target": "badNote", "text": "Fix before release"},
+    {"tool": "Cut", "target": "announcement", "duration": 1.1}
+  ]
+}
