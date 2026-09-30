@@ -1985,7 +1985,8 @@ void EditorTests::qmlRecordingHotkeyStop() {
         EventRef event = nullptr;
         QCOMPARE(CreateEvent(nullptr, kEventClassKeyboard, kEventHotKeyPressed,
                              GetCurrentEventTime(), kEventAttributeNone, &event), OSStatus(noErr));
-        const EventHotKeyID id{0x58534854, 1};
+        const EventHotKeyID id{0x58534854, hotkey.nativeRegistrationId()};
+        QVERIFY(id.id != 0);
         QCOMPARE(SetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,
                                    sizeof(id), &id), OSStatus(noErr));
         QCOMPARE(PostEventToQueue(GetMainEventQueue(), event, kEventPriorityStandard), OSStatus(noErr));

@@ -11,6 +11,7 @@ public:
     explicit GlobalHotkey(QObject *parent = nullptr);
     ~GlobalHotkey() override;
     bool registered() const;
+    quint32 nativeRegistrationId() const;
     // Uses Qt modifier semantics, just like QShortcut and QKeySequence::NativeText.
     bool setShortcut(const QKeySequence &sequence, QString *error = nullptr);
     QKeySequence shortcut() const;

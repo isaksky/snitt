@@ -163,6 +163,9 @@ GlobalHotkey::~GlobalHotkey() {
 }
 
 bool GlobalHotkey::registered() const { return m_state->primary; }
+quint32 GlobalHotkey::nativeRegistrationId() const {
+    return m_state->primary ? m_state->registrationId : 0;
+}
 QKeySequence GlobalHotkey::shortcut() const { return m_state->sequence; }
 
 bool GlobalHotkey::setShortcut(const QKeySequence &sequence, QString *error) {
