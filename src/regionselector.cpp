@@ -4,7 +4,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QHBoxLayout>
-#include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QStyleOptionButton>
@@ -102,17 +101,16 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
         "QPushButton#arrangeCaptureButton { color: #142820; background: #a3e6ca; }"
         "QPushButton:disabled { color: #727a86; background: transparent; }"
         "QPushButton#arrangeCaptureButton:disabled { background: #2b3238; }");
-    auto *layout = new QVBoxLayout(m_toolbar);
+    auto *layout = new QHBoxLayout(m_toolbar);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(8);
-    auto *modes = new QHBoxLayout;
-    modes->setSpacing(4);
     const auto button = [this](const QString &text, const QString &name, bool mode = false) {
         QPushButton *control = mode ? new ModeButton(text, m_toolbar) : new QPushButton(text, m_toolbar);
         control->setObjectName(name);
         control->setFocusPolicy(Qt::NoFocus);
         control->setCursor(Qt::PointingHandCursor);
         control->setFixedHeight(36);
+        control->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         return control;
     };
     m_singleButton = button("Region", "singleCaptureButton", true);
@@ -127,31 +125,23 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     for (auto *control : {m_singleButton, m_multipleButton, m_videoButton}) {
         control->setCheckable(true);
         control->setIconSize(QSize(22, 22));
-        modes->addWidget(control);
+        layout->addWidget(control);
     }
-    modes->addStretch();
-    m_cancelButton = button("Cancel (Esc)", "cancelCaptureButton");
-    m_cancelButton->setAccessibleName("Cancel selection (Esc)");
-    m_cancelButton->setToolTip("Cancel selection (Esc)");
-    modes->addWidget(m_cancelButton);
-    layout->addLayout(modes);
-    auto *actions = new QHBoxLayout;
-    actions->setSpacing(8);
     m_instruction = new QLabel(m_toolbar);
     m_instruction->setObjectName("captureInstruction");
-    m_instruction->setMinimumWidth(0);
-    actions->addWidget(m_instruction, 1);
+    layout->addWidget(m_instruction);
+    layout->addStretch(1);
     m_count = new QLabel(m_toolbar);
     m_count->setObjectName("captureCount");
     m_count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    actions->addWidget(m_count);
+    layout->addWidget(m_count);
     m_arrangeButton = button("Arrange (Enter)", "arrangeCaptureButton");
     m_arrangeButton->setToolTip("Continue to Arrange (Enter)");
-    auto policy = m_arrangeButton->sizePolicy();
-    policy.setRetainSizeWhenHidden(true);
-    m_arrangeButton->setSizePolicy(policy);
-    actions->addWidget(m_arrangeButton);
-    layout->addLayout(actions);
+    layout->addWidget(m_arrangeButton);
+    m_cancelButton = button("Cancel (Esc)", "cancelCaptureButton");
+    m_cancelButton->setAccessibleName("Cancel selection (Esc)");
+    m_cancelButton->setToolTip("Cancel selection (Esc)");
+    layout->addWidget(m_cancelButton);
     m_noticeLabel = new QLabel(this);
     m_noticeLabel->setObjectName("captureNotice");
     m_noticeLabel->setWordWrap(true);
@@ -185,6 +175,7 @@ void RegionSelector::updateToolbar() {
     m_instruction->setText(m_video ? "Drag to record." : m_multiple ? "Drag to add regions." : "Drag to capture.");
     const bool hasSelections = m_multiple && !m_video && m_total > 0;
     m_count->setText(hasSelections ? QStringLiteral("%1 %2").arg(m_total).arg(m_total == 1 ? "region" : "regions") : QString());
+    m_count->setVisible(hasSelections);
     m_arrangeButton->setVisible(hasSelections);
     m_arrangeButton->setEnabled(hasSelections);
     m_noticeLabel->setText(m_notice);
@@ -200,8 +191,6 @@ void RegionSelector::layoutControls() {
     m_toolbar->setFont(font);
     // Stylesheet-backed controls can keep a resolved font of their own.
     for (auto *control : m_toolbar->findChildren<QWidget *>()) control->setFont(font);
-    m_count->setFixedWidth(compact ? 64 : 86);
-    m_arrangeButton->setFixedWidth(compact ? 132 : 164);
     const auto setHint = [this, compact](QPushButton *control, const QString &action,
                                        const QString &description, const QString &name,
                                        const QString &fallback) {
@@ -233,30 +222,42 @@ void RegionSelector::layoutControls() {
             QStringLiteral("regionCancel"), QStringLiteral("Escape"));
     setHint(m_arrangeButton, QStringLiteral("Arrange"), QStringLiteral("Continue to Arrange"),
             QStringLiteral("regionArrange"), QStringLiteral("Enter"));
-    if (m_arrangeButton->fontMetrics().horizontalAdvance(m_arrangeButton->text()) + 22 > m_arrangeButton->width())
-        m_arrangeButton->setText(QStringLiteral("Arrange"));
-    const int panelWidth = qMin(760, qMax(1, width() - 24));
-    const QList<QPair<QPushButton *, QString>> modeLabels = {
-        {m_cancelButton, QStringLiteral("Cancel")}};
-    // Long custom bindings may still need to live only in the tooltip. Drop the
-    // widest hint first while preserving each action's label and the panel size.
-    for (int attempt = 0; attempt < modeLabels.size(); ++attempt) {
-        int requiredWidth = 24 + 3 * 4;
-        for (auto *control : {m_singleButton, m_multipleButton, m_videoButton, m_cancelButton})
-            requiredWidth += control->sizeHint().width();
-        if (requiredWidth <= panelWidth) break;
-        QPushButton *widest = nullptr;
-        QString label;
-        int mostSaved = 0;
-        for (const auto &mode : modeLabels) {
-            const auto metrics = mode.first->fontMetrics();
-            const int saved = metrics.horizontalAdvance(mode.first->text()) - metrics.horizontalAdvance(mode.second);
-            if (saved > mostSaved) { widest = mode.first; label = mode.second; mostSaved = saved; }
+    const int panelWidth = qMin(960, qMax(1, width() - 24));
+    const auto buttonWidth = [](QPushButton *control) {
+        const int textWidth = control->fontMetrics().horizontalAdvance(QString(control->text()).remove('&'));
+        const int iconWidth = control->icon().isNull() ? 0 : control->iconSize().width() + 4;
+        return qMax(control->sizeHint().width(), textWidth + iconWidth + 22);
+    };
+    const auto requiredWidth = [this, &buttonWidth] {
+        int result = 24;
+        int controls = 0;
+        for (QWidget *control : QList<QWidget *>{m_singleButton, m_multipleButton,
+                                                m_videoButton, m_count, m_arrangeButton, m_cancelButton}) {
+            if (control->isHidden()) continue;
+            auto *button = qobject_cast<QPushButton *>(control);
+            result += button ? buttonWidth(button) : control->sizeHint().width();
+            ++controls;
         }
-        if (!widest) break;
-        widest->setText(label);
+        return result + controls * 8;
+    };
+    // Keep actions usable on narrow displays. Full labels and shortcuts remain
+    // available through tooltips and accessibility names.
+    for (auto *control : {m_arrangeButton, m_cancelButton}) {
+        if (requiredWidth() <= panelWidth) break;
+        const QString label = control == m_arrangeButton ? QStringLiteral("Arrange") : QStringLiteral("Cancel");
+        if (control->fontMetrics().horizontalAdvance(label) < control->fontMetrics().horizontalAdvance(control->text()))
+            control->setText(label);
     }
-    m_toolbar->setGeometry((width() - panelWidth) / 2, 24, panelWidth, 104);
+    for (auto *control : {m_multipleButton, m_videoButton, m_singleButton}) {
+        if (requiredWidth() <= panelWidth) break;
+        control->setText(QString());
+    }
+    for (auto *control : {m_singleButton, m_multipleButton, m_videoButton, m_arrangeButton, m_cancelButton})
+        control->setFixedWidth(buttonWidth(control));
+    const bool showInstruction = requiredWidth() + m_instruction->sizeHint().width() + 8 <= panelWidth;
+    m_instruction->setVisible(showInstruction);
+    m_toolbar->setToolTip(showInstruction ? QString() : m_instruction->text());
+    m_toolbar->setGeometry((width() - panelWidth) / 2, 24, panelWidth, 60);
     m_noticeLabel->setGeometry(m_toolbar->x(), m_toolbar->geometry().bottom() + 8,
                                panelWidth, m_noticeLabel->heightForWidth(panelWidth));
     for (int i = 0; i < m_removeButtons.size(); ++i) {

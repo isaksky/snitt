@@ -2074,7 +2074,8 @@ void EditorTests::captureToolbarInteraction() {
     QCoreApplication::processEvents();
     const QRect toolbarBounds = toolbar->geometry();
     const QRect modeBounds = multiple->geometry();
-    const QRect instructionBounds = instruction->geometry();
+    QCOMPARE(toolbar->height(), 60);
+    QCOMPARE(instruction->geometry().center().y(), single->geometry().center().y());
     QVERIFY(single->isChecked());
     QVERIFY(arrange->isHidden());
     QTest::mouseClick(toolbar, Qt::LeftButton, Qt::NoModifier, QPoint(400, 50));
@@ -2090,7 +2091,8 @@ void EditorTests::captureToolbarInteraction() {
     QVERIFY(count->text().isEmpty());
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     QCOMPARE(multiple->geometry(), modeBounds);
-    QCOMPARE(instruction->geometry(), instructionBounds);
+    QCOMPARE(instruction->geometry().center().y(), single->geometry().center().y());
+    QVERIFY(instruction->isVisible());
     QTest::keyClick(&selector, Qt::Key_Return);
     QTest::mouseClick(arrange, Qt::LeftButton);
     QCOMPARE(accepted.size(), 0);
@@ -2107,7 +2109,8 @@ void EditorTests::captureToolbarInteraction() {
     QCOMPARE(count->text(), QString("10 regions"));
     QCOMPARE(toolbar->geometry(), toolbarBounds);
     QCOMPARE(multiple->geometry(), modeBounds);
-    QCOMPARE(instruction->geometry(), instructionBounds);
+    QCOMPARE(instruction->geometry().center().y(), single->geometry().center().y());
+    QVERIFY(instruction->isVisible());
     QVERIFY(selector.grab().save("capture-toolbar-multiple.png"));
     auto *remove = selector.findChild<QToolButton *>();
     QVERIFY(remove && remove->isVisible());
@@ -2135,14 +2138,19 @@ void EditorTests::captureToolbarInteraction() {
         .arg(QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText)));
     QVERIFY(selector.grab().save("capture-toolbar-compact.png"));
     for (auto *control : toolbar->findChildren<QPushButton *>())
-        QVERIFY(toolbar->rect().contains(control->geometry()));
+        if (!control->isHidden()) QVERIFY(toolbar->rect().contains(control->geometry()));
     QTest::keyClick(&selector, Qt::Key_R);
     QVERIFY(single->isChecked());
     QVERIFY(multiple->isEnabled());
     QTest::keyClick(&selector, Qt::Key_M);
     QVERIFY(multiple->isChecked());
     QCoreApplication::processEvents();
-    QVERIFY(instruction->width() >= instruction->fontMetrics().horizontalAdvance(instruction->text()));
+    QVERIFY(instruction->isHidden());
+    QCOMPARE(toolbar->toolTip(), instruction->text());
+    selector.setSelections(true, {{0, QRectF(20, 180, 80, 60)}}, 1);
+    QCoreApplication::processEvents();
+    QVERIFY(arrange->isVisible());
+    QVERIFY(selector.grab().save("capture-toolbar-compact-multiple.png"));
     for (auto *control : toolbar->findChildren<QPushButton *>())
         QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(QString(control->text()).remove('&')) + 20,
                  qPrintable(control->objectName() + ": " + control->text()));
@@ -2208,7 +2216,8 @@ void EditorTests::settingsRegionToolbarHintsLive() {
     QCOMPARE(toolbar->width(), 376);
     for (auto *control : toolbar->findChildren<QPushButton *>()) {
         QVERIFY(toolbar->rect().contains(control->geometry()));
-        QVERIFY2(control->width() >= control->minimumSizeHint().width(), qPrintable(control->objectName()));
+        QVERIFY2(control->width() >= control->minimumSizeHint().width(),
+                 qPrintable(QString("%1: width %2, minimum %3").arg(control->objectName()).arg(control->width()).arg(control->minimumSizeHint().width())));
         QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 20,
                  qPrintable(control->objectName() + ": " + control->text()));
     }
@@ -2227,7 +2236,8 @@ void EditorTests::settingsRegionToolbarHintsLive() {
     QCoreApplication::processEvents();
     for (const auto &action : actions) {
         auto *control = selector.findChild<QPushButton *>(action.objectName);
-        QCOMPARE(control->text(), QString(action.label));
+        if (!control->isCheckable() || !control->text().isEmpty())
+            QCOMPARE(control->text(), QString(action.label));
         QCOMPARE(control->toolTip(), QString(action.description));
         QCOMPARE(control->accessibleName(), control->toolTip());
     }
