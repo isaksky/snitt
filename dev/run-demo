@@ -30,7 +30,8 @@ The final annotated PNG is copied to the clipboard, just like Snitt's Copy.
 Edit dev/index.html and dev/timeline.json to adjust the demo. No app source
 changes or Safari JavaScript/Apple Events permissions are needed.
 Actions run consecutively. movementDuration controls cursor travel; each
-action's duration controls its drag. Only the finished result has a hold.
+action's duration controls its drag. The completed editor view opens and
+closes the loop, so even a paused GIF shows the tools and annotations.
 USAGE
 }
 
@@ -38,14 +39,16 @@ export_take() {
   local take="$1"
   command -v ffmpeg >/dev/null
   command -v ffprobe >/dev/null
-  for file in safari.mp4 editor.mp4 source.png annotated.png; do
+  for file in editor.mp4 finished-window.png annotated.png; do
     [[ -f "$take/$file" ]] || { echo "Missing $take/$file" >&2; exit 1; }
   done
   # Each input was captured with desktopIndependentWindow. These filters never
-  # read a screen device. Fit into a stable frame with a neutral background.
+  # read a screen device. The 2-second cover and ending use the actual completed
+  # editor window, keeping its toolbar visible even when playback is paused.
   ffmpeg -hide_banner -loglevel warning -y \
-    -i "$take/safari.mp4" -i "$take/editor.mp4" \
-    -loop 1 -framerate 60 -t 2 -i "$take/source.png" \
+    -loop 1 -framerate 60 -t 2 -i "$take/finished-window.png" \
+    -i "$take/editor.mp4" \
+    -loop 1 -framerate 60 -t 2 -i "$take/finished-window.png" \
     -filter_complex \
     '[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,fps=60,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[a];[1:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=26,trim=duration=26,fps=60,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[b];[2:v]trim=duration=2,setpts=PTS-STARTPTS,scale=1280:960:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1280:960:(ow-iw)/2:(oh-ih)/2:color=0x111317,setsar=1[c];[a][b][c]concat=n=3:v=1:a=0[v]' \
     -map '[v]' -an -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p \

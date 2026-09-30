@@ -458,12 +458,6 @@ func imageBounds(in image: CGImage, source: CGSize) throws -> CGRect {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let session = Session(root: root, output: output)
         try await session.prepareSafari()
-        let safariRecorder = Recorder()
-        if mode == "record" {
-            try await safariRecorder.start(session.safariSC, crop: session.browserCrop, to: output.appendingPathComponent("safari.mp4"))
-            await pause(2)
-            try await safariRecorder.stop()
-        }
         try await session.prepareEditor(replaceDemo: args.contains("--replace-demo"))
         if mode == "prepare" { return }
         let timeline = try JSONDecoder().decode(Timeline.self, from: Data(contentsOf: root.appendingPathComponent("dev/timeline.json")))
