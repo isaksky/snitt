@@ -52,6 +52,7 @@ Run and test:
 ./bin/run --show             # show the editor
 ./bin/run /path/to/image.png # edit an existing image
 ./bin/run --quit             # quit the running instance
+./bin/restart                # quit, rebuild with 8 jobs, and show the updated app
 ./bin/test
 ```
 
@@ -72,8 +73,11 @@ signed app if macOS still rejects capture. The renamed app needs its own Snitt
 permission entry even if xshot is already enabled.
 
 Snitt forwards commands to an already-running instance. To test a new build,
-save any open work, run `./bin/run --quit`, then `./bin/run --show`. The quit
-command skips rebuilding and signing, so it also works while fixing permissions.
+save any open work and run `./bin/restart`. This quits the existing process,
+rebuilds with 8 parallel jobs, and shows the updated app. Override the job count
+with `SNITT_BUILD_JOBS`, or pass launch arguments such as `./bin/restart --background`.
+The separate `./bin/run --quit` command skips rebuilding and signing, so it also
+works while fixing permissions.
 
 ## Windows
 

@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SNITT_BUILD_JOBS="${SNITT_BUILD_JOBS:-8}"
+export SNITT_BUILD_JOBS
+
+# Stop the existing process before rebuilding so it cannot receive the launch
+# command and keep running the old code.
+if [ -x "$ROOT/build/Snitt.app/Contents/MacOS/snitt" ]; then
+    "$ROOT/build/Snitt.app/Contents/MacOS/snitt" --quit
+elif [ -x "$ROOT/build/snitt" ]; then
+    "$ROOT/build/snitt" --quit
+fi
+
+[ "$#" -gt 0 ] || set -- --show
+exec "$ROOT/bin/run" "$@"

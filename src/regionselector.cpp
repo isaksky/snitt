@@ -94,7 +94,7 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     m_toolbar->setAttribute(Qt::WA_NoMousePropagation);
     m_toolbar->setCursor(Qt::ArrowCursor);
     m_toolbar->setStyleSheet(
-        "QWidget#captureToolbar { background: #1b1e23; border: 1px solid #414751; border-radius: 12px; }"
+        "QWidget#captureToolbar { background: rgba(27, 30, 35, 190); border: 1px solid #414751; border-radius: 12px; }"
         "QLabel { color: #b9c1cd; background: transparent; }"
         "QPushButton { color: #e9edf3; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 6px 10px; }"
         "QPushButton:hover { background: #323842; }"
