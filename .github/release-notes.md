@@ -12,5 +12,6 @@ publishing, run the expensive checks locally against these exact archives:
 - Hardware decoding, multiple displays, and performance where applicable.
 
 Record those results here and remove this checklist before publishing.
-Publishing opens a PR updating the Scoop bucket and Homebrew cask; merge it
-after the package-manager installation checks pass.
+Publishing a stable release opens a PR updating the Scoop bucket and Homebrew
+cask; merge it after the package-manager installation checks pass. Prereleases
+use direct downloads and do not update those stable package definitions.

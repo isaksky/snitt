@@ -140,11 +140,13 @@ choice, not prerequisites for opening the source or releasing a Windows ZIP.
   Windows release runs also retain `windows-test-probes`, containing the matching
   editor test executable and Qt6Test DLL for the local package smoke script.
 - `release.yml` runs for `v*` tags or a manual **Draft release** run naming an
-  existing tag. It requires a stable `vX.Y.Z` tag whose commit is on the default
+  existing tag. It accepts `vX.Y.Z` and `vX.Y.Z-alpha.N`/`beta.N`/`rc.N` tags
+  whose commit is on the default
   branch's history, builds that exact commit, verifies both archives, generates
-  package definitions, and creates a **draft** GitHub Release. It never publishes
+  stable package definitions when applicable, and creates a **draft** GitHub Release. It never publishes
   automatically. Reruns can refresh a draft with the same recorded source commit;
   published releases are never overwritten.
+  Prerelease drafts are marked as prereleases and explicitly excluded from Latest.
 - `packages.yml` runs after a stable release is published, or through a manual
   **Update Scoop and Homebrew** run naming the latest published release. It
   requires a public repository, downloads both archives without authentication,
@@ -208,6 +210,24 @@ the draft. `release.json` binds the two archive hashes and sizes to the source
 commit. The metadata generator rejects mismatched versions, missing platforms,
 duplicate checksums, and modified archives before generating package updates.
 Corresponding source and license material remain inside the platform archives.
+
+### Alpha releases
+
+Use a tag such as `v0.2.3-alpha.1` on the tested default-branch commit. The same
+workflow builds both archives and creates a prerelease draft. Download and test
+those exact assets before publishing with the prerelease flag retained and
+Latest disabled. Increment the alpha number for each subsequent build; do not
+replace a published tag or its assets.
+
+Prereleases contain the two ZIPs, checksums, SDK inventories, and `release.json`.
+They omit the Scoop/Homebrew definitions and Scoop bootstrap. Testers download
+them explicitly; stable package updates remain unchanged. The metadata tool
+rejects prereleases in its package-definition command and requires an empty
+assembly output directory to prevent mixing assets from different releases.
+
+The archive's `VERSION` and the Mac bundle's `SnittReleaseVersion` retain the full
+alpha version. macOS uses a numeric short version such as `0.2.3` and a development
+build version such as `0.2.3a1`. Alpha/beta/rc sequence numbers range from 1 to 255.
 
 For local metadata verification without compiling the app:
 

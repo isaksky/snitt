@@ -16,6 +16,8 @@ import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+from release_metadata import validate_version, validate_macos_version
 MACHO = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
          b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
 PRIVATE_FFMPEG_LIBRARIES = (
@@ -430,13 +432,14 @@ def main():
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("macOS is required")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.]+)?", args.version):
-        parser.error("Expected a release version such as 0.1.0")
+    try:
+        validate_version(args.version)
+    except ValueError as error:
+        parser.error(str(error))
     bundle = args.bundle.resolve()
     with (bundle / "Contents/Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
-    if info.get("CFBundleShortVersionString") != args.version:
-        raise RuntimeError("Bundle version does not match the requested release version")
+    validate_macos_version(info, args.version)
     binaries, dependencies = verify_bundle(bundle)
     private_manifest = private_runtime_manifest(bundle)
     qmake_file = ROOT / "build/.snitt-qmake"

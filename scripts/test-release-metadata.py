@@ -24,9 +24,12 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.version = "1.2.3"
         self.repository = "example/snitt"
         self.commit = "a" * 40
+        self.make_artifacts()
+
+    def make_artifacts(self):
         for platform, suffix in release.PLATFORMS.items():
             directory = self.artifacts / f"{platform}-package"
-            directory.mkdir(parents=True)
+            directory.mkdir(parents=True, exist_ok=True)
             archive = directory / f"snitt_{self.version}_{suffix}.zip"
             files = {"VERSION": self.version, "LICENSE": "MIT fixture"}
             if platform == "windows":
@@ -34,8 +37,14 @@ class ReleaseMetadataTests(unittest.TestCase):
                               "licenses/ffmpeg/COPYING.LGPLv2.1": "license fixture",
                               "licenses/ffmpeg/manifest.json": json.dumps({"ffmpeg_license": "LGPL-2.1-or-later"})})
             else:
+                info = {"CFBundleShortVersionString": self.version,
+                        "CFBundleVersion": self.version}
+                if "-" in self.version:
+                    info = {"CFBundleShortVersionString": self.version.split("-")[0],
+                            "CFBundleVersion": self.version.replace("-alpha.", "a").replace("-beta.", "b").replace("-rc.", "fc"),
+                            "SnittReleaseVersion": self.version}
                 files.update({"Snitt.app/Contents/MacOS/snitt": "fixture",
-                              "Snitt.app/Contents/Info.plist": plistlib.dumps({"CFBundleShortVersionString": self.version}),
+                              "Snitt.app/Contents/Info.plist": plistlib.dumps(info),
                               "THIRD-PARTY-NOTICES.txt": "fixture", "DEPENDENCIES.json": "{}"})
             with zipfile.ZipFile(archive, "w") as bundle:
                 for name, content in files.items():
@@ -124,8 +133,10 @@ class ReleaseMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provenance mismatch: commit"):
             self.definitions()
 
-    def test_rejects_unsafe_or_nonstable_input(self):
-        for value in ("v1.2.3", "../1.2.3", "01.2.3", "1.2.3-rc1", "1.2.3\nrun: anything"):
+    def test_rejects_unsafe_or_invalid_version_input(self):
+        for value in ("v1.2.3", "../1.2.3", "01.2.3", "1.2.3-rc1", "1.2.3\nrun: anything",
+                      "1.2.3-alpha", "1.2.3-alpha.0", "1.2.3-alpha.01", "1.2.3-alpha.256",
+                      "1.2.3-preview.1", "1.2.3-alpha.1.2", "1.2.3-alpha.1+build"):
             with self.subTest(version=value), self.assertRaises(ValueError):
                 release.validate_identity(value, self.repository, self.commit)
         with self.assertRaises(ValueError):
@@ -140,7 +151,59 @@ class ReleaseMetadataTests(unittest.TestCase):
         info = plistlib.loads(path.read_bytes())
         self.assertEqual(info["CFBundleVersion"], self.version)
         self.assertEqual(info["CFBundleShortVersionString"], self.version)
+        self.assertEqual(info["SnittReleaseVersion"], self.version)
         self.assertEqual(info["CFBundleIdentifier"], "local.snitt")
+
+    def test_prereleases_have_distinct_valid_macos_build_numbers(self):
+        for stage, suffix, number in (("alpha", "a", 1), ("beta", "b", 2), ("rc", "fc", 255)):
+            version = f"1.2.3-{stage}.{number}"
+            with self.subTest(version=version):
+                release.validate_identity(version, self.repository, self.commit)
+                self.assertTrue(release.is_prerelease(version))
+                self.assertEqual(release.macos_versions(version), {
+                    "CFBundleShortVersionString": "1.2.3",
+                    "CFBundleVersion": f"1.2.3{suffix}{number}",
+                    "SnittReleaseVersion": version})
+        self.assertFalse(release.is_prerelease("1.2.3"))
+
+    def test_alpha_assets_exclude_stable_installation_and_reject_package_updates(self):
+        self.version = "1.2.3-alpha.1"
+        self.make_artifacts()
+        self.assemble()
+        self.assertEqual({p.name for p in self.output.iterdir()}, {
+            "snitt_1.2.3-alpha.1_windows_amd64.zip", "snitt_1.2.3-alpha.1_macos_arm64.zip",
+            "snitt_1.2.3-alpha.1_checksums.txt", "release.json",
+            "windows-build-info.txt", "macos-build-info.txt"})
+        manifest = json.loads((self.output / "release.json").read_text())
+        self.assertEqual(manifest["version"], self.version)
+        self.assertEqual(manifest["commit"], self.commit)
+        with self.assertRaisesRegex(ValueError, "stable package"):
+            self.definitions()
+        self.assertFalse((self.root / "checkout").exists())
+
+    def test_alpha_rejects_a_different_build_with_the_same_numeric_macos_version(self):
+        self.version = "1.2.3-alpha.1"
+        self.make_artifacts()
+        archive = self.artifacts / "macos-package" / f"snitt_{self.version}_macos_arm64.zip"
+        with zipfile.ZipFile(archive) as original:
+            contents = {name: original.read(name) for name in original.namelist()}
+        key = "Snitt.app/Contents/Info.plist"
+        info = plistlib.loads(contents[key])
+        info["SnittReleaseVersion"] = "1.2.3-alpha.2"
+        contents[key] = plistlib.dumps(info)
+        with zipfile.ZipFile(archive, "w") as changed:
+            for name, data in contents.items():
+                changed.writestr(name, data)
+        self.record_checksum(archive)
+        with self.assertRaisesRegex(ValueError, "SnittReleaseVersion"):
+            self.assemble()
+        self.assertFalse(self.output.exists())
+
+    def test_assembly_rejects_leftover_assets_from_another_release(self):
+        self.output.mkdir()
+        (self.output / "snitt.json").write_text("old stable package definition")
+        with self.assertRaisesRegex(ValueError, "must be empty"):
+            self.assemble()
 
     def test_historical_scoop_manifest_still_validates(self):
         path = self.root / "old.json"

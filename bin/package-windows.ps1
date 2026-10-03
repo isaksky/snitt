@@ -1,6 +1,5 @@
 param(
     [string]$QtBin = $env:SNITT_QT_BIN,
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')]
     [string]$Version = '0.2.0',
     [string]$ReleaseDirectory
 )
@@ -10,6 +9,8 @@ if (!$QtBin) { $QtBin = Join-Path $env:USERPROFILE 'scoop\apps\msys2\current\ucr
 $qtPrefix = Split-Path $QtBin -Parent
 $python = Join-Path $QtBin 'python.exe'
 if (!(Test-Path $python)) { throw 'MSYS2 UCRT64 Python is required to build the private LGPL multimedia runtime.' }
+& $python "$root\scripts\release_metadata.py" check-version $Version
+if ($LASTEXITCODE -ne 0) { throw 'Invalid release version.' }
 $runtime = Join-Path $root 'build\tools\windows-multimedia-runtime\stage'
 & $python "$PSScriptRoot\build-windows-multimedia-runtime.py" --qt-bin $QtBin
 if ($LASTEXITCODE -ne 0) { throw 'Private LGPL multimedia runtime build failed.' }

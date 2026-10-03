@@ -19,14 +19,44 @@ from scoop_manifest import render as render_scoop
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+VERSION = re.compile(r"(?P<core>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))"
+                     r"(?:-(?P<stage>alpha|beta|rc)\.(?P<build>[1-9][0-9]*))?")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 PLATFORMS = {"windows": "windows_amd64", "macos": "macos_arm64"}
 
 
+def validate_version(version):
+    match = VERSION.fullmatch(version)
+    if not match:
+        raise ValueError("Expected 1.2.3 or 1.2.3-alpha.1/beta.1/rc.1, without v")
+    if match["build"] and int(match["build"]) > 255:
+        raise ValueError("Prerelease build number must be 1–255 for macOS")
+    return match
+
+
+def is_prerelease(version):
+    return validate_version(version)["stage"] is not None
+
+
+def macos_versions(version):
+    match = validate_version(version)
+    suffix = {"alpha": "a", "beta": "b", "rc": "fc"}.get(match["stage"], "")
+    return {"CFBundleShortVersionString": match["core"],
+            "CFBundleVersion": match["core"] + suffix + (match["build"] or ""),
+            "SnittReleaseVersion": version}
+
+
+def validate_macos_version(info, version):
+    for key, expected in macos_versions(version).items():
+        # Published stable archives predate this full release-version field.
+        if key == "SnittReleaseVersion" and key not in info and not is_prerelease(version):
+            continue
+        if info.get(key) != expected:
+            raise ValueError(f"Mac bundle version does not match release: {key}")
+
+
 def validate_identity(version, repository, commit):
-    if not VERSION.fullmatch(version):
-        raise ValueError("Expected a stable version such as 1.2.3, without v")
+    validate_version(version)
     if not REPOSITORY.fullmatch(repository):
         raise ValueError("Expected repository as owner/name")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -74,8 +104,7 @@ def inspect_archive(path, version, platform):
             raise ValueError(f"Archive version does not match {version}: {path.name}")
         if platform == "macos":
             info = plistlib.loads(archive.read("Snitt.app/Contents/Info.plist"))
-            if info.get("CFBundleShortVersionString") != version:
-                raise ValueError("Mac bundle version does not match release")
+            validate_macos_version(info, version)
         else:
             runtime = json.loads(archive.read("licenses/ffmpeg/manifest.json"))
             if runtime.get("ffmpeg_license") != "LGPL-2.1-or-later":
@@ -111,6 +140,8 @@ end
 
 
 def write_definitions(version, repository, records, output, *, flat=False):
+    if is_prerelease(version):
+        raise ValueError("Prereleases do not update stable package definitions")
     win = f"snitt_{version}_windows_amd64.zip"
     mac = f"snitt_{version}_macos_arm64.zip"
     scoop = output / ("snitt.json" if flat else "bucket/snitt.json")
@@ -123,6 +154,8 @@ def write_definitions(version, repository, records, output, *, flat=False):
 
 def assemble(version, repository, commit, artifacts, output):
     validate_identity(version, repository, commit)
+    if output.exists() and any(output.iterdir()):
+        raise ValueError("Release output directory must be empty")
     records = {}
     archives = []
     for platform, suffix in PLATFORMS.items():
@@ -141,18 +174,21 @@ def assemble(version, repository, commit, artifacts, output):
     for platform in PLATFORMS:
         inventory = artifacts / f"{platform}-package" / f"{platform}-build-info.txt"
         shutil.copy2(inventory, output / inventory.name)
-    shutil.copy2(ROOT / "platform/windows/Install-Scoop.ps1", output / "Install-Scoop.ps1")
     (output / f"snitt_{version}_checksums.txt").write_text(
         "".join(f"{record['sha256']}  {name}\n" for name, record in sorted(records.items())))
     (output / "release.json").write_text(json.dumps({
         "schema_version": 1, "version": version, "repository": repository,
         "commit": commit, "archives": records,
     }, indent=2) + "\n")
-    write_definitions(version, repository, records, output, flat=True)
+    if not is_prerelease(version):
+        shutil.copy2(ROOT / "platform/windows/Install-Scoop.ps1", output / "Install-Scoop.ps1")
+        write_definitions(version, repository, records, output, flat=True)
 
 
 def definitions(version, repository, commit, release, output):
     validate_identity(version, repository, commit)
+    if is_prerelease(version):
+        raise ValueError("Prereleases do not update stable package definitions")
     manifest = json.loads((release / "release.json").read_text())
     for key, expected in {"schema_version": 1, "version": version,
                           "repository": repository, "commit": commit}.items():
@@ -176,8 +212,7 @@ def set_version(version):
     validate_identity(version, "local/snitt", "0" * 40)
     path = ROOT / "platform/macos/Info.plist"
     info = plistlib.loads(path.read_bytes())
-    info["CFBundleShortVersionString"] = version
-    info["CFBundleVersion"] = version
+    info.update(macos_versions(version))
     path.write_bytes(plistlib.dumps(info, sort_keys=False))
 
 
@@ -186,6 +221,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     version = commands.add_parser("version", help="stamp the CI checkout's macOS metadata")
     version.add_argument("version")
+    check = commands.add_parser("check-version", help="validate a release version without changing files")
+    check.add_argument("version")
     for name in ("assemble", "definitions"):
         command = commands.add_parser(name)
         command.add_argument("version")
@@ -195,7 +232,9 @@ def main():
         command.add_argument("--artifacts" if name == "assemble" else "--release-directory",
                              type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "version":
+    if args.command == "check-version":
+        validate_version(args.version)
+    elif args.command == "version":
         set_version(args.version)
     elif args.command == "assemble":
         assemble(args.version, args.repository, args.commit, args.artifacts, args.output)
