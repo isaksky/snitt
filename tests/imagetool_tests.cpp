@@ -756,7 +756,7 @@ void ImageToolTests::eraseReplayKeepsExactSample() {
         const QRgb committed = snapshot().pixel(point({50, 30}).toPoint());
         QCOMPARE(live, committed);
         QVERIFY(canvas.copy());
-        const QImage copied = QGuiApplication::clipboard()->image();
+        const QImage copied = QGuiApplication::clipboard()->image().convertToFormat(QImage::Format_ARGB32_Premultiplied);
         QCOMPARE(copied.pixel(150, 90), sample);
         const QString savedPath = canvas.saveTo(temporary.path());
         QVERIFY(!savedPath.isEmpty());

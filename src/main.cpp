@@ -4,13 +4,13 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QThread>
+#include <QTimer>
 #include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QQuickStyle>
 #include <QUrl>
 
-#include "backend.h"
 #include "editorcanvas.h"
+#include "editorsessions.h"
 #include "appservice.h"
 #include "appsettings.h"
 #include "playbackclock.h"
@@ -62,21 +62,17 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<PlaybackClock>("Snitt", 1, 0, "PlaybackClock");
 
     AppSettings settings;
-    Backend backend(&settings);
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty("backend", &backend);
-    engine.rootContext()->setContextProperty("appSettings", &settings);
+    EditorSessions editors(&engine, &settings);
+    if (!editors.isReady()) return 1;
     QString imagePath;
     for (const auto &arg : args) if (!arg.startsWith('-')) { imagePath = arg; break; }
-    engine.rootContext()->setContextProperty("initialImage",
-        imagePath.isEmpty() ? QUrl() : QUrl::fromLocalFile(imagePath));
-    engine.rootContext()->setContextProperty("startInBackground", args.contains("--background"));
-    engine.rootContext()->setContextProperty("showOnStart", args.contains("--show"));
-    engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
-    if (engine.rootObjects().isEmpty())
-        return 1;
-
-    AppService service(&server, engine.rootObjects().first(), &settings);
+    AppService service(&server, &editors, &settings);
+    QTimer::singleShot(200, &editors, [&editors, imagePath, args] {
+        if (!imagePath.isEmpty()) editors.openImage(QUrl::fromLocalFile(imagePath));
+        else if (args.contains("--show")) editors.showEditor();
+        else if (!args.contains("--background")) editors.capture();
+    });
 
     return app.exec();
 }

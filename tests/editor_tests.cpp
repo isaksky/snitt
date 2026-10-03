@@ -30,6 +30,9 @@
 #include <QDirIterator>
 #include <QStandardPaths>
 #include <QSet>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QLocalSocket>
 #include <QMediaPlayer>
 #include <QVideoFrame>
 #include <QVideoSink>
@@ -47,6 +50,14 @@
 #include "imagedocument.h"
 #include "editorcanvas.h"
 #include "playbackclock.h"
+#include "editorsessions.h"
+#include "appservice.h"
+#include "clipboard.h"
+#include <functional>
+#ifdef Q_OS_WIN
+#include <QSemaphore>
+#include <QThread>
+#endif
 
 class EditorTests : public QObject {
     Q_OBJECT
@@ -67,6 +78,8 @@ private slots:
     void qmlKeyboardCommands();
     void qmlDismissal();
     void captureEditorPlacement();
+    void independentEditorSessions();
+    void desktopMultipleEditors();
     void settingsCopySaveAliases();
     void qmlRecordingControls();
     void qmlRecordingHotkeyStop_data();
@@ -82,6 +95,7 @@ private slots:
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
     void windowsCaptureLatency();
+    void windowsClipboardContention();
     void settingsCreateDefaultsAndPreserveEdits();
     void settingsReloadsAtomicEditsAndRecovers();
     void settingsRejectConflictsAndRollbackNativeHotkey();
@@ -105,6 +119,23 @@ static QImage pattern() {
     return image;
 }
 
+// Retain the real selector/crop/finish path without reading the desktop or
+// requiring capture permission in offscreen tests.
+class FixtureCaptureBackend : public Backend {
+public:
+    using Backend::Backend;
+    std::function<void(bool, bool)> selectFixture;
+    void capture(bool multiple, bool video) override { selectFixture(multiple, video); }
+};
+
+class FixtureEditorSessions : public EditorSessions {
+public:
+    using EditorSessions::EditorSessions;
+    std::function<Backend *(QObject *)> backendFactory;
+protected:
+    Backend *createBackend(QObject *owner) override { return backendFactory(owner); }
+};
+
 static QQuickItem *visualItem(QQuickItem *parent, const QString &name) {
     if (parent->objectName() == name) return parent;
     for (QQuickItem *child : parent->childItems())
@@ -115,6 +146,51 @@ static QQuickItem *visualItem(QQuickItem *parent, const QString &name) {
 static QString accessibleName(QQuickItem *item) {
     auto *accessible = QAccessible::queryAccessibleInterface(item);
     return accessible ? accessible->text(QAccessible::Name) : QString();
+}
+
+static QString popupState(QObject *popup, QQuickWindow *editor, int frames) {
+    auto *content = qobject_cast<QQuickItem *>(popup->property("contentItem").value<QObject *>());
+    QQuickWindow *popupWindow = content ? content->window() : nullptr;
+    QWindow *focusWindow = QGuiApplication::focusWindow();
+    return QString("editor visible=%1 exposed=%2 active=%3 visibility=%4 frames=%5; "
+                   "popup visible=%6 opened=%7 focus=%8 activeFocus=%9 opacity=%10 scale=%11 type=%12; "
+                   "popupWindow isEditor=%13 visible=%14 exposed=%15 active=%16; focusObject=%17; "
+                   "popupWindow class=%18 focusWindow class=%19 focusWindow isEditor=%20 isPopup=%21")
+        .arg(editor->isVisible()).arg(editor->isExposed()).arg(editor->isActive())
+        .arg(editor->visibility()).arg(frames)
+        .arg(popup->property("visible").toBool()).arg(popup->property("opened").toBool())
+        .arg(popup->property("focus").toBool()).arg(popup->property("activeFocus").toBool())
+        .arg(popup->property("opacity").toReal()).arg(popup->property("scale").toReal())
+        .arg(popup->property("popupType").toInt()).arg(popupWindow == editor)
+        .arg(popupWindow && popupWindow->isVisible()).arg(popupWindow && popupWindow->isExposed())
+        .arg(popupWindow && popupWindow->isActive())
+        .arg(editor->focusObject() ? QString::fromLatin1(editor->focusObject()->metaObject()->className()) : "null")
+        .arg(popupWindow ? QString::fromLatin1(popupWindow->metaObject()->className()) : "null")
+        .arg(focusWindow ? QString::fromLatin1(focusWindow->metaObject()->className()) : "null")
+        .arg(focusWindow == editor).arg(focusWindow == popupWindow);
+}
+
+static bool waitForEditorInput(QQuickWindow *window) {
+    if (!QTest::qWaitForWindowExposed(window) || !QTest::qWaitForWindowActive(window)) return false;
+    if (QGuiApplication::platformName() == QStringLiteral("offscreen")) return true;
+    // hide()/show() change Qt properties before the native render loop handles
+    // exposure. Present the reopened scene before injecting the next input.
+    QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+    window->update();
+    return QTest::qWaitFor([&] { return !frames.isEmpty(); }, 5000);
+}
+
+static void failOnUnexpectedWarnings(QStringList allowedMessages = {}) {
+#ifdef Q_OS_WIN
+    // Qt warns before retrying OleGetClipboard, even when the next attempt
+    // succeeds. Keep that notice in the log; terminal retrieval/publication
+    // warnings and every clipboard content assertion must still fail.
+    allowedMessages.append(QStringLiteral("Retrying to obtain clipboard."));
+#endif
+    for (QString &message : allowedMessages) message = QRegularExpression::escape(message);
+    const QString pattern = allowedMessages.isEmpty() ? QStringLiteral(".*")
+        : QStringLiteral("^(?!(?:%1)$).*").arg(allowedMessages.join(u'|'));
+    QTest::failOnWarning(QRegularExpression(pattern));
 }
 
 static AppSettings &isolatedSettings() {
@@ -169,6 +245,79 @@ static bool atomicWrite(const QString &path, const QByteArray &bytes) {
     qInfo().noquote() << "Settings fixture replacement failed:" << error;
     return false;
 }
+
+static bool setClipboardText(const QString &text) {
+    auto data = std::make_unique<QMimeData>();
+    data->setText(text);
+    return snittClipboard::publish(std::move(data));
+}
+
+static bool setClipboardImage(const QImage &image) {
+    auto data = std::make_unique<QMimeData>();
+    data->setImageData(image);
+    return snittClipboard::publish(std::move(data));
+}
+
+#ifdef Q_OS_WIN
+static bool registerTestHotkey(GlobalHotkey &hotkey, QString *error) {
+    // Do not compete with the installed screenshot app's production shortcut.
+    for (int key = Qt::Key_F11; key >= Qt::Key_F1; --key) {
+        if (hotkey.setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | key), error)) {
+            qInfo().noquote() << "Native test shortcut:" << hotkey.description();
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool sendTestHotkey(const QKeySequence &sequence) {
+    if (sequence.count() != 1 || sequence[0].key() < Qt::Key_F1 || sequence[0].key() > Qt::Key_F12
+        || sequence[0].keyboardModifiers() != (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier))
+        return false;
+    INPUT input[8]{};
+    for (auto &key : input) key.type = INPUT_KEYBOARD;
+    input[0].ki.wVk = VK_CONTROL;
+    input[1].ki.wVk = VK_MENU;
+    input[2].ki.wVk = VK_SHIFT;
+    input[3].ki.wVk = WORD(VK_F1 + sequence[0].key() - Qt::Key_F1);
+    for (int i = 4; i < 8; ++i) {
+        input[i].ki.wVk = input[7 - i].ki.wVk;
+        input[i].ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    return SendInput(8, input, sizeof(INPUT)) == 8;
+}
+
+class ClipboardLock : public QThread {
+public:
+    explicit ClipboardLock(int releaseAfterMs = -1) : m_releaseAfterMs(releaseAfterMs) {
+        start();
+        m_ready.acquire();
+    }
+    ~ClipboardLock() override { m_release.release(); wait(); }
+    bool acquired() const { return m_acquired; }
+private:
+    void run() override {
+        // A separate thread/window models another clipboard reader. It must
+        // release independently of the GUI thread blocked in copy().
+        HWND window = CreateWindowExW(0, L"STATIC", L"Snitt clipboard test", 0,
+                                      0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+        QElapsedTimer timeout;
+        timeout.start();
+        while (window && !(m_acquired = OpenClipboard(window)) && timeout.elapsed() < 1000)
+            msleep(10);
+        m_ready.release();
+        if (m_acquired) {
+            if (m_releaseAfterMs >= 0) msleep(m_releaseAfterMs);
+            else m_release.acquire();
+            CloseClipboard();
+        }
+        if (window) DestroyWindow(window);
+    }
+    QSemaphore m_ready, m_release;
+    bool m_acquired = false;
+    int m_releaseAfterMs;
+};
+#endif
 
 void EditorTests::cutsJoinExactPixels() {
     const QImage original = pattern();
@@ -256,7 +405,7 @@ void EditorTests::scaledGesturesAndClipboard() {
 }
 
 void EditorTests::failedLoadPreservesImage() {
-    QGuiApplication::clipboard()->setImage(pattern());
+    QVERIFY(setClipboardImage(pattern()));
     EditorCanvas canvas;
     QVERIFY(canvas.paste());
     QSignalSpy errors(&canvas, &EditorCanvas::error);
@@ -362,7 +511,7 @@ void EditorTests::qmlLoadsAndPlacesText() {
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
     // The offscreen platform cannot raise native windows; QML warnings still fail.
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
@@ -437,7 +586,8 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
 #else
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support (?:raise|propagateSizeHints)\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()",
+                              "This plugin does not support propagateSizeHints()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir source;
@@ -657,7 +807,7 @@ void EditorTests::qmlPasteReplacesTextDraft() {
     const qreal oldY = window->property("textY").toReal();
     QVERIFY(oldY > 80);
 
-    QGuiApplication::clipboard()->setText("no image");
+    QVERIFY(setClipboardText("no image"));
     QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QCOMPARE(canvas->imageWidth(), 800);
     QVERIFY(window->property("editingText").toBool());
@@ -667,7 +817,7 @@ void EditorTests::qmlPasteReplacesTextDraft() {
 
     QImage small(80, 60, QImage::Format_ARGB32_Premultiplied);
     small.fill(QColor("#51a3ce"));
-    QGuiApplication::clipboard()->setImage(small);
+    QVERIFY(setClipboardImage(small));
     QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QCOMPARE(canvas->imageWidth(), 80);
     QCOMPARE(canvas->imageHeight(), 60);
@@ -688,11 +838,11 @@ void EditorTests::qmlPasteReplacesTextDraft() {
 
     QVERIFY(canvas->loadRegions({small, small}));
     QVERIFY(canvas->arranging());
-    QGuiApplication::clipboard()->setText("still no image");
+    QVERIFY(setClipboardText("still no image"));
     QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QVERIFY(canvas->arranging());
     QCOMPARE(canvas->regionCount(), 2);
-    QGuiApplication::clipboard()->setImage(small);
+    QVERIFY(setClipboardImage(small));
     QVERIFY(QMetaObject::invokeMethod(window, "pasteImage"));
     QVERIFY(!canvas->arranging());
     QCOMPARE(canvas->regionCount(), 0);
@@ -717,7 +867,7 @@ void EditorTests::windowsRecordingOverlayExclusionFailure() {
         QSignalSpy started(&backend, &Backend::recordingProcessStarted);
         QSignalSpy ready(&backend, &Backend::recordingReady);
         QSignalSpy saved(&backend, &Backend::recordingSaved);
-        QGuiApplication::clipboard()->setText("keep clipboard on exclusion failure");
+        QVERIFY(setClipboardText("keep clipboard on exclusion failure"));
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &backend);
     engine.rootContext()->setContextProperty("appSettings", &isolatedSettings());
@@ -818,7 +968,8 @@ void EditorTests::qmlResizeTextDraft() {
     QVERIFY(QMetaObject::invokeMethod(window, "commitText"));
     QVERIFY(!handle->isVisible());
     QVERIFY(canvas->copy());
-    QCOMPARE(QGuiApplication::clipboard()->image(), expected.render(expected.exportScale()));
+    const QImage expectedExport = expected.render(expected.exportScale());
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(expectedExport.format()), expectedExport);
 }
 
 void EditorTests::qmlWheelSizes() {
@@ -827,7 +978,7 @@ void EditorTests::qmlWheelSizes() {
 #else
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QImage image(480, 360, QImage::Format_ARGB32_Premultiplied);
@@ -913,7 +1064,7 @@ void EditorTests::qmlSaveAndClose() {
     if (QGuiApplication::platformName() == "offscreen")
         QSKIP("File-manager reveal requires an interactive Windows desktop");
 #endif
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir source;
@@ -968,7 +1119,7 @@ void EditorTests::qmlSaveAndClose() {
     const auto cleanupSavedFiles = qScopeGuard([&created] {
         for (const QString &path : created) QFile::remove(path);
     });
-    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(setClipboardText("keep screenshot clipboard"));
     canvas->setTool("text");
     const QPointF textPoint = canvas->imageRect().topLeft() + QPointF(5, 5) * canvas->imageScale();
     canvas->begin(textPoint.x(), textPoint.y());
@@ -994,7 +1145,7 @@ void EditorTests::qmlSaveAndClose() {
     canvas->addText(4, 4, 70, 40, "Sharp", 16);
     QVERIFY(canvas->copy());
     const QImage annotatedCopy = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(setClipboardText("keep screenshot clipboard"));
     QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     const QString matchedFile = newSavedFile();
@@ -1018,7 +1169,7 @@ void EditorTests::qmlSaveAndClose() {
     canvas->addText(4, 4, 70, 40, "Save", 16);
     QVERIFY(canvas->copy());
     const QImage aliasImage = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(setClipboardText("keep screenshot clipboard"));
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     canvas->forceActiveFocus();
     QTRY_VERIFY(window->isActive());
@@ -1044,7 +1195,7 @@ void EditorTests::qmlSaveAndClose() {
     })());
     QVERIFY(canvas->copy());
     const QImage arranged = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("keep screenshot clipboard");
+    QVERIFY(setClipboardText("keep screenshot clipboard"));
     QVERIFY(QMetaObject::invokeMethod(arrangeButton, "clicked"));
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     const QString fromArrange = newSavedFile();
@@ -1061,7 +1212,7 @@ void EditorTests::qmlKeyboardCommands() {
 #else
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
@@ -1082,8 +1233,8 @@ void EditorTests::qmlKeyboardCommands() {
     QVERIFY(canvas);
     QTRY_VERIFY(window->isVisible() && canvas->hasImage());
     window->requestActivate();
+    QVERIFY(waitForEditorInput(window));
     canvas->forceActiveFocus();
-    QTRY_VERIFY(window->isActive());
 
     // The displayed accelerator and actual keyboard command stay together.
     const QList<QPair<QString, Qt::Key>> tools{
@@ -1131,7 +1282,7 @@ void EditorTests::qmlKeyboardCommands() {
     const QStringList inputActions{"capture", "captureMultiple", "captureVideo", "openImage", "pasteImage"};
     QImage replacement(24, 18, QImage::Format_RGB32);
     replacement.fill(Qt::yellow);
-    QGuiApplication::clipboard()->setImage(replacement);
+    QVERIFY(setClipboardImage(replacement));
     QSignalSpy captureChanges(&backend, &Backend::capturingChanged);
     for (const QString &action : inputActions) {
         auto *shortcut = window->findChild<QObject *>(action + "Shortcut");
@@ -1148,7 +1299,7 @@ void EditorTests::qmlKeyboardCommands() {
     QCOMPARE(canvas->imageHeight(), pattern().height());
     QVERIFY(canvas->copy());
     const QImage expectedImage = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("not submitted");
+    QVERIFY(setClipboardText("not submitted"));
     QTest::keyClick(window, Qt::Key_Return);
     QCoreApplication::processEvents();
     QVERIFY(window->isVisible()); QVERIFY(canvas->hasImage());
@@ -1167,18 +1318,18 @@ void EditorTests::qmlKeyboardCommands() {
     canvas->addText(4, 4, 60, 30, "Copy", 14);
     QVERIFY(canvas->copy());
     const QImage aliasImage = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("not submitted");
+    QVERIFY(setClipboardText("not submitted"));
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QVERIFY(waitForEditorInput(window));
     canvas->forceActiveFocus();
-    QTRY_VERIFY(window->isActive());
     QTest::keySequence(window, QKeySequence(QKeySequence::Copy));
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->image(), aliasImage);
 
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
     QVERIFY(canvas->loadRegions({pattern(), pattern(), pattern(), pattern(), pattern(), pattern(), pattern()}));
+    QVERIFY(waitForEditorInput(window));
     canvas->forceActiveFocus();
-    QTRY_VERIFY(window->isActive());
     QCOMPARE(canvas->columns(), 2);
     QTest::keyClick(window, Qt::Key_Plus);
     QTRY_COMPARE(canvas->columns(), 3);
@@ -1245,12 +1396,14 @@ void EditorTests::qmlKeyboardCommands() {
     const QImage annotatedGrid = QGuiApplication::clipboard()->image();
     auto *backButton = visualItem(window->contentItem(), "backToArrangeButton");
     QVERIFY(backButton);
+    QSignalSpy popupFrames(window, &QQuickWindow::frameSwapped);
     QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
     auto *dialog = window->findChild<QObject *>("rearrangeDialog");
     QVERIFY(dialog);
     // Material sets visible before its enter transition finishes. Wait for the
     // opening transition before sending a synthetic button click.
-    QTRY_VERIFY(dialog->property("opened").toBool());
+    QTRY_VERIFY2(dialog->property("opened").toBool() && dialog->property("activeFocus").toBool(),
+                 qPrintable(popupState(dialog, window, popupFrames.size())));
     QVERIFY(!canvas->arranging());
     auto *keepButton = visualItem(window->contentItem(), "keepEditingButton");
     QVERIFY(keepButton);
@@ -1261,7 +1414,8 @@ void EditorTests::qmlKeyboardCommands() {
     QVERIFY(canvas->copy());
     QCOMPARE(QGuiApplication::clipboard()->image(), annotatedGrid);
     QVERIFY(QMetaObject::invokeMethod(backButton, "clicked"));
-    QTRY_VERIFY(dialog->property("opened").toBool());
+    QTRY_VERIFY2(dialog->property("opened").toBool() && dialog->property("activeFocus").toBool(),
+                 qPrintable(popupState(dialog, window, popupFrames.size())));
     auto *discardButton = visualItem(window->contentItem(), "discardEditsButton");
     QVERIFY(discardButton);
     QVERIFY(QMetaObject::invokeMethod(discardButton, "clicked"));
@@ -1271,7 +1425,7 @@ void EditorTests::qmlKeyboardCommands() {
     QCOMPARE(canvas->regionCount(), 7);
     QVERIFY(canvas->copy());
     const QImage expectedGrid = QGuiApplication::clipboard()->image();
-    QGuiApplication::clipboard()->setText("not submitted");
+    QVERIFY(setClipboardText("not submitted"));
     canvas->forceActiveFocus();
     QTest::keyClick(window, Qt::Key_C);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
@@ -1280,7 +1434,7 @@ void EditorTests::qmlKeyboardCommands() {
 }
 
 void EditorTests::qmlDismissal() {
-    QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support raise\\(\\)).*"));
+    failOnUnexpectedWarnings({"This plugin does not support raise()"});
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     QTemporaryDir dir;
@@ -1301,28 +1455,28 @@ void EditorTests::qmlDismissal() {
     QVERIFY(canvas);
     QTRY_VERIFY(window->isVisible() && canvas->hasImage());
     const auto reopen = [&] {
-        QVERIFY(canvas->load(QUrl::fromLocalFile(path)));
-        QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+        if (!canvas->load(QUrl::fromLocalFile(path))
+                || !QMetaObject::invokeMethod(window, "showEditor")
+                || !waitForEditorInput(window)) return false;
         canvas->forceActiveFocus();
-        QTRY_VERIFY(window->isActive());
+        return true;
     };
-    QGuiApplication::clipboard()->setText("keep clipboard");
+    QVERIFY(setClipboardText("keep clipboard"));
+    QVERIFY(waitForEditorInput(window));
     canvas->forceActiveFocus();
-    QTRY_VERIFY(window->isActive());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard"));
 
     QVERIFY(canvas->loadRegions({pattern(), pattern()}));
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
+    QVERIFY(waitForEditorInput(window));
     canvas->forceActiveFocus();
-    // Native activation is asynchronous; window shortcuts need it before Escape.
-    QTRY_VERIFY(window->isActive());
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(canvas->regionCount(), 0);
 
-    reopen();
+    QVERIFY(reopen());
     canvas->setTool("text");
     const QPointF center = canvas->imageRect().center();
     canvas->begin(center.x(), center.y());
@@ -1338,7 +1492,7 @@ void EditorTests::qmlDismissal() {
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 
-    reopen();
+    QVERIFY(reopen());
     canvas->begin(center.x(), center.y()); // Empty text drafts have the same two-Escape behavior.
     QVERIFY(window->property("editingText").toBool());
     QTest::keyClick(window, Qt::Key_Escape);
@@ -1346,7 +1500,7 @@ void EditorTests::qmlDismissal() {
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 
-    reopen();
+    QVERIFY(reopen());
     canvas->setTool("rect");
     canvas->begin(center.x(), center.y());
     canvas->move(center.x() + 30, center.y() + 30);
@@ -1356,18 +1510,21 @@ void EditorTests::qmlDismissal() {
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
 
-    reopen();
+    QVERIFY(reopen());
     auto *dialog = window->findChild<QObject *>("captureErrorDialog");
     QVERIFY(dialog);
+    QSignalSpy popupFrames(window, &QQuickWindow::frameSwapped);
     QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
-    QTRY_VERIFY(dialog->property("visible").toBool());
+    QTRY_VERIFY2(dialog->property("opened").toBool() && dialog->property("activeFocus").toBool(),
+                 qPrintable(popupState(dialog, window, popupFrames.size())));
     QTest::keyClick(window, Qt::Key_Escape);
-    QTRY_VERIFY(!dialog->property("visible").toBool());
+    QTRY_VERIFY2(!dialog->property("visible").toBool(), qPrintable(popupState(dialog, window, popupFrames.size())));
     QVERIFY(window->isVisible() && canvas->hasImage());
     auto *arrangeDialog = window->findChild<QObject *>("rearrangeDialog");
     QVERIFY(arrangeDialog);
     QVERIFY(QMetaObject::invokeMethod(arrangeDialog, "open"));
-    QTRY_VERIFY(arrangeDialog->property("visible").toBool());
+    QTRY_VERIFY2(arrangeDialog->property("opened").toBool() && arrangeDialog->property("activeFocus").toBool(),
+                 qPrintable(popupState(arrangeDialog, window, popupFrames.size())));
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!arrangeDialog->property("visible").toBool());
     QVERIFY(window->isVisible() && canvas->hasImage());
@@ -1375,12 +1532,244 @@ void EditorTests::qmlDismissal() {
     window->close();
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
     QCOMPARE(QGuiApplication::clipboard()->text(), QString("keep clipboard"));
-    reopen(); // The next screenshot session still opens normally.
+    QVERIFY(reopen()); // The next screenshot session still opens normally.
     window->close();
     QVERIFY(QMetaObject::invokeMethod(window, "showEditor"));
-    QTRY_VERIFY(window->isActive());
+    QVERIFY(waitForEditorInput(window));
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(!window->isVisible() && !canvas->hasImage());
+}
+
+void EditorTests::independentEditorSessions() {
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    const QString input = dir.filePath("original.png");
+    QVERIFY(pattern().save(input));
+    QQmlEngine engine;
+    FixtureEditorSessions editors(&engine, &isolatedSettings());
+    QSignalSpy errors(&editors, &EditorSessions::error);
+    QList<FixtureCaptureBackend *> backends;
+    editors.backendFactory = [&](QObject *owner) {
+        auto *backend = new FixtureCaptureBackend(&isolatedSettings(), owner);
+        backends.append(backend);
+        backend->selectFixture = [backend](bool multiple, bool video) {
+            backend->m_capturing = true;
+            backend->m_multiple = multiple;
+            backend->m_video = video;
+            backend->m_output = backend->m_temp.filePath("capture.png");
+            backend->m_screens = {{QGuiApplication::primaryScreen()->geometry(), pattern()}};
+            emit backend->capturingChanged();
+            backend->showSelectors();
+        };
+        return backend;
+    };
+    QVERIFY(editors.isReady());
+    editors.openImage(QUrl::fromLocalFile(input));
+    QCOMPARE(errors.size(), 0);
+    QCOMPARE(editors.windows().size(), 1);
+    QPointer<QQuickWindow> first = editors.windows().first();
+    auto *original = first->findChild<EditorCanvas *>("canvas");
+    QVERIFY(original && original->hasImage());
+    QVERIFY(first->isVisible());
+    QVERIFY(QTest::qWaitForWindowExposed(first));
+    original->addText(5, 5, 70, 45, "keep", 12);
+    const QImage annotated(original->saveTo(dir.filePath("baseline")));
+    QVERIFY(!annotated.isNull());
+    QVERIFY(original->canUndo());
+    original->setTool("text");
+    const QPointF point = original->imageRect().center();
+    original->begin(point.x(), point.y());
+    auto *draft = first->findChild<QObject *>("annotationText");
+    QVERIFY(draft);
+    draft->setProperty("text", "unfinished text");
+    QVERIFY(first->property("editingText").toBool());
+
+    editors.hotkeyCapture();
+    QCOMPARE(editors.windows().size(), 2);
+    QPointer<QQuickWindow> second = editors.windows().last();
+    auto *captureBackend = backends.last();
+    QVERIFY(captureBackend->capturing());
+    QVERIFY(!first->isVisible());
+    editors.hotkeyCapture(); // A repeated press during region selection keeps one selector session.
+    QCOMPARE(editors.windows().size(), 2);
+    emit captureBackend->m_selectors.first()->selected(pattern());
+    QTRY_VERIFY(first->isVisible() && second->isVisible());
+    QVERIFY(first->property("editingText").toBool());
+    QCOMPARE(draft->property("text").toString(), QString("unfinished text"));
+    QCOMPARE(QImage(original->saveTo(dir.filePath("preserved"))), annotated);
+    auto *newCanvas = second->findChild<EditorCanvas *>("canvas");
+    QVERIFY(newCanvas && newCanvas->hasImage());
+    QVERIFY(!newCanvas->canUndo());
+    QVERIFY(first->title() != second->title());
+    newCanvas->addText(4, 4, 70, 40, "new", 12);
+    newCanvas->undo();
+    QVERIFY(!newCanvas->canUndo() && newCanvas->canRedo());
+    QVERIFY(original->canUndo() && !original->canRedo());
+
+    // Cancellation restores both documents, including a minimized editor.
+    first->showMinimized();
+    QTRY_COMPARE(first->visibility(), QWindow::Minimized);
+    QVERIFY(QMetaObject::invokeMethod(second, "capture"));
+    QPointer<QQuickWindow> canceled = editors.windows().last();
+    QCOMPARE(editors.windows().size(), 3);
+    QVERIFY(!first->isVisible() && !second->isVisible());
+    emit backends.last()->m_selectors.first()->canceled();
+    QCOMPARE(editors.windows().size(), 2);
+    QTRY_VERIFY(canceled.isNull());
+    QCOMPARE(first->visibility(), QWindow::Minimized);
+    QVERIFY(second->isVisible());
+    QCOMPARE(draft->property("text").toString(), QString("unfinished text"));
+
+    // Multi-region captures receive a separate arrangement document.
+    QVERIFY(QMetaObject::invokeMethod(second, "captureMultiple"));
+    QPointer<QQuickWindow> combined = editors.windows().last();
+    RegionSelector *selector = backends.last()->m_selectors.first();
+    emit selector->regionAdded(QRectF(10, 10, 20, 20));
+    emit selector->accepted();
+    QCOMPARE(editors.windows().size(), 3);
+    QVERIFY(combined->findChild<EditorCanvas *>("canvas")->arranging());
+    QVERIFY(!newCanvas->arranging());
+    combined->close();
+    QTRY_VERIFY(combined.isNull());
+    QVERIFY(first && second);
+    QCOMPARE(editors.windows().size(), 2);
+
+    // The copy action disposes of only its own document and native windows.
+    QVERIFY(QMetaObject::invokeMethod(second, "finish"));
+    QTRY_VERIFY(second.isNull());
+    QCOMPARE(editors.windows().size(), 1);
+    QCOMPARE(QImage(original->saveTo(dir.filePath("after-close"))), annotated);
+    editors.showEditor();
+    QTRY_VERIFY(first->isVisible() && first->visibility() != QWindow::Minimized);
+    QCOMPARE(draft->property("text").toString(), QString("unfinished text"));
+    first->close();
+    QTRY_VERIFY(first.isNull());
+    QVERIFY(editors.windows().isEmpty());
+    editors.showEditor();
+    QCOMPARE(editors.windows().size(), 1);
+    QVERIFY(!editors.windows().first()->findChild<EditorCanvas *>("canvas")->hasImage());
+    QCOMPARE(errors.size(), 0);
+}
+
+void EditorTests::desktopMultipleEditors() {
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
+        QSKIP("Global hotkey and multiple editors require an unlocked Windows desktop");
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    const QString path = dir.filePath("existing.png");
+    QVERIFY(pattern().save(path));
+    AppSettings settings(settingsPaths(dir.path()));
+    QKeySequence binding;
+    {
+        GlobalHotkey probe;
+        QString error;
+        QVERIFY2(registerTestHotkey(probe, &error), qPrintable(error));
+        binding = probe.shortcut();
+    }
+    QVERIFY(atomicWrite(settingsPaths(dir.path()).settingsFile,
+                        "[Shortcuts]\nglobalCapture=" + binding.toString(QKeySequence::PortableText).toUtf8() + '\n'));
+    QVERIFY(settings.reloadNow());
+    QQmlEngine engine;
+    EditorSessions editors(&engine, &settings);
+    QLocalServer server;
+    QVERIFY(server.listen("snitt-test-" + QString::number(QCoreApplication::applicationPid())));
+    AppService service(&server, &editors, &settings);
+    QVERIFY2(settings.lastError().isEmpty(), qPrintable(settings.lastError()));
+    editors.openImage(QUrl::fromLocalFile(path));
+    QCOMPARE(editors.windows().size(), 1);
+    QPointer<QQuickWindow> first = editors.windows().first();
+    auto *original = first->findChild<EditorCanvas *>("canvas");
+    original->addText(2, 2, 75, 50, "original", 12);
+    const QImage expected(original->saveTo(dir.filePath("before")));
+    QVERIFY(!expected.isNull());
+    QVERIFY(QTest::qWaitForWindowExposed(first));
+    // Give another application's window focus before sending the real hotkey.
+    QWidget desktop;
+    desktop.resize(500, 300);
+    desktop.setWindowTitle("Snitt test desktop");
+    desktop.show(); desktop.raise(); desktop.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&desktop));
+    QVERIFY(sendTestHotkey(binding));
+    RegionSelector *selector = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (auto *widget : QApplication::topLevelWidgets()) {
+            auto *candidate = qobject_cast<RegionSelector *>(widget);
+            if (candidate && candidate->isVisible()) { selector = candidate; return true; }
+        }
+        return false;
+    })(), 5000);
+    QVERIFY(!first->isVisible());
+    const QPoint center = selector->rect().center();
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center - QPoint(90, 70));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(90, 70));
+    QTRY_COMPARE(editors.windows().size(), 2);
+    QPointer<QQuickWindow> second = editors.windows().last();
+    QTRY_VERIFY(first->isVisible() && second->isVisible() && second->isActive());
+    auto *captured = second->findChild<EditorCanvas *>("canvas");
+    QVERIFY(captured->hasImage());
+    captured->forceActiveFocus();
+    QTest::keyClick(second, Qt::Key_A);
+    QTRY_COMPARE(captured->tool(), QString("arrow"));
+    QCOMPARE(QImage(original->saveTo(dir.filePath("after"))), expected);
+    second->close();
+    QTRY_VERIFY(second.isNull());
+    QVERIFY(first && first->isVisible() && original->canUndo());
+    // A second process opening a file also creates its own document.
+    QLocalSocket client;
+    client.connectToServer(server.serverName());
+    QVERIFY(client.waitForConnected());
+    client.write(QJsonDocument(QJsonArray{path}).toJson(QJsonDocument::Compact) + '\n');
+    client.flush();
+    QTRY_COMPARE(editors.windows().size(), 2);
+    QPointer<QQuickWindow> opened = editors.windows().last();
+    QVERIFY(opened->findChild<EditorCanvas *>("canvas")->hasImage());
+    QVERIFY(!opened->findChild<EditorCanvas *>("canvas")->canUndo());
+    opened->close();
+    QTRY_VERIFY(opened.isNull());
+    QCOMPARE(QImage(original->saveTo(dir.filePath("after-ipc"))), expected);
+
+    // While recording, the same global hotkey still stops the recording.
+    editors.capture(false, true);
+    QCOMPARE(editors.windows().size(), 2);
+    QPointer<QQuickWindow> recording = editors.windows().last();
+    auto *backend = qobject_cast<Backend *>(
+        QQmlEngine::contextForObject(recording)->contextProperty("backend").value<QObject *>());
+    QVERIFY(backend);
+    QSignalSpy saved(backend, &Backend::recordingSaved);
+    QSignalSpy failures(backend, &Backend::error);
+    selector = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (auto *widget : QApplication::topLevelWidgets()) {
+            auto *candidate = qobject_cast<RegionSelector *>(widget);
+            if (candidate && candidate->isVisible()) { selector = candidate; return true; }
+        }
+        return false;
+    })(), 5000);
+    const QPoint videoCenter = selector->rect().center();
+    QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, videoCenter - QPoint(90, 70));
+    QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, videoCenter + QPoint(90, 70));
+    QTRY_VERIFY_WITH_TIMEOUT(backend->recordingElapsed() >= 1 || !failures.isEmpty(), 15000);
+    QVERIFY(failures.isEmpty());
+    QVERIFY(!first->isVisible());
+    QVERIFY(sendTestHotkey(binding));
+    QTRY_VERIFY_WITH_TIMEOUT(!saved.isEmpty() || !failures.isEmpty(), 20000);
+    QVERIFY(failures.isEmpty());
+    QCOMPARE(saved.size(), 1);
+    QCOMPARE(editors.windows().size(), 2);
+    QVERIFY(!backend->recording());
+    QTRY_VERIFY(first->isVisible());
+    auto *review = recording->findChild<QQuickWindow *>("recordingReviewWindow");
+    QVERIFY(review && review->isVisible());
+    review->close();
+    QTRY_VERIFY(recording.isNull());
+    QCOMPARE(editors.windows().size(), 1);
+    QCOMPARE(QImage(original->saveTo(dir.filePath("after-recording"))), expected);
+#else
+    QSKIP("Native Windows hotkey test");
+#endif
 }
 
 void EditorTests::qmlTrimBarSeeking() {
@@ -1687,8 +2076,19 @@ void EditorTests::qmlRecordingReview() {
     QTRY_VERIFY_WITH_TIMEOUT(player->property("duration").toLongLong() > 2000
         && player->property("primed").toBool() && !player->property("priming").toBool(), 10000);
     QVERIFY(QMetaObject::invokeMethod(review, "togglePlay"));
-    QTRY_VERIFY_WITH_TIMEOUT(bar->property("playheadSec").toDouble() >= 1.1, 3000);
-    const qint64 heldFrameTime = videoSink->videoFrame().startTime();
+    // PlaybackClock advances independently of frame delivery. Await the final
+    // 30 fps frame before the gap (29/30 s), not just the wall-clock playhead;
+    // decoder startup may still be delivering the preceding .900/.933 s frames.
+    qint64 heldFrameTime = -1;
+    QTRY_VERIFY2_WITH_TIMEOUT(([&] {
+        const QVideoFrame frame = videoSink->videoFrame();
+        heldFrameTime = frame.startTime();
+        return bar->property("playheadSec").toDouble() >= 1.1 && frame.isValid()
+            && heldFrameTime >= 950000 && heldFrameTime < 1000000;
+    })(), qPrintable(QString("playhead=%1 s, frame=%2 us, backend=%3 ms, clock=%4, mediaStatus=%5")
+        .arg(bar->property("playheadSec").toDouble()).arg(heldFrameTime)
+        .arg(player->property("position").toLongLong()).arg(playbackClock->property("running").toBool())
+        .arg(player->property("mediaStatus").toInt())), 3000);
     QVERIFY(heldFrameTime >= 900000 && heldFrameTime < 1000000);
     double previousPlayhead = bar->property("playheadSec").toDouble();
     QElapsedTimer cadenceTimer;
@@ -1722,7 +2122,7 @@ void EditorTests::qmlRecordingControls() {
 #else
     QGuiApplication::setFont(QFont("Helvetica"));
 #endif
-    QTest::failOnWarning(QRegularExpression(".*"));
+    failOnUnexpectedWarnings();
     qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
     if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
     Backend backend(&isolatedSettings());
@@ -1855,7 +2255,7 @@ void EditorTests::qmlRecordingControls() {
     QVERIFY(preview.save("recording-controls.png"));
     controls->requestActivate();
     QTRY_VERIFY(controls->isActive());
-    QGuiApplication::clipboard()->setText("waiting for recording");
+    QVERIFY(setClipboardText("waiting for recording"));
     QTest::keySequence(controls, QKeySequence(QKeySequence::Copy));
     QTest::keyClick(controls, Qt::Key_Escape);
     QTest::qWait(100);
@@ -1971,12 +2371,16 @@ void EditorTests::qmlRecordingHotkeyStop() {
     QVERIFY(controls);
     QVERIFY(review);
     GlobalHotkey hotkey;
+#ifdef Q_OS_WIN
+    QString registrationError;
+    QVERIFY2(registerTestHotkey(hotkey, &registrationError), qPrintable(registrationError));
+#endif
     QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
     QSignalSpy activated(&hotkey, &GlobalHotkey::activated);
     connect(&hotkey, &GlobalHotkey::activated, window, [window] {
         QMetaObject::invokeMethod(window, "hotkeyCapture");
     });
-    QGuiApplication::clipboard()->setText("keep clipboard during recording");
+    QVERIFY(setClipboardText("keep clipboard during recording"));
     backend.capture(false, true);
     RegionSelector *selector = nullptr;
     const QRect display = QGuiApplication::primaryScreen()->geometry();
@@ -2005,13 +2409,7 @@ void EditorTests::qmlRecordingHotkeyStop() {
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QTRY_VERIFY_WITH_TIMEOUT(backend.recordingElapsed() >= 1, 6000);
 #ifdef Q_OS_WIN
-        INPUT input[4]{};
-        for (auto &key : input) key.type = INPUT_KEYBOARD;
-        input[0].ki.wVk = VK_CONTROL;
-        input[1].ki.wVk = VK_SNAPSHOT;
-        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+        QVERIFY(sendTestHotkey(hotkey.shortcut()));
 #else
         // Quartz-synthesized keys do not trigger Carbon hotkeys on this macOS VM.
         // Exercise the registered native handler through the Carbon event queue.
@@ -2310,7 +2708,7 @@ void EditorTests::gridArrangementPreservesPixels() {
     QVERIFY(canvas.copy());
     QImage grid = QGuiApplication::clipboard()->image();
     QCOMPARE(grid.size(), QSize(184, 182));
-    QCOMPARE(grid.copy(24, 24, 80, 60), first);
+    QCOMPARE(grid.copy(24, 24, 80, 60).convertToFormat(first.format()), first);
     QCOMPARE(grid.pixelColor(128, 24), QColor(Qt::red));
     QCOMPARE(grid.pixelColor(24, 138), QColor(Qt::green));
     QCOMPARE(grid.pixelColor(0, 0), QColor("#f5f7fa"));
@@ -2325,7 +2723,7 @@ void EditorTests::gridArrangementPreservesPixels() {
     QCOMPARE(canvas.selectedRegion(), 2);
     QVERIFY(canvas.copy());
     grid = QGuiApplication::clipboard()->image();
-    QCOMPARE(grid.copy(24, 138, 80, 60), first);
+    QCOMPARE(grid.copy(24, 138, 80, 60).convertToFormat(first.format()), first);
     QCOMPARE(grid.pixelColor(24, 24), QColor(Qt::red));
     canvas.annotate();
     QVERIFY(!canvas.arranging());
@@ -2364,25 +2762,129 @@ void EditorTests::windowsHotkeyRegistration() {
 #ifdef Q_OS_WIN
     if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Native hotkeys require an interactive Windows desktop; set SNITT_INTERACTIVE_TESTS=1");
+    QKeySequence binding;
+    QString error;
     {
         GlobalHotkey hotkey;
-        QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
+        QVERIFY2(registerTestHotkey(hotkey, &error), qPrintable(error));
+        binding = hotkey.shortcut();
         QSignalSpy activated(&hotkey, &GlobalHotkey::activated);
         GlobalHotkey conflict;
-        QVERIFY(!conflict.registered());
-        INPUT input[4]{};
-        for (auto &key : input) key.type = INPUT_KEYBOARD;
-        input[0].ki.wVk = VK_CONTROL;
-        input[1].ki.wVk = VK_SNAPSHOT;
-        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+        QVERIFY(!conflict.setShortcut(binding, &error));
+        QVERIFY(!error.isEmpty());
+        QVERIFY(sendTestHotkey(binding));
         QTRY_COMPARE(activated.size(), 1);
     }
     GlobalHotkey released;
+    QVERIFY2(released.setShortcut(binding, &error), qPrintable(error));
     QVERIFY(released.registered());
+    QSignalSpy activated(&released, &GlobalHotkey::activated);
+    QVERIFY(sendTestHotkey(binding));
+    QTRY_COMPARE(activated.size(), 1);
 #else
     QSKIP("Windows native hotkey test");
+#endif
+}
+
+void EditorTests::windowsClipboardContention() {
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() != "windows" || qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
+        QSKIP("Clipboard contention requires the native Windows desktop");
+    failOnUnexpectedWarnings();
+    const QString unicode = QString::fromUtf8("Snitt — café 👋\nsecond line");
+    QVERIFY(setClipboardText(unicode));
+    QCOMPARE(QGuiApplication::clipboard()->text(), unicode);
+    auto unsupported = std::make_unique<QMimeData>();
+    unsupported->setHtml(QStringLiteral("<b>unsupported</b>"));
+    QVERIFY(!snittClipboard::publish(std::move(unsupported)));
+    QCOMPARE(QGuiApplication::clipboard()->text(), unicode);
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    const QString path = dir.filePath("input.png");
+    QVERIFY(pattern().save(path));
+    QQmlEngine engine;
+    EditorSessions editors(&engine, &isolatedSettings());
+    editors.openImage(QUrl::fromLocalFile(path));
+    QPointer<QQuickWindow> window = editors.windows().first();
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    canvas->addText(2, 2, 70, 40, "Keep", 12);
+    const QImage expected(canvas->saveTo(dir.filePath("expected")));
+    QVERIFY(!expected.isNull());
+    QSignalSpy errors(canvas, &EditorCanvas::error);
+
+    // Transient contention is handled by one copy action, with no lost pixels.
+    {
+        ClipboardLock lock(150);
+        QVERIFY(lock.acquired());
+        QVERIFY(canvas->copy());
+    }
+    QCOMPARE(errors.size(), 0);
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(QImage::Format_ARGB32_Premultiplied),
+             expected.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+
+    // Inspect both actual Windows formats, including translucent pixels. These
+    // bytes must work independently of Qt retaining a QImage in this process.
+    {
+        QTRY_VERIFY(OpenClipboard(nullptr));
+        const auto close = qScopeGuard([] { CloseClipboard(); });
+        HGLOBAL png = GetClipboardData(RegisterClipboardFormatW(L"PNG"));
+        HGLOBAL dib = GetClipboardData(CF_DIBV5);
+        QVERIFY(png && dib);
+        const auto *pngBytes = static_cast<const uchar *>(GlobalLock(png));
+        QVERIFY(pngBytes);
+        const auto unlockPng = qScopeGuard([&] { GlobalUnlock(png); });
+        const QImage pngImage = QImage::fromData(pngBytes, qsizetype(GlobalSize(png)), "PNG");
+        QCOMPARE(pngImage.convertToFormat(QImage::Format_ARGB32_Premultiplied),
+                 expected.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+        const auto *dibBytes = static_cast<const uchar *>(GlobalLock(dib));
+        QVERIFY(dibBytes);
+        const auto unlockDib = qScopeGuard([&] { GlobalUnlock(dib); });
+        QVERIFY(GlobalSize(dib) >= sizeof(BITMAPV5HEADER));
+        const auto *header = reinterpret_cast<const BITMAPV5HEADER *>(dibBytes);
+        QCOMPARE(header->bV5Size, DWORD(sizeof(BITMAPV5HEADER)));
+        QCOMPARE(header->bV5Width, expected.width());
+        QCOMPARE(header->bV5Height, -expected.height());
+        QCOMPARE(header->bV5BitCount, WORD(32));
+        QCOMPARE(header->bV5Compression, DWORD(BI_BITFIELDS));
+        QCOMPARE(header->bV5RedMask, DWORD(0x00ff0000));
+        QCOMPARE(header->bV5GreenMask, DWORD(0x0000ff00));
+        QCOMPARE(header->bV5BlueMask, DWORD(0x000000ff));
+        QCOMPARE(header->bV5AlphaMask, DWORD(0xff000000));
+        QVERIFY(GlobalSize(dib) >= sizeof(BITMAPV5HEADER) + SIZE_T(expected.width()) * expected.height() * 4);
+        const QImage dibImage(dibBytes + sizeof(BITMAPV5HEADER), expected.width(), expected.height(),
+                              expected.width() * 4, QImage::Format_ARGB32);
+        QCOMPARE(dibImage.convertToFormat(QImage::Format_ARGB32_Premultiplied),
+                 expected.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+    }
+
+    // A permanent lock must not report success just because the previous
+    // clipboard image has identical pixels, or close this managed document.
+    {
+        ClipboardLock lock;
+        QVERIFY(lock.acquired());
+        QVERIFY(QMetaObject::invokeMethod(window, "finish"));
+        QCOMPARE(errors.size(), 1);
+        QVERIFY(window);
+        QVERIFY(window->isVisible());
+        QCOMPARE(editors.windows().size(), 1);
+        QVERIFY(canvas->hasImage());
+        QVERIFY(canvas->canUndo());
+        QCOMPARE(QImage(canvas->saveTo(dir.filePath("after-failure"))), expected);
+        QVERIFY(window->property("notice").toString().contains("Could not copy"));
+    }
+
+    // Once the lock is released, the same document can be copied and closed.
+    QVERIFY(QMetaObject::invokeMethod(window, "finish"));
+    QTRY_VERIFY(window.isNull());
+    QCOMPARE(editors.windows().size(), 0);
+    QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(QImage::Format_ARGB32_Premultiplied),
+             expected.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+    QCOMPARE(errors.size(), 1);
+#else
+    QSKIP("Windows native clipboard test");
 #endif
 }
 
@@ -2536,7 +3038,8 @@ void EditorTests::windowsCaptureLatency() {
     QCOMPARE(engine.rootObjects().size(), 1);
     QObject *window = engine.rootObjects().first();
     GlobalHotkey hotkey;
-    QVERIFY2(hotkey.registered(), qPrintable(hotkey.description()));
+    QString registrationError;
+    QVERIFY2(registerTestHotkey(hotkey, &registrationError), qPrintable(registrationError));
     connect(&hotkey, &GlobalHotkey::activated, window, [window] {
         QMetaObject::invokeMethod(window, "capture");
     });
@@ -2545,13 +3048,7 @@ void EditorTests::windowsCaptureLatency() {
         probe.firstPaintMs = -1;
         probe.selector.clear();
         probe.timer.start();
-        INPUT input[4]{};
-        for (auto &key : input) key.type = INPUT_KEYBOARD;
-        input[0].ki.wVk = VK_CONTROL;
-        input[1].ki.wVk = VK_SNAPSHOT;
-        input[2].ki.wVk = VK_SNAPSHOT; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        QCOMPARE(SendInput(4, input, sizeof(INPUT)), UINT(4));
+        QVERIFY(sendTestHotkey(hotkey.shortcut()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.firstPaintMs >= 0, 5000);
         qInfo("Hotkey to painted selector, attempt %d: %lld ms", attempt + 1, probe.firstPaintMs);
         QVERIFY(probe.selector);
@@ -3034,7 +3531,7 @@ void EditorTests::macSettingsUseCommandActions() {
     QTRY_VERIFY(window->isActive());
     QImage replacement(24, 18, QImage::Format_RGB32);
     replacement.fill(Qt::yellow);
-    QGuiApplication::clipboard()->setImage(replacement);
+    QVERIFY(setClipboardImage(replacement));
     QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
     QCoreApplication::processEvents();
     QCOMPARE(canvas->imageWidth(), pattern().width()); // Image paste is disabled during annotation.
@@ -3057,7 +3554,7 @@ void EditorTests::macSettingsUseCommandActions() {
     QVERIFY(annotation);
     for (const char key : QByteArray("original")) QTest::keyClick(window, key);
     QTest::keySequence(window, QKeySequence(QKeySequence::SelectAll));
-    QGuiApplication::clipboard()->setText("replacement");
+    QVERIFY(setClipboardText("replacement"));
     QTest::keySequence(window, QKeySequence(QKeySequence::Paste));
     QTRY_COMPARE(annotation->property("text").toString(), QString("replacement"));
     QTest::keyClick(window, Qt::Key_Escape);

@@ -5,16 +5,17 @@
 #include <QMenu>
 #include "globalhotkey.h"
 #include "appsettings.h"
+class EditorSessions;
 
 class AppService : public QObject {
     Q_OBJECT
 public:
-    explicit AppService(QLocalServer *server, QObject *window, AppSettings *settings, QObject *parent = nullptr);
+    explicit AppService(QLocalServer *server, EditorSessions *editors, AppSettings *settings, QObject *parent = nullptr);
     static QString serverName();
     static bool sendCommand(const QStringList &arguments);
 private:
     void dispatch(const QStringList &arguments);
-    QObject *m_window;
+    EditorSessions *m_editors;
     AppSettings *m_settings;
     GlobalHotkey m_hotkey;
     QMenu m_menu;

@@ -8,6 +8,10 @@ TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 
 HEADERS += src/backend.h src/imagedocument.h src/editorcanvas.h src/annotationfont.h
+HEADERS += src/editorsessions.h
+SOURCES += src/editorsessions.cpp
+HEADERS += src/clipboard.h
+SOURCES += src/clipboard.cpp
 SOURCES += src/main.cpp src/backend.cpp src/imagedocument.cpp src/editorcanvas.cpp
 HEADERS += src/globalhotkey.h src/appservice.h src/appsettings.h src/regionselector.h
 SOURCES += src/globalhotkey.cpp src/appservice.cpp src/appsettings.cpp src/regionselector.cpp

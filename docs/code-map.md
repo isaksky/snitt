@@ -2,6 +2,7 @@
 
 - [src/Main.qml](../src/Main.qml): editing controls, shortcuts, and show/hide session flow.
 - [src/appservice.cpp](../src/appservice.cpp): tray menu and single-instance local IPC.
+- [src/editorsessions.cpp](../src/editorsessions.cpp): independent editor windows, capture routing, and hiding/restoring open documents during capture.
 - [src/globalhotkey.cpp](../src/globalhotkey.cpp): native Windows/macOS global hotkey registration.
 - [src/backend.cpp](../src/backend.cpp): platform capture lifecycle.
 - [src/macrecorder.mm](../src/macrecorder.mm): native macOS ScreenCaptureKit recording and saved-file lifecycle.

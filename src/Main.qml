@@ -14,7 +14,9 @@ ApplicationWindow {
     minimumWidth: 860
     minimumHeight: 560
     visible: false
-    title: "Snitt"
+    property var sessionManager: null
+    property string sessionLabel: ""
+    title: sessionLabel === "" ? "Snitt" : "Snitt — " + sessionLabel
     color: "#111317"
     Material.theme: Material.Dark
     Material.accent: "#91bff0"
@@ -31,6 +33,7 @@ ApplicationWindow {
         && !rearrangeDialog.visible && !captureErrorDialog.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
     readonly property bool imageInputShortcuts: shortcutsOn && (!canvas.hasImage || canvas.arranging)
+    readonly property bool captureShortcuts: shortcutsOn && (sessionManager !== null || !canvas.hasImage || canvas.arranging)
     readonly property string hint: editingText ? canvas.textSize + " px · " + commandKey + "Enter to place"
         : canvas.tool === "cut" ? "↔ removes columns · ↕ removes rows"
         : canvas.tool === "rect" || canvas.tool === "arrow"
@@ -59,14 +62,24 @@ ApplicationWindow {
         textWidth = 0
         canvas.forceActiveFocus()
     }
-    function capture() { startCapture(false, false) }
+    function capture() {
+        if (sessionManager) sessionManager.capture(false, false)
+        else startCapture(false, false)
+    }
     function hotkeyCapture() {
+        if (sessionManager) { sessionManager.hotkeyCapture(); return }
         if (backend.recording) { backend.stopRecordingFromHotkey(); return }
         if (backend.trim.path !== "") return
         capture()
     }
-    function captureMultiple() { startCapture(true, false) }
-    function captureVideo() { startCapture(false, true) }
+    function captureMultiple() {
+        if (sessionManager) sessionManager.capture(true, false)
+        else startCapture(true, false)
+    }
+    function captureVideo() {
+        if (sessionManager) sessionManager.capture(false, true)
+        else startCapture(false, true)
+    }
     function startCapture(multiple, video) {
         if (backend.recording) return
         if (backend.capturing) return
@@ -85,7 +98,10 @@ ApplicationWindow {
     function finish() {
         commitText()
         canvas.cancel()
-        if (canvas.copy()) { win.hide(); canvas.clear() }
+        if (canvas.copy()) {
+            win.hide(); canvas.clear()
+            if (sessionManager) sessionManager.closeEditor(win)
+        }
     }
     function saveAndClose() {
         commitText()
@@ -98,7 +114,7 @@ ApplicationWindow {
             captureErrorDialog.message = "Screenshot saved at " + path + ", but could not reveal it in the file manager."
             win.showEditor()
             captureErrorDialog.open()
-        }
+        } else if (sessionManager) sessionManager.closeEditor(win)
     }
     function dismissEditor() {
         win.editingText = false
@@ -108,9 +124,17 @@ ApplicationWindow {
         rearrangeDialog.close()
         win.hide()
         canvas.clear()
+        if (sessionManager) sessionManager.closeEditor(win)
     }
-    function showEditor() { win.show(); win.raise(); win.requestActivate() }
-    function openImage(file) { commitText(); canvas.load(file); showEditor() }
+    function showEditor() {
+        if (win.visibility === Window.Minimized) win.showNormal()
+        win.show(); win.raise(); win.requestActivate()
+    }
+    function loadImage(file) { commitText(); canvas.load(file); showEditor() }
+    function openImage(file) {
+        if (sessionManager) sessionManager.openImage(file)
+        else loadImage(file)
+    }
     onClosing: close => { close.accepted = false; win.dismissEditor() }
     function showError(message) { notice = message; noticeTimer.restart() }
 
@@ -777,7 +801,7 @@ ApplicationWindow {
         id: openDialog
         title: "Open a screenshot"
         nameFilters: ["Images (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)"]
-        onAccepted: { win.commitText(); canvas.load(selectedFile) }
+        onAccepted: win.openImage(selectedFile)
     }
 
     Shortcut { sequences: win.shortcuts.toolCut; enabled: win.annotationShortcuts; onActivated: win.chooseTool("cut") }
@@ -789,8 +813,8 @@ ApplicationWindow {
     Shortcut { sequences: win.shortcuts.toolErase; enabled: win.annotationShortcuts; onActivated: win.chooseTool("erase") }
     Shortcut { sequences: win.shortcuts.goodMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("good") }
     Shortcut { sequences: win.shortcuts.badMode; enabled: win.annotationShortcuts; onActivated: canvas.setInkMode("bad") }
-    Shortcut { objectName: "captureVideoShortcut"; sequences: win.shortcuts.captureVideo; enabled: win.imageInputShortcuts; onActivated: win.captureVideo() }
-    Shortcut { objectName: "captureMultipleShortcut"; sequences: win.shortcuts.captureMultiple; enabled: win.imageInputShortcuts; onActivated: win.captureMultiple() }
+    Shortcut { objectName: "captureVideoShortcut"; sequences: win.shortcuts.captureVideo; enabled: win.captureShortcuts; onActivated: win.captureVideo() }
+    Shortcut { objectName: "captureMultipleShortcut"; sequences: win.shortcuts.captureMultiple; enabled: win.captureShortcuts; onActivated: win.captureMultiple() }
     Shortcut { sequences: win.shortcuts.arrange; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.annotate() }
     Shortcut { sequences: win.shortcuts.columnsMore; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns++ }
     Shortcut { sequences: win.shortcuts.columnsLess; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.columns-- }
@@ -800,7 +824,7 @@ ApplicationWindow {
     Shortcut { sequences: win.shortcuts.moveRegionLeft; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion - 1) }
     Shortcut { sequences: win.shortcuts.moveRegionRight; enabled: win.shortcutsOn && canvas.arranging; onActivated: canvas.moveRegion(canvas.selectedRegion, canvas.selectedRegion + 1) }
     Shortcut { objectName: "openImageShortcut"; sequences: win.shortcuts.openImage; enabled: win.imageInputShortcuts; onActivated: openDialog.open() }
-    Shortcut { objectName: "captureShortcut"; sequences: win.shortcuts.capture; enabled: win.imageInputShortcuts; onActivated: win.capture() }
+    Shortcut { objectName: "captureShortcut"; sequences: win.shortcuts.capture; enabled: win.captureShortcuts; onActivated: win.capture() }
     Shortcut { objectName: "pasteImageShortcut"; sequences: win.shortcuts.pasteImage; enabled: win.imageInputShortcuts; onActivated: win.pasteImage() }
     Shortcut {
         sequences: win.shortcuts.copyClose; enabled: win.shortcutsOn && canvas.hasImage

@@ -51,7 +51,7 @@ public:
     static QRect controlsGeometry(const QRect &available);
     static QRect editorGeometry(const QRect &available, const QSize &size);
     Q_INVOKABLE void positionEditorForCapture(QObject *editor);
-    Q_INVOKABLE void capture(bool multiple = false, bool video = false);
+    Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();

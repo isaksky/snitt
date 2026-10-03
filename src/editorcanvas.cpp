@@ -1,5 +1,6 @@
 #include "editorcanvas.h"
 #include "annotationfont.h"
+#include "clipboard.h"
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -207,7 +208,12 @@ bool EditorCanvas::paste() {
 
 bool EditorCanvas::copy() {
     if (!hasImage()) return false;
-    QGuiApplication::clipboard()->setImage(exportImage());
+    auto data = std::make_unique<QMimeData>();
+    data->setImageData(exportImage());
+    if (!snittClipboard::publish(std::move(data))) {
+        emit error(QStringLiteral("Could not copy the image to the clipboard. Please try again."));
+        return false;
+    }
     return true;
 }
 

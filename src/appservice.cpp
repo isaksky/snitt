@@ -1,4 +1,5 @@
 #include "appservice.h"
+#include "editorsessions.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -33,11 +34,11 @@ bool AppService::sendCommand(const QStringList &arguments) {
     return socket.bytesToWrite() == 0 || socket.waitForBytesWritten(1000);
 }
 
-AppService::AppService(QLocalServer *server, QObject *window, AppSettings *settings, QObject *parent)
-    : QObject(parent), m_window(window), m_settings(settings) {
-    auto capture = [this] { QMetaObject::invokeMethod(m_window, "capture"); };
-    auto hotkeyCapture = [this] { QMetaObject::invokeMethod(m_window, "hotkeyCapture"); };
-    auto show = [this] { QMetaObject::invokeMethod(m_window, "showEditor"); };
+AppService::AppService(QLocalServer *server, EditorSessions *editors, AppSettings *settings, QObject *parent)
+    : QObject(parent), m_editors(editors), m_settings(settings) {
+    auto capture = [this] { m_editors->capture(); };
+    auto hotkeyCapture = [this] { m_editors->hotkeyCapture(); };
+    auto show = [this] { m_editors->showEditor(); };
     connect(&m_hotkey, &GlobalHotkey::activated, this, hotkeyCapture);
     m_menu.addAction(QStringLiteral("Capture region"), this, capture);
     m_menu.addAction(QStringLiteral("Open editor"), this, show);
@@ -76,6 +77,9 @@ AppService::AppService(QLocalServer *server, QObject *window, AppSettings *setti
         if (reason == QSystemTrayIcon::DoubleClick) capture();
     });
     m_tray.show();
+    connect(m_editors, &EditorSessions::error, this, [this](const QString &message) {
+        m_tray.showMessage(QStringLiteral("Could not open editor"), message, QSystemTrayIcon::Warning);
+    });
     if (!m_hotkey.registered()) {
         QTimer::singleShot(500, this, [this] {
             m_tray.showMessage(QStringLiteral("Snitt shortcut unavailable"),
@@ -109,12 +113,12 @@ AppService::AppService(QLocalServer *server, QObject *window, AppSettings *setti
 void AppService::dispatch(const QStringList &arguments) {
     if (arguments.contains("--quit")) { qApp->quit(); return; }
     if (arguments.contains("--background")) return;
-    if (arguments.contains("--show")) { QMetaObject::invokeMethod(m_window, "showEditor"); return; }
+    if (arguments.contains("--show")) { m_editors->showEditor(); return; }
     for (const auto &arg : arguments) {
         if (!arg.startsWith('-')) {
-            QMetaObject::invokeMethod(m_window, "openImage", Q_ARG(QVariant, QUrl::fromLocalFile(QFileInfo(arg).absoluteFilePath())));
+            m_editors->openImage(QUrl::fromLocalFile(QFileInfo(arg).absoluteFilePath()));
             return;
         }
     }
-    QMetaObject::invokeMethod(m_window, "capture");
+    m_editors->capture();
 }
