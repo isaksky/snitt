@@ -1,0 +1,3 @@
+interface:
+  display_name: "Jolt"
+  short_description: "Use Jolt with verified Clojure compatibility guidance"
