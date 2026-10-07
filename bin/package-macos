@@ -24,6 +24,7 @@ PRIVATE_FFMPEG_LIBRARIES = (
     "libavformat.61.dylib", "libavcodec.61.dylib", "libswresample.5.dylib",
     "libswscale.8.dylib", "libavutil.59.dylib",
 )
+APPLICATION_LIBRARIES = {"libglimmer_qt.dylib", "libsnitt_jolt.dylib"}
 PRIVATE_RUNTIME = ROOT / "build/tools/mac-multimedia-runtime/stage/manifest.json"
 SUPPORTED_QT = {"6.11.1", "6.11.2"}
 OFFICIAL_QT_SOURCES_6112 = {
@@ -152,7 +153,8 @@ def source_packages(bundle, binaries, cellar):
     # These five libraries are built from the separately pinned LGPL source
     # in bin/build-mac-multimedia-runtime, not installed by Homebrew.
     deployed = [p for p in binaries if p.is_relative_to(frameworks)
-                and p.name not in PRIVATE_FFMPEG_LIBRARIES]
+                and p.name not in PRIVATE_FFMPEG_LIBRARIES
+                and p.name not in APPLICATION_LIBRARIES]
     names = {p.name for p in deployed}
     candidates = {}
     for path in cellar.rglob("*"):
@@ -179,7 +181,8 @@ def source_packages(bundle, binaries, cellar):
 def official_qt_binaries(bundle, binaries, sdk):
     frameworks = bundle / "Contents/Frameworks"
     selected = [p for p in binaries if p.is_relative_to(frameworks)
-                and p.name not in PRIVATE_FFMPEG_LIBRARIES]
+                and p.name not in PRIVATE_FFMPEG_LIBRARIES
+                and p.name not in APPLICATION_LIBRARIES]
     for binary in selected:
         relative = binary.relative_to(frameworks)
         original = sdk / "lib" / relative
@@ -289,6 +292,13 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
     licenses = payload / "licenses"
     copy_file(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
     copy_file(ROOT / "src/OMACUT-LICENSE", licenses / "omacut/LICENSE")
+    if (payload / "Snitt.app/Contents/MacOS/snitt-jolt").is_file():
+        jolt = Path(shutil.which(os.environ.get("JOLT", "jolt")) or "").resolve()
+        jolt_license = jolt.parent.parent / "LICENSE"
+        if not jolt_license.is_file():
+            raise RuntimeError("Selected Jolt distribution lacks its EPL license")
+        copy_file(jolt_license, licenses / "jolt/LICENSE")
+        copy_file(ROOT / "glimmer-qt/vendor/glimmer/LICENSE", licenses / "glimmer/LICENSE")
     # These helpers are independent, statically linked LGPL executables built
     # from the pinned source in bin/build-thumbnail-helper-macos. Keep its full
     # corresponding source alongside the release archive.
@@ -351,6 +361,15 @@ def add_notices(payload, packages, cache, dependencies, private_manifest,
                       "source_url": "https://ffmpeg.org/releases/ffmpeg-7.1.3.tar.xz",
                       "source_sha256": ffmpeg_sha256,
                       "license": "LGPL-2.1-or-later"})
+    if (payload / "Snitt.app/Contents/MacOS/snitt-jolt").is_file():
+        inventory.extend((
+            {"package": "jolt", "version": run(jolt, "--version"),
+             "license": "EPL-2.0", "binaries": ["Contents/MacOS/snitt-jolt"],
+             "source_url": "https://github.com/jolt-lang/jolt"},
+            {"package": "glimmer", "license": "MIT",
+             "binaries": ["Contents/Frameworks/libglimmer_qt.dylib"],
+             "source_revision": "09b8ab08705fa1e6f20145c2e99eaaba9ea812cc"},
+        ))
     private_sources = payload / "Snitt.app/Contents/Resources/Sources"
     private_notices = licenses / "private-playback"
     private_notices.mkdir(parents=True)
@@ -420,6 +439,10 @@ Portions of this software are copyright The FreeType Project
 macOS recording uses ScreenCaptureKit; the bundled FFmpeg helper is used for
 thumbnail decoding, not screen capture or trimmed-video export.
 """)
+    if (payload / "Snitt.app/Contents/MacOS/snitt-jolt").is_file():
+        with (payload / "THIRD-PARTY-NOTICES.txt").open("a") as notice:
+            notice.write("\nThe Jolt application runtime is under EPL-2.0; see licenses/jolt/LICENSE.\n"
+                         "The Glimmer UI library is under MIT; see licenses/glimmer/LICENSE.\n")
 
 
 def main():

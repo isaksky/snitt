@@ -17,6 +17,11 @@
 QString AppService::serverName() {
     const QByteArray user = QCryptographicHash::hash(QDir::homePath().toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
     QString name = QStringLiteral("snitt-") + QString::fromLatin1(user);
+    // Comparison runs need their own socket without contacting an installed app.
+    const QString testIdentity = qEnvironmentVariable("SNITT_LEGACY_TEST_IPC_ID");
+    if (!testIdentity.isEmpty())
+        name += QStringLiteral("-") + QString::fromLatin1(QCryptographicHash::hash(
+            testIdentity.toUtf8(), QCryptographicHash::Sha256).toHex().left(12));
 #ifdef Q_OS_WIN
     DWORD session = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &session);

@@ -138,6 +138,14 @@ bool sameSequence(const QString &left, const QString &right) {
 }
 
 AppSettings::Paths AppSettings::standardPaths() {
+    const QString isolated = qEnvironmentVariable("SNITT_LEGACY_TEST_DATA_DIR");
+    if (!isolated.isEmpty()) {
+        const QDir root(isolated);
+        return {root.filePath(QStringLiteral("settings.ini")),
+                root.filePath(QStringLiteral("settings-format.md")),
+                root.filePath(QStringLiteral("pictures")),
+                root.filePath(QStringLiteral("videos"))};
+    }
     Paths paths;
     QString config = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     if (config.isEmpty()) config = QDir(QDir::homePath()).filePath(QStringLiteral(".config/snitt"));

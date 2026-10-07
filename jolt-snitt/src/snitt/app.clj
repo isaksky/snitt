@@ -770,7 +770,9 @@
                           (qt/later! 200 #(dispatch-arguments! arguments true)))
                 ("forwarded" "quit") (qt/later! 0 qt/quit!)
                 "error" (qt/later! 0 qt/quit!)))))
-       :app-id "snitt-jolt-development" :keep-alive true
+       :app-id (if (System/getenv "SNITT_JOLT_PRODUCTION")
+                 "snitt" "snitt-jolt-development")
+       :keep-alive true
        :auto-quit-ms (when smoke? 5000))
       (when (= "error" @result)
         (throw (ex-info "Another Snitt Jolt instance is starting or unresponsive." {})))

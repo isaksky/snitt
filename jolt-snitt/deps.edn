@@ -1,6 +1,7 @@
 {:paths ["src"]
  :jolt/native [{:name "snitt-jolt"
-                :darwin ["../build/jolt-snitt/libsnitt_jolt.dylib"]
+                :darwin ["libsnitt_jolt.dylib"
+                         "../build/jolt-snitt/libsnitt_jolt.dylib"]
                 :windows ["../build/jolt-snitt/release/snitt_jolt.dll"
                           "../build/jolt-snitt/snitt_jolt.dll"]
                 :linux ["../build/jolt-snitt/libsnitt_jolt.so"]}]

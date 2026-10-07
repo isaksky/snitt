@@ -29,6 +29,14 @@
     (spit temporary source)
     (check! (.renameTo (io/file temporary) (io/file @path)) "Atomic replacement succeeded")))
 (defn later! [delay f] (qt/later! delay f))
+(defn await! [message ready? continuation]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (letfn [(poll []
+              (cond
+                (ready?) (do (check! (ready?) message) (continuation))
+                (>= (System/currentTimeMillis) deadline) (check! false message)
+                :else (later! 100 poll)))]
+      (later! 100 poll))))
 
 (defn finish! []
   (widget/dispose! (:root @service-b))
@@ -129,28 +137,24 @@
     (check! (settings/reload!) "Recreation recovers")
     (let [ordinary (str/replace changed "good=#317ab5" "good=#4688b2")]
       (write! ordinary)
-      (later! 700
+      (await! "Ordinary save reloads through watcher"
+              #(= "#4688b2" (:good-color @settings/published))
               (fn []
-                (check! (= "#4688b2" (:good-color @settings/published))
-                        "Ordinary save reloads through watcher")
                 (let [replacement (str/replace ordinary "good=#4688b2" "good=#638cab")]
                   (replace! replacement)
-                  (later! 700
+                  (await! "Atomic replacement reloads through watcher"
+                          #(= "#638cab" (:good-color @settings/published))
                           (fn []
-                            (check! (= "#638cab" (:good-color @settings/published))
-                                    "Atomic replacement reloads through watcher")
                             (io/delete-file @path)
-                            (later! 700
+                            (await! "Watcher reports deletion"
+                                    #(str/includes? (error @service-a) "missing")
                                     (fn []
-                                      (check! (str/includes? (error @service-a) "missing")
-                                              "Watcher reports deletion")
                                       (check! (= "#638cab" (:good-color @settings/published))
                                               "Watcher retains last valid candidate")
                                       (write! replacement)
-                                      (later! 700
+                                      (await! "Watcher recovers after recreation"
+                                              #(empty? (error @service-a))
                                               (fn []
-                                                (check! (empty? (error @service-a))
-                                                        "Watcher recovers after recreation")
                                                 (finish!)))))))))))))
 
 (defn -main [& _]
@@ -162,7 +166,7 @@
         (reset! window (qt/open-window! (fn [] [:label {:label "settings"}])
                                        :title "Settings test" :width 120 :height 80))
         (later! 100 exercise!))
-     :app-id "snitt-jolt-development" :keep-alive true :auto-quit-ms 7000)
+     :app-id "snitt-jolt-development" :keep-alive true :auto-quit-ms 22000)
     (check! @done? "Settings test completed")
     (check! (zero? (widget/live-count)) "All service handles released")
     (println "PASS:" @checks "Jolt settings checks")

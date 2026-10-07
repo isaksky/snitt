@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+"$ROOT/bin/stage-jolt-macos"
+exec "$ROOT/bin/package-macos" \
+    --bundle "$ROOT/build/package/jolt-macos/Snitt.app" \
+    --release-directory "$ROOT/build/release-jolt" "$@"

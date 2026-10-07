@@ -151,9 +151,9 @@ private:
 };
 
 AppSettings::Paths applicationPaths() {
-    // This development entry point must never read production settings or save
-    // into the installed application's default picture/video directories.
     QString root = qEnvironmentVariable("SNITT_JOLT_DATA_DIR");
+    if (root.isEmpty() && qEnvironmentVariableIsSet("SNITT_JOLT_PRODUCTION"))
+        return AppSettings::standardPaths();
     if (root.isEmpty())
         root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     const QDir directory(root);
@@ -479,6 +479,10 @@ static void initializeSnittResources() { Q_INIT_RESOURCE(resources); }
 
 extern "C" Q_DECL_EXPORT int snitt_jolt_register() {
     if (!qobject_cast<QApplication *>(qApp)) return 0;
+    if (qEnvironmentVariableIsSet("SNITT_JOLT_PRODUCTION")) {
+        qApp->setOrganizationName(QStringLiteral("snitt"));
+        qApp->setApplicationDisplayName(QStringLiteral("Snitt"));
+    }
     initializeSnittResources();
     return gqt_register_image_provider("snitt-capture", pickerImageRequest, nullptr, nullptr)
         && gqt_register_factory("snitt-jolt.canvas", canvasFactory, nullptr)

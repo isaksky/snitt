@@ -89,6 +89,39 @@ and its label. Run `jolt -M:commands` from `jolt-snitt/` for the pure context te
 Only local macOS validation is in scope for this development launcher. Windows
 build and execution remain deferred.
 
+## Local macOS package candidate
+
+Install Jolt v0.8.16 and the matching Qt 6.11 SDK, plus Chez Scheme's build
+headers (`brew install chezscheme`) for Jolt's signable release executable.
+`bin/package-jolt-macos --version 0.2.0` stages the retained C++ app as a
+comparison base, builds the closed-world Jolt executable and Snitt native
+bridge, deploys their Qt dependencies, signs the candidate with the existing
+Snitt local identity, and writes an isolated archive under `build/release-jolt/`.
+The staged candidate is `build/package/jolt-macos/Snitt.app`; the C++ reference
+remains `build/package/macos/Snitt.app` and `bin/run` remains its launcher.
+Run `bin/stage-jolt-macos --reuse-legacy-stage` only when the existing C++ stage
+has already passed signature and runtime checks. The candidate is local only;
+neither command installs it or changes login registration.
+
+The candidate keeps bundle ID `local.snitt` and the existing signing identity.
+Its launcher selects Qt plugins and the private software playback backend
+inside the bundle. It sets application name `snitt`, so the native settings
+adapter uses the C++ launcher's standard config, Pictures, and Movies paths.
+Its IPC name remains separate from the running C++ app until cutover; repeated
+candidate invocations forward to the candidate owner. Disposable desktop tests
+set `SNITT_JOLT_DATA_DIR` and `SNITT_JOLT_IPC_ID` so they never read normal user
+settings or contact a normal owner.
+
+After packaging, run `python3 tests/jolt_package_smoke.py`. It extracts the Jolt
+archive out of the checkout and runs document smoke, command forwarding, show,
+quit, and two owner lifetimes. It compares settings-ready latency and editor RSS
+against a test-isolated C++ launcher. On the local arm64 macOS 15.7.3 machine
+with Qt 6.11.1 and Jolt 0.8.16, the closed-world build measured 0.230 seconds
+and 298 MiB RSS, versus 0.113 seconds and 137 MiB for C++. The retained Jolt
+runtime accounts for a higher memory floor; closed-world compilation reduced
+the candidate by about 25 MiB from the initial release build. These figures
+are two-run local medians, not portable performance limits.
+
 Run `python3 tests/parity.py` from the repository root to rebuild the local
 test binaries and compare the shared editor fixture through C++ and the Jolt
 bridge. `tests/parity-fixtures.json` records commands and expected state; the
