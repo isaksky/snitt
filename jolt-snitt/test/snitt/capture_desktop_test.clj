@@ -95,16 +95,35 @@
               (qt/later! 200 #(finish-multiple! manager id count scales))))))
       0)))
 
-(defn finish-single! [manager id screen area count scales]
+(declare start-single!)
+
+(defn finish-single! [manager id screen area monitor count scales]
   (check! (nil? (:capture (sessions/snapshot manager)))
           "Single capture completed through Jolt picker")
   (let [canvas (app/canvas (:context (sessions/session manager id)))
         [_ _ expected-width _] (region/pixel-rect area screen)]
     (check! (q/read-property canvas "hasImage") "Actual screen pixels reached document")
     (check! (= expected-width (q/read-property canvas "imageWidth"))
-            "Native crop matches display-local pixel conversion"))
+            (str "Native crop matches display-local pixel conversion on monitor " monitor)))
   (sessions/close! manager id)
-  (start-multiple! manager count scales))
+  (if (< (inc monitor) count)
+    (start-single! manager (inc monitor) count scales)
+    (start-multiple! manager count scales)))
+
+(defn start-single! [manager monitor count scales]
+  (let [id (sessions/capture! manager false false)]
+    (await-picker! manager id count
+      (fn [picker]
+        (let [screen (nth (screens manager id) monitor)
+              [x y] (region-point screen)
+              image (qt/find-by-id (nth @(:windows picker) monitor)
+                                   (str "picker-background-" monitor))]
+          (check! (= "ready" (q/read-property image "loadState"))
+                  (str "Actual frozen desktop is visible on monitor " monitor))
+          (drag! picker monitor x y)
+          (qt/later! 200
+            #(finish-single! manager id screen [x y 100 100] monitor count scales))))
+      0)))
 
 (defn exercise! []
   (let [manager (:manager @app/runtime)
@@ -113,18 +132,7 @@
         count (count displays)
         scales (mapv #(get % "scale") displays)]
     (check! (pos? count) "Actual macOS desktop has a display")
-    (let [id (sessions/capture! manager false false)]
-      (await-picker! manager id count
-        (fn [picker]
-          (let [screen (first (screens manager id))
-                [x y] (region-point screen)
-                image (qt/find-by-id (first @(:windows picker)) "picker-background-0")]
-            (check! (= "ready" (q/read-property image "loadState"))
-                    "Actual frozen desktop is visible in Glimmer")
-            (drag! picker 0 x y)
-            (qt/later! 200
-              #(finish-single! manager id screen [x y 100 100] count scales))))
-        0))))
+    (start-single! manager 0 count scales)))
 
 (defn -main [& _]
   (try
