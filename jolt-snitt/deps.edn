@@ -1,0 +1,9 @@
+{:paths ["src"]
+ :jolt/native [{:name "snitt-jolt"
+                :darwin ["../build/jolt-snitt/libsnitt_jolt.dylib"]
+                :windows ["../build/jolt-snitt/release/snitt_jolt.dll"
+                          "../build/jolt-snitt/snitt_jolt.dll"]
+                :linux ["../build/jolt-snitt/libsnitt_jolt.so"]}]
+ :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}
+ :aliases {:run {:main-opts ["-m" "snitt.app"]}
+           :test {:extra-paths ["test"] :main-opts ["-m" "snitt.app-test"]}}}

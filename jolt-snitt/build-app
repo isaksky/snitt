@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+MODE="${1:---all}"
+case "$MODE" in
+    --dev|--release|--all) ;;
+    *) echo "Usage: $0 [--dev|--release|--all]" >&2; exit 2 ;;
+esac
+"$ROOT/build-native"
+export JOLT_AOT_CACHE=0
+cd "$ROOT"
+if [ "$MODE" = --dev ] || [ "$MODE" = --all ]; then
+    "${JOLT:-jolt}" build -m snitt.app --dev -o ../build/jolt-snitt/snitt-jolt-dev
+fi
+if [ "$MODE" = --release ] || [ "$MODE" = --all ]; then
+    "${JOLT:-jolt}" build -m snitt.app -o ../build/jolt-snitt/snitt-jolt
+fi

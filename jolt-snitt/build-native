@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/../glimmer-qt/build-native"
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+mkdir -p "$ROOT/../build/jolt-snitt"
+cd "$ROOT/../build/jolt-snitt"
+if [ -f qmake-path ] && [ "$(cat qmake-path)" != "$QMAKE" ]; then
+    make clean
+fi
+"$QMAKE" "$ROOT/native/snitt_jolt.pro"
+make -j"$("$ROOT/../bin/build-jobs")"
+printf '%s\n' "$QMAKE" > qmake-path
