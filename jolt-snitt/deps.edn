@@ -7,4 +7,5 @@
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}
  :aliases {:run {:main-opts ["-m" "snitt.app"]}
            :test {:extra-paths ["test"] :main-opts ["-m" "snitt.app-test"]}
+           :commands {:extra-paths ["test"] :main-opts ["-m" "snitt.commands-test"]}
            :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}}}

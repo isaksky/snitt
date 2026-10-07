@@ -49,6 +49,14 @@ document. Application namespaces call
 `snitt.native` methods and `glimmer-qt.object` with explicit Qt signatures;
 image pixels and undo history stay in `EditorCanvas`, never in reactive state.
 
+`snitt.commands` decides which editor commands are available from a live session
+snapshot and returns effect requests. Toolbar controls, Qt shortcuts, and callers
+using `snitt.app/dispatch!` share that policy. `dispatch!` rereads native canvas
+and backend properties before every effect. Settings supplies Qt-normalized key
+sequences and hints; removing or replacing a binding updates the mounted shortcut
+and its label. Run `jolt -M:commands` from `jolt-snitt/` for the pure context tests;
+`./jolt-snitt/test-app` also runs these and drives representative keys through Qt.
+
 Only local macOS validation is in scope for this development launcher. Windows
 build and execution remain deferred.
 

@@ -8,13 +8,14 @@
             [glimmer-qt.tray :as tray]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
+            [snitt.commands :as commands]
             [snitt.native :as native]
             [snitt.sessions :as sessions]
             [snitt.settings :as settings]))
 
 (defn- initial-state []
   {:tool "rect" :status "Open or paste an image" :error? false
-   :has-image? false :can-undo? false :can-redo? false
+   :document-revision 0 :modal? false :text-draft? false
    :canvas-width 800 :canvas-height 500})
 
 ;; The first session remains addressable for the development smoke and parity
@@ -23,14 +24,20 @@
 (defonce runtime (atom nil))
 
 (defn canvas
-  ([] (when-let [window (:window @runtime)] (qt/find-by-id window "snitt-canvas")))
+  ([] (when-let [window (:window @runtime)]
+        (when (qt/window-alive? window)
+          (let [handle (qt/find-by-id window "snitt-canvas")]
+            (when (and handle (q/alive? handle)) handle)))))
   ([context] (when-let [window @(:window context)]
                (when (qt/window-alive? window)
-                 (qt/find-by-id window "snitt-canvas")))))
+                 (let [handle (qt/find-by-id window "snitt-canvas")]
+                   (when (and handle (q/alive? handle)) handle))))))
 
 (defn- item [context id]
   (when-let [window @(:window context)]
-    (when (qt/window-alive? window) (qt/find-by-id window id))))
+    (when (qt/window-alive? window)
+      (let [handle (qt/find-by-id window id)]
+        (when (and handle (q/alive? handle)) handle)))))
 
 (defn- report! [context message error?]
   (swap! (:state context) assoc :status message :error? error?))
@@ -38,15 +45,16 @@
 (defn- refresh! [context]
   (when-let [handle (canvas context)]
     (let [has-image? (q/read-property handle "hasImage")]
-      (swap! (:state context) assoc
-             :has-image? has-image?
-             :can-undo? (q/read-property handle "canUndo")
-             :can-redo? (q/read-property handle "canRedo")
-             :status (if has-image?
-                       (str (q/read-property handle "imageWidth") " × "
-                            (q/read-property handle "imageHeight"))
-                       "Open or paste an image")
-             :error? false))))
+      (swap! (:state context)
+             #(-> % (update :document-revision inc)
+                  (assoc :status (if has-image?
+                                   (str (q/read-property handle "imageWidth") " × "
+                                        (q/read-property handle "imageHeight"))
+                                   "Open or paste an image")
+                         :error? false))))))
+
+(defn- refresh-context! [context]
+  (swap! (:state context) update :context-revision (fnil inc 0)))
 
 (defn- sync-canvas-size! [context]
   (when-let [area (item context "snitt-pointer")]
@@ -63,17 +71,101 @@
     (do (report! context "Could not open this image. Choose a supported image file and try again." true)
         false)))
 
-(defn- command! [context action success-message failure-message]
+(defn- result! [context action success-message failure-message]
   (let [result (action (canvas context))]
     (if (and result (not (and (string? result) (empty? result))))
-      (report! context (if (string? result) result success-message) false)
-      (report! context failure-message true))))
+      (do (report! context (if (string? result) result success-message) false)
+          true)
+      (do (report! context failure-message true)
+          false))))
 
-(defn- choose-tool! [context tool] (swap! (:state context) assoc :tool tool))
-(defn- open-dialog! [context] (widget/open-dialog! (item context "open-file")))
+(defn command-state [context]
+  (let [handle (canvas context)
+        services @(:services context)
+        backend (when (and (:backend services) (q/alive? (:backend services))) (:backend services))
+        trim (when (and (:trim services) (q/alive? (:trim services))) (:trim services))
+        manager (:manager @runtime)
+        session (when manager (sessions/session manager (:id context)))
+        document (fn [property fallback]
+                   (if handle (q/read-property handle property) fallback))]
+    {:text-draft? (:text-draft? @(:state context))
+     :modal? (or (:modal? @(:state context))
+                 (when-let [chooser (item context "open-file")]
+                   (widget/dialog-visible? chooser)))
+     :capturing? (or (and backend (q/read-property backend "capturing"))
+                     (and manager (:capture (sessions/snapshot manager))))
+     :recording? (and backend (q/read-property backend "recording"))
+     :review? (and session (:review-window session)
+                   (qt/window-alive? (:review-window session))
+                   (q/read-property (:review-window session) "visible"))
+     :review-can-edit? (and trim (:review-command context)
+                            (not (q/read-property trim "busy")))
+     :session-manager? (boolean manager)
+     :has-image? (document "hasImage" false)
+     :can-undo? (document "canUndo" false)
+     :can-redo? (document "canRedo" false)
+     :arranging? (document "arranging" false)
+     :columns (document "columns" 1)
+     :region-count (document "regionCount" 0)
+     :selected-region (document "selectedRegion" -1)}))
+
+(defn- run-effect! [context [effect & args]]
+  (let [handle (canvas context)
+        manager (:manager @runtime)]
+    (case effect
+      :tool (swap! (:state context) assoc :tool (first args))
+      :ink (object/invoke! handle "setInkMode(QString)" args)
+      :open-dialog (do (swap! (:state context) assoc :modal? true)
+                       (widget/open-dialog! (item context "open-file")))
+      :paste (result! context #(object/invoke! % "paste()" []) "Pasted"
+                      "The clipboard has no image to paste.")
+      :capture (apply sessions/capture! manager args)
+      :annotate (object/invoke! handle "annotate()" [])
+      :columns (q/set-property! handle "columns" (first args))
+      :remove-region (object/invoke! handle "removeRegion(int)" args)
+      :move-region (object/invoke! handle "moveRegion(int,int)" args)
+      :undo (native/undo! handle)
+      :redo (native/redo! handle)
+      :finish (do
+                (native/cancel! handle)
+                (when (case (first args)
+                        :copy (result! context native/copy! "Copied to clipboard"
+                                       "Could not copy to the clipboard. Try again.")
+                        :save (result! context native/save! "Saved"
+                                       "Could not save the image. Check the Pictures folder and try again.")
+                        false)
+                  (sessions/close! manager (:id context))))
+      :dismiss (when-not (native/cancel! handle)
+                 (sessions/close! manager (:id context)))
+      :review (if (= :cancel (first args))
+                (object/invoke! (:trim @(:services context)) "keepOriginal()" [])
+                (when-let [handler (:review-command context)]
+                  (apply handler args))))))
+
+(defn dispatch!
+  "Invoke a command from any UI or external source. A fresh native/session
+  snapshot is checked here, so calling a handler directly cannot bypass policy."
+  [context action]
+  (when-let [effects (commands/decide (command-state context) action)]
+    (doseq [effect effects] (run-effect! context effect))
+    true))
+
+(defn dispatch-global!
+  "Dispatch tray, native hotkey, or external application commands."
+  [action]
+  (when-let [manager (:manager @runtime)]
+    (when-let [effects (commands/global-decide
+                       {:session-manager? true
+                        :capture? (boolean (:capture (sessions/snapshot manager)))} action)]
+      (doseq [[effect] effects]
+        (case effect
+          :hotkey-capture (sessions/hotkey-capture! manager)
+          :show-editor (sessions/show-editor! manager)))
+      true)))
 
 (defn- accept-image! [context url]
-  (if (:has-image? @(:state context))
+  (swap! (:state context) assoc :modal? false)
+  (if (:has-image? (command-state context))
     (let [path (q/local-file-path (value/url url))
           label (last (str/split path #"[/\\]"))]
       (try (sessions/open-image! (:manager @runtime) url label)
@@ -82,38 +174,36 @@
     (open-url! context url)))
 
 (defn editor [context]
-  (let [{:keys [tool status error? has-image? can-undo? can-redo?
+  (let [{:keys [tool status error?
                 canvas-width canvas-height]} @(:state context)
+        {:keys [has-image?] :as command-state} (command-state context)
         {:keys [shortcuts hints]} @settings/published
-        binding (fn [action fallback] (get shortcuts action fallback))
-        hint (fn [action fallback] (get hints action fallback))
-        manager (:manager @runtime)]
+        binding (fn [action] (get shortcuts action []))
+        hint (fn [action] (get hints action ""))
+        enabled? (fn [action] (commands/enabled? command-state action))]
     [:vbox {:hexpand true :vexpand true :padding 10 :spacing 8}
      [:hbox {:spacing 6}
-      [:button {:id "open" :label (str "Open (" (hint "openImage" "Ctrl+O") ")")
-                :on-click #(open-dialog! context)}]
-      [:button {:id "paste" :label "Paste"
-                :on-click #(command! context (fn [c] (object/invoke! c "paste()" [])) "Pasted"
-                                     "The clipboard has no image to paste.")}]
-      [:button {:id "capture" :label "Capture"
-                :on-click #(sessions/capture! manager false false)}]
-      [:button {:id "record" :label "Record"
-                :on-click #(sessions/capture! manager false true)}]
-      [:button {:id "rect" :label (str "Rectangle (" (hint "toolRectangle" "R") ")")
+      [:button {:id "open" :label (str "Open" (when (seq (hint "openImage")) (str " (" (hint "openImage") ")")))
+                :sensitive (enabled? "openImage") :on-click #(dispatch! context "openImage")}]
+      [:button {:id "paste" :label "Paste" :sensitive (enabled? "pasteImage")
+                :on-click #(dispatch! context "pasteImage")}]
+      [:button {:id "capture" :label "Capture" :sensitive (enabled? "capture")
+                :on-click #(dispatch! context "capture")}]
+      [:button {:id "record" :label "Record" :sensitive (enabled? "captureVideo")
+                :on-click #(dispatch! context "captureVideo")}]
+      [:button {:id "rect" :label (str "Rectangle" (when (seq (hint "toolRectangle")) (str " (" (hint "toolRectangle") ")")))
                 :checkable true :checked (= tool "rect")
-                :sensitive has-image? :on-click #(choose-tool! context "rect")}]
+                :sensitive (enabled? "toolRectangle") :on-click #(dispatch! context "toolRectangle")}]
       [:button {:id "arrow" :label "Arrow" :checkable true :checked (= tool "arrow")
-                :sensitive has-image? :on-click #(choose-tool! context "arrow")}]
-      [:button {:id "undo" :label "Undo" :sensitive can-undo?
-                :on-click #(native/undo! (canvas context))}]
-      [:button {:id "redo" :label "Redo" :sensitive can-redo?
-                :on-click #(native/redo! (canvas context))}]
-      [:button {:id "copy" :label "Copy" :sensitive has-image?
-                :on-click #(command! context native/copy! "Copied to clipboard"
-                                     "Could not copy to the clipboard. Try again.")}]
-      [:button {:id "save" :label "Save" :sensitive has-image?
-                :on-click #(command! context native/save! "Saved"
-                                     "Could not save the image. Check the Pictures folder and try again.")}]]
+                :sensitive (enabled? "toolArrow") :on-click #(dispatch! context "toolArrow")}]
+      [:button {:id "undo" :label "Undo" :sensitive (enabled? "undo")
+                :on-click #(dispatch! context "undo")}]
+      [:button {:id "redo" :label "Redo" :sensitive (enabled? "redo")
+                :on-click #(dispatch! context "redo")}]
+      [:button {:id "copy" :label "Copy" :sensitive (enabled? "copyClose")
+                :on-click #(dispatch! context "copyClose")}]
+      [:button {:id "save" :label "Save" :sensitive (enabled? "saveClose")
+                :on-click #(dispatch! context "saveClose")}]]
      [:pointer-area {:id "snitt-pointer" :hexpand true :vexpand true
                      :preferred-width 800 :preferred-height 500
                      :buttons (value/flags "LeftButton") :sensitive has-image?
@@ -127,35 +217,29 @@
       [:snitt/canvas {:id "snitt-canvas" :width canvas-width :height canvas-height :tool tool
                       :qt/subscriptions
                       {:image {:signal "imageChanged()" :handler #(refresh! context)}
+                       :arrangement {:signal "arrangementChanged()" :handler #(refresh-context! context)}
                        :error {:signal "error(QString)" :handler #(report! context % true)}}}]]
      [:label {:id "status" :label status :color (if error? "#ffb4a8" "#ffffff")}]
-     [:file-chooser {:id "open-file" :on-accepted #(accept-image! context %)}]
-     [:shortcut {:id "open-key" :sequences (binding "openImage" ["Ctrl+O"])
-                 :on-activate #(open-dialog! context)}]
-     [:shortcut {:id "rect-key" :sequences (binding "toolRectangle" ["R"]) :enabled has-image?
-                 :on-activate #(choose-tool! context "rect")}]
-     [:shortcut {:id "undo-key" :sequences (binding "undo" ["Ctrl+Z"]) :enabled can-undo?
-                 :on-activate #(native/undo! (canvas context))}]
-     [:shortcut {:id "redo-key" :sequences (binding "redo" ["Ctrl+Shift+Z"]) :enabled can-redo?
-                 :on-activate #(native/redo! (canvas context))}]
-     [:shortcut {:id "copy-key" :sequences (binding "copyClose" ["Ctrl+C"]) :enabled has-image?
-                 :on-activate #(command! context native/copy! "Copied to clipboard"
-                                         "Could not copy to the clipboard. Try again.")}]
-     [:shortcut {:id "save-key" :sequences (binding "saveClose" ["Ctrl+S"]) :enabled has-image?
-                 :on-activate #(command! context native/save! "Saved"
-                                         "Could not save the image. Check the Pictures folder and try again.")}]]))
+     [:file-chooser {:id "open-file" :on-accepted #(accept-image! context %)
+                     :on-rejected #(swap! (:state context) assoc :modal? false)
+                     :on-visible-change #(when-not (widget/dialog-visible? (item context "open-file"))
+                                           (swap! (:state context) assoc :modal? false))}]
+     (for [action commands/editor-actions]
+       [:shortcut {:id (str "command-" action) :sequences (binding action)
+                   :enabled (enabled? action)
+                   :on-activate #(dispatch! context action)}])]))
 
 (defn- review! [manager id path]
-  (when-let [{:keys [services]} (sessions/session manager id)]
-    (let [trim (:trim services)
-          window (qt/open-window!
+  (when-let [{:keys [context]} (sessions/session manager id)]
+    (let [window (qt/open-window!
                    (fn [] [:vbox {:padding 14 :spacing 10}
                            [:label {:label (str "Recording saved: " path)}]
                            [:button {:label "Keep original"
-                                     :on-click #(object/invoke! trim "keepOriginal()" [])}]])
+                                     :on-click #(dispatch! context "reviewCancel")}]])
                    :title "Snitt — Review recording" :width 600 :height 130
-                   :on-close (fn [_] (object/invoke! trim "keepOriginal()" []) false))]
-      (sessions/set-review-window! manager id window))))
+                   :on-close (fn [_] (dispatch! context "reviewCancel") false))]
+      (sessions/set-review-window! manager id window)
+      (refresh-context! context))))
 
 (defn- recording-controls! [manager id]
   (when-let [{:keys [services controls-window]} (sessions/session manager id)]
@@ -176,9 +260,9 @@
         (qt/close-window! controls-window)))))
 
 (defn- create-editor! [id label on-close]
-  (let [context {:window (atom nil)
-                 :state (if (= id 1) state (r/atom (initial-state)))}
-        services (native/create-services!)]
+  (let [services (native/create-services!)
+        context {:id id :window (atom nil) :services (atom services)
+                 :state (if (= id 1) state (r/atom (initial-state)))}]
     (try
       (settings/register! services)
       (let [window (qt/open-window! #(editor context)
@@ -190,6 +274,11 @@
           (when-not (object/invoke! (:root services) "bindCanvas(QObject*)"
                                     [(value/object canvas)])
             (throw (ex-info "Could not bind editor document to session" {:id id})))
+          (doseq [[target signal] [[(:backend services) "capturingChanged()"]
+                                   [(:backend services) "recordingChanged()"]
+                                   [(:trim services) "changed()"]]]
+            (object/subscribe! (:root services) target signal
+                               #(refresh-context! context)))
           (sync-canvas-size! context)
           (q/set-property! canvas "saveRoot"
                            (q/read-property (:settings services) "picturesRoot"))
@@ -231,8 +320,7 @@
   (native/install!)
   (reset! state (initial-state))
   (settings/configure! :on-publish settings-published! :on-error settings-error!
-                       :on-capture #(when-let [manager (:manager @runtime)]
-                                      (sessions/hotkey-capture! manager)))
+                       :on-capture #(dispatch-global! "globalCapture"))
   (let [manager (sessions/manager create-editor! :start-capture capture-start)]
     (reset! runtime {:manager manager})
     (let [id (sessions/create! manager nil)
@@ -244,9 +332,9 @@
                                                (get-in @settings/published [:hints "globalCapture"])))
               action (tray/add-action! icon :label "Capture"
                                         :shortcut-hint (get-in @settings/published [:hints "globalCapture"])
-                                        :on-trigger #(sessions/hotkey-capture! manager))]
+                                        :on-trigger #(dispatch-global! "globalCapture"))]
           (tray/add-action! icon :label "Show Snitt"
-                            :on-trigger #(sessions/show-editor! manager))
+                            :on-trigger #(dispatch-global! "showEditor"))
           (tray/show! icon)
           (swap! runtime assoc :tray icon :capture-action action)))
       (qt/activate! window)

@@ -47,6 +47,14 @@
         top (/ (- (q/read-property handle "height") (* 800 scale)) 2)]
     [(+ left (* x scale)) (+ top (* y scale))]))
 
+(defn finish-exercise! [manager window settings backend trim]
+  (sessions/close! manager 1)
+  (check! (not (q/alive? settings)) "Disposal invalidates settings")
+  (check! (not (q/alive? backend)) "Disposal invalidates backend")
+  (check! (not (q/alive? trim)) "Disposal invalidates trim")
+  (reset! completed? true)
+  (qt/close-window! window))
+
 (defn exercise! [image]
   (let [{:keys [window services]} @app/runtime
         canvas (app/canvas)
@@ -68,6 +76,8 @@
      [(fn []
         (click! "open")
         (check! (widget/dialog-visible? (id "open-file")) "Open button opens native chooser")
+        (check! (not (app/dispatch! (:context @app/runtime) "capture"))
+                "A modal chooser blocks commands even through the dispatcher")
         (file-result! image))
       (fn []
         (check! (q/read-property canvas "hasImage") "Chooser loads generated image")
@@ -104,27 +114,27 @@
       (fn []
         (check! (q/read-property canvas "canUndo") "Keyboard Redo restores annotation")
         (check! (enabled? "undo") "Redo enables Undo")
-        (click! "copy")
-        (check! (= "Copied to clipboard" (:status @app/state))
-                "Copy button publishes edited image"))
+        (check! (native/copy! canvas) "Native document publishes edited image"))
       (fn []
         (let [clip (q/clipboard-image @widget/session)]
           (try
             (check! (pos? clip) "Clipboard contains image pixels")
             (q/image-save @widget/session clip (System/getenv "SNITT_JOLT_COPIED_PATH"))
             (finally (q/image-dispose @widget/session clip))))
-        (click! "save"))
-      (fn []
-        (let [path (:status @app/state)]
-          (check! (.startsWith path directory) "Save button writes to isolated Pictures root")
+        (let [path (native/save! canvas)]
+          (check! (.startsWith path directory) "Native save writes to isolated Pictures root")
           (let [saved (q/image-load @widget/session path)]
             (check! (pos? saved) "Saved PNG can be reopened")
             (q/image-dispose @widget/session saved))
           (reset! saved-path path)
-          (spit output-file path))
+          (spit output-file path)))
+      (fn []
         (spit (str directory "/corrupt.png") "This is not a PNG")
-        (click! "open")
-        (file-result! (str directory "/corrupt.png")))
+        (check! (not (enabled? "open")) "Open control follows image context")
+        (check! (not (app/dispatch! (:context @app/runtime) "openImage"))
+                "Direct command cannot bypass disabled image context")
+        (check! (not (native/load-image! canvas (str directory "/corrupt.png")))
+                "Native loader rejects corrupt file"))
       (fn []
         (check! (q/read-property canvas "hasImage") "Failed load preserves image")
         (check! (q/read-property canvas "canUndo") "Failed load preserves history")
@@ -181,6 +191,15 @@
           (native/end! second-canvas 400 400)
           (check! (q/read-property second-canvas "canUndo") "Second image records its own edit")
           (check! (q/read-property canvas "canUndo") "First image retains its own history")
+          (check! (app/dispatch! (:context second) "toolArrow")
+                  "External command selects Arrow through policy")
+          (qt/activate! (:window second))
+          (key! (:window second) 82 0)
+          (check! (= "arrow" (q/read-property second-canvas "tool"))
+                  "Old Rectangle shortcut no longer acts")
+          (key! (:window second) 16777269 0)
+          (check! (= "rect" (q/read-property second-canvas "tool"))
+                  "Reloaded F6 shortcut invokes Rectangle")
           (sessions/active! manager second-id)
           (qt/minimize! window)
           (let [first-visibility (q/read-property window "visibility")
@@ -240,12 +259,27 @@
                 (check! (str/includes? (q/read-property icon "toolTip")
                                       (get-in @settings/published [:hints "globalCapture"]))
                         "Tray hint follows the published shortcut")))
-            (sessions/close! (:manager @app/runtime) 1)
-            (check! (not (q/alive? settings)) "Disposal invalidates settings")
-            (check! (not (q/alive? backend)) "Disposal invalidates backend")
-            (check! (not (q/alive? trim)) "Disposal invalidates trim")
-            (reset! completed? true)
-            (qt/close-window! window))))])))
+            (let [manager (:manager @app/runtime)
+                  copy-id (sessions/open-image! manager (str "file://" image) "copy-close.png")
+                  copy-window (:window (sessions/session manager copy-id))]
+              (qt/later! 120
+                (fn []
+                  (key! copy-window 67 67108864)
+                  (check! (nil? (sessions/session manager copy-id))
+                          "macOS Command-C alias closes the copied editor")
+                  (check! (q/read-property canvas "hasImage")
+                          "Copy closes only the targeted session")
+                  (let [save-id (sessions/open-image! manager (str "file://" image) "save-close.png")
+                        save-window (:window (sessions/session manager save-id))]
+                    (qt/later! 120
+                      (fn []
+                        (let [save-button (qt/find-by-id save-window "save")]
+                          (check! (= 1 (click-native save-button)) "Save toolbar activates")
+                          (check! (nil? (sessions/session manager save-id))
+                                  "Save toolbar closes its editor after success")
+                          (check! (q/read-property canvas "hasImage")
+                                  "Save closes only the targeted session")
+                          (finish-exercise! manager window settings backend trim)))))))))))])))
 
 (defn -main [& _]
   (let [image (System/getenv "SNITT_JOLT_IMAGE")]
