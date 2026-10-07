@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+# A GUI timeout alone cannot bound a worker/GC deadlock.
+exec python3 - "${JOLT:-jolt}" <<'PY'
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.argv[1], '-M:scheduling-test'], timeout=60).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit('Qt scheduling tests exceeded 60 seconds')
+PY

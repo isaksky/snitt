@@ -74,11 +74,50 @@ arena is released. A handler exception follows the same policy and is rethrown
 from `run` after cleanup; it never unwinds through C++. Direct session closure
 while executing a callback/event loop is rejected; use `quit!` or window close.
 
-`later!` returns a cancellation token (or `nil` after close). `cancel!` releases
-the managed thunk immediately. Queued native timers are inert after cancel;
-Qt cancels them when their relay dies. Worker posts include the session identity,
-so a race with close cannot deliver old work to a later session. Window close
-cancels all remaining work and releases the native callback before returning.
+## Owned scheduling and playback clocks
+
+`later!` takes `[delay-ms thunk]` or `[owner delay-ms thunk]`. It queues even for
+zero delay and returns a cancellation token, or `nil` when the session has shut
+down or the owner has been disposed. Omit the owner (or pass `nil`) for session
+ownership. On the GUI thread, create a dedicated owner with `owner!` and destroy
+it with `destroy-owner!`. A live widget handle can also own work; disposing the
+widget or its ancestor cancels those jobs. Dedicated owners last until explicit
+destruction or session closure; a root reload alone does not destroy them.
+
+`every!` has the same arities but requires a positive interval. Its callback
+receives `{:elapsed-seconds total :delta-seconds since-previous-tick}`. Both use
+Qt's monotonic clock, starting when the native timer is installed on the GUI
+thread. A delayed tick includes the real elapsed duration; missed ticks are not
+replayed. This lets a playhead advance independently of decoded frames:
+
+```clojure
+(qt/every! owner 33
+  (fn [{:keys [delta-seconds]}]
+    (swap! playhead-seconds + delta-seconds)))
+```
+
+`restart!` resets an active token's delay and clock, optionally taking a new
+delay. It returns `true` on success and `false` after completion/cancellation.
+Canceled jobs release their closures, so resuming a stopped clock requires a
+new `every!` call. `cancel!` is idempotent and may be called from the job itself.
+It immediately removes the managed closure and native registration; Qt reclaims
+the timer on its next event-loop turn or at session teardown. An invocation
+already claimed for delivery may finish. Restart generations suppress stale
+deliveries, including a tick racing with worker restart.
+
+Scheduling, cancellation and restart are safe from workers; owner creation,
+destruction and all widget operations remain GUI-thread-only. Worker admission
+is fenced against native destruction and session shutdown. Native commands use
+the relay as their Qt context, and no native lock is held across a managed
+callback. Glimmer's existing per-component pending flag coalesces worker ratom
+bursts through this same scheduler; there is no separate reconciler path.
+
+Window/application quit stops admission and cancels all remaining jobs. No job
+survives into a later session. A scheduled exception follows the handler policy:
+abandon subscriptions, exit, clean up, and rethrow from `run`. One collect-safe
+foreign callable serves all events for a session, including every timer tick;
+it is disconnected before being freed. Long event-loop FFI calls remain blocking
+so worker threads and GC can progress.
 
 ## Verification
 
@@ -89,6 +128,7 @@ Windows UCRT64 Qt 6.11.2). For example, from the repository root:
 export SNITT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6"
 ./glimmer-qt/build-native
 ./glimmer-qt/test-lifecycle
+./glimmer-qt/test-scheduling
 ./experiment/run --smoke-test
 (cd glimmer-qt/vendor/glimmer && jolt -M:test)
 ```
@@ -100,9 +140,17 @@ property resets, keyed movement, and creation/callback failures. They check both
 logical handle counts and physical QObject destruction. They do not claim to
 verify physical keyboard input, focus, or hit testing.
 
+The scheduling runner has a 60-second process deadline in addition to per-session
+Qt deadlines. It covers canceled/installed/restarted timers, owner destruction,
+monotonic elapsed time during a stall, self-cancellation, callback exceptions,
+concurrent worker posts and ratom changes under explicit GC, coalesced renders,
+main-thread delivery, shutdown races, and zero retained jobs/timers after close.
+
 On Windows, build `native/bridge.pro` with UCRT64 `qmake6` and
 `mingw32-make` from `glimmer-qt/build`, put that Qt SDK's `bin` on `PATH`, set
 `QT_PLUGIN_PATH` and `QML_IMPORT_PATH` from the same SDK, and run
 `QT_QPA_PLATFORM=offscreen jolt -M:test` from `glimmer-qt` (using PowerShell
-syntax for environment variables). The dependency declares both qmake's
+syntax for environment variables). Run `jolt -M:scheduling-test` there as well,
+with an external process deadline (for example, PowerShell `WaitForExit(60000)`)
+to detect worker/GC deadlocks. The dependency declares both qmake's
 `build/release/glimmer_qt.dll` and `build/glimmer_qt.dll` locations.

@@ -1,4 +1,6 @@
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QSet>
 #include <QImage>
 #include <QPointer>
 #include <QQmlComponent>
@@ -22,6 +24,7 @@ using Handle = uint64_t;
 using EventHandler = void (*)(Handle, const char *, const char *);
 static Handle nextHandle = 0;
 static int ownedObjects = 0;
+static int ownedTimers = 0;
 static thread_local QByteArray error;
 static int fail(const char *message) { error = message; return 0; }
 static Handle freshHandle() {
@@ -29,6 +32,13 @@ static Handle freshHandle() {
     if (nextHandle == std::numeric_limits<Handle>::max()) qFatal("Qt handle space exhausted");
     return ++nextHandle;
 }
+
+// This mutex protects admission, native job identities and owner liveness. It is
+// never held across a managed callback. Qt objects are accessed only on the GUI
+// thread; queued commands use the relay as context so teardown drops them.
+static std::mutex postMutex;
+static QSet<Handle> liveOwners;
+static void cancelOwner(Handle owner);
 
 class Relay : public QObject {
     Q_OBJECT
@@ -50,8 +60,10 @@ public:
         objects.insert(id, object);
         identities.insert(object, id);
         ++ownedObjects;
+        { std::lock_guard<std::mutex> lock(postMutex); liveOwners.insert(id); }
         connect(object, &QObject::destroyed, this, [this, object, id] {
             --ownedObjects;
+            cancelOwner(id);
             if (objects.remove(id)) {
                 identities.remove(object);
                 notify(id, "destroyed");
@@ -67,7 +79,10 @@ public:
                 if (p == root) { removed.append(it.key()); break; }
             }
         }
-        for (Handle id : removed) identities.remove(objects.take(id));
+        for (Handle id : removed) {
+            cancelOwner(id);
+            identities.remove(objects.take(id));
+        }
         for (Handle id : removed) notify(id, "destroyed");
     }
     Q_INVOKABLE void dispatch(QObject *widget, const QString &event, const QString &value) {
@@ -91,8 +106,18 @@ struct Application {
 // destructor must not tear down QApplication there. The OS reclaims this one
 // application at process exit; every session/engine/object is closed explicitly.
 static Application *application = nullptr;
+struct Job {
+    Handle token, owner;
+    uint64_t generation = 0;
+    int delay;
+    bool repeat;
+    QTimer *timer = nullptr; // GUI thread only
+    QElapsedTimer elapsed;
+};
 struct Session {
     Handle id = freshHandle();
+    bool accepting = true; // under postMutex; outlives QObject destruction callbacks
+    QHash<Handle, std::shared_ptr<Job>> jobs; // under postMutex
     Relay relay;
     QQmlEngine engine;
     QPointer<QQuickWindow> window;
@@ -112,9 +137,73 @@ struct Session {
         return object;
     }
 };
-// Posting is the sole cross-thread operation. The lock fences session teardown.
-static std::mutex postMutex;
+// Posting, cancellation and restart are safe from any thread.
 static Session *active = nullptr;
+static void retireJob(Relay *relay, const std::shared_ptr<Job> &job) {
+    // Called under postMutex, including by workers. Do not inspect timer here.
+    QMetaObject::invokeMethod(relay, [job] {
+        if (job->timer) { job->timer->stop(); job->timer->deleteLater(); job->timer = nullptr; }
+    }, Qt::QueuedConnection);
+}
+static void cancelOwner(Handle owner) {
+    QList<Handle> canceled;
+    Relay *relay = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(postMutex);
+        liveOwners.remove(owner);
+        if (!active) return;
+        relay = &active->relay;
+        for (auto it = active->jobs.begin(); it != active->jobs.end();) {
+            if (it.value()->owner == owner) {
+                canceled.append(it.key());
+                retireJob(relay, it.value());
+                it = active->jobs.erase(it);
+            } else ++it;
+        }
+    }
+    for (Handle token : canceled) relay->notify(token, "work-canceled");
+}
+static void stopJobs(Session *s) {
+    {
+        std::lock_guard<std::mutex> lock(postMutex);
+        if (!s->accepting) return;
+        s->accepting = false;
+        for (const auto &job : s->jobs) retireJob(&s->relay, job);
+        s->jobs.clear();
+    }
+    s->relay.notify(0, "shutdown");
+}
+static int enqueueJob(Session *s, const std::shared_ptr<Job> &job) {
+    // Caller holds postMutex. The identity check fences cancel/restart before
+    // installation, as well as timer events already queued when canceled.
+    return QMetaObject::invokeMethod(&s->relay, [s, job] {
+        std::lock_guard<std::mutex> lock(postMutex);
+        if (s->jobs.value(job->token) != job) return;
+        auto *timer = new QTimer(&s->relay);
+        ++ownedTimers;
+        QObject::connect(timer, &QObject::destroyed, [] { --ownedTimers; });
+        job->timer = timer;
+        timer->setTimerType(Qt::PreciseTimer);
+        timer->setSingleShot(!job->repeat);
+        job->elapsed.start();
+        QObject::connect(timer, &QTimer::timeout, &s->relay, [s, job] {
+            double seconds;
+            {
+                std::lock_guard<std::mutex> lock(postMutex);
+                if (s->jobs.value(job->token) != job) return;
+                seconds = job->elapsed.nsecsElapsed() / 1000000000.0;
+                if (!job->repeat) {
+                    s->jobs.remove(job->token);
+                    job->timer->deleteLater();
+                    job->timer = nullptr;
+                }
+            }
+            const auto value = QByteArray::number(qulonglong(job->generation)) + "," + QByteArray::number(seconds, 'g', 17);
+            s->relay.notify(job->token, "work", value.constData());
+        });
+        timer->start(job->delay);
+    }, Qt::QueuedConnection);
+}
 static bool guiThread() {
     if (!QCoreApplication::instance() || !QThread::isMainThread()) {
         fail("Qt operation requires the application main thread");
@@ -165,7 +254,12 @@ extern "C" Q_DECL_EXPORT Handle gqt_open(const char *title, int width, int heigh
     session->container = session->relay.track(container);
     session->window->setTitle(QString::fromUtf8(title));
     session->window->resize(width, height);
-    QObject::connect(session->window, &QObject::destroyed, &session->relay, [] { QCoreApplication::exit(1); });
+    auto *s = session.get();
+    QObject::connect(session->window, &QObject::destroyed, &session->relay, [s] {
+        stopJobs(s); QCoreApplication::exit(1);
+    });
+    QObject::connect(&application->app, &QCoreApplication::aboutToQuit, &session->relay, [s] { stopJobs(s); });
+    QObject::connect(&application->app, &QGuiApplication::lastWindowClosed, &session->relay, [s] { stopJobs(s); });
     std::lock_guard<std::mutex> lock(postMutex);
     active = session.release();
     return active->id;
@@ -241,17 +335,59 @@ extern "C" Q_DECL_EXPORT int gqt_remove(Handle id) {
     child->deleteLater();
     return 1;
 }
-extern "C" Q_DECL_EXPORT int gqt_post(Handle sessionId, Handle token, int delayMs) {
-    std::lock_guard<std::mutex> lock(postMutex);
-    if (!active || active->id != sessionId || delayMs < 0) return 0;
-    auto *relay = &active->relay;
-    return QMetaObject::invokeMethod(relay, [relay, token, delayMs] {
-        QTimer::singleShot(delayMs, relay, [relay, token] {
-            const auto value = QByteArray::number(qulonglong(token));
-            relay->notify(0, "work", value.constData());
-        });
-    }, Qt::QueuedConnection);
+extern "C" Q_DECL_EXPORT Handle gqt_owner(Handle sessionId) {
+    auto *s = sessionFor(sessionId);
+    return s ? s->relay.track(new QObject(&s->engine)) : 0;
 }
+extern "C" Q_DECL_EXPORT int gqt_destroy_owner(Handle owner) {
+    auto *object = objectFor(owner);
+    if (!object) return 0;
+    if (object->metaObject() != &QObject::staticMetaObject)
+        return fail("Use widget disposal for a widget owner");
+    active->relay.invalidate(object);
+    object->deleteLater();
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_schedule(Handle sessionId, Handle owner, Handle token, int delayMs, int repeat) {
+    std::lock_guard<std::mutex> lock(postMutex);
+    if (!active || active->id != sessionId || !active->accepting || delayMs < 0 ||
+        (repeat && !delayMs) || (owner && !liveOwners.contains(owner)) || active->jobs.contains(token)) return 0;
+    auto job = std::make_shared<Job>();
+    job->token = token; job->owner = owner; job->delay = delayMs; job->repeat = repeat;
+    active->jobs.insert(token, job);
+    if (enqueueJob(active, job)) return 1;
+    active->jobs.remove(token);
+    return 0;
+}
+extern "C" Q_DECL_EXPORT int gqt_post(Handle sessionId, Handle token, int delayMs) {
+    return gqt_schedule(sessionId, 0, token, delayMs, 0);
+}
+extern "C" Q_DECL_EXPORT int gqt_cancel(Handle sessionId, Handle token) {
+    std::lock_guard<std::mutex> lock(postMutex);
+    if (!active || active->id != sessionId) return 0;
+    auto job = active->jobs.take(token);
+    if (!job) return 0;
+    retireJob(&active->relay, job);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_restart(Handle sessionId, Handle token, int delayMs) {
+    std::lock_guard<std::mutex> lock(postMutex);
+    if (!active || active->id != sessionId || !active->accepting || delayMs < 0) return 0;
+    auto previous = active->jobs.value(token);
+    if (!previous || (previous->repeat && !delayMs)) return 0;
+    auto job = std::make_shared<Job>();
+    job->generation = previous->generation + 1;
+    job->token = token; job->owner = previous->owner; job->delay = delayMs; job->repeat = previous->repeat;
+    retireJob(&active->relay, previous);
+    active->jobs.insert(token, job);
+    return enqueueJob(active, job);
+}
+extern "C" Q_DECL_EXPORT int gqt_pending_count() {
+    std::lock_guard<std::mutex> lock(postMutex);
+    return active ? active->jobs.size() : 0;
+}
+extern "C" Q_DECL_EXPORT int gqt_timer_count() { return QThread::isMainThread() ? ownedTimers : -1; }
+extern "C" Q_DECL_EXPORT int gqt_gui_thread() { return QThread::isMainThread(); }
 extern "C" Q_DECL_EXPORT int gqt_exec(Handle id) {
     auto *s = sessionFor(id);
     if (!s) return -1;
@@ -262,11 +398,13 @@ extern "C" Q_DECL_EXPORT int gqt_exec(Handle id) {
     s->executing = true;
     const int code = application->app.exec();
     s->executing = false;
+    stopJobs(s);
     return code;
 }
 extern "C" Q_DECL_EXPORT int gqt_exit(Handle id, int code) {
     auto *s = sessionFor(id);
     if (!s) return 0;
+    stopJobs(s);
     s->exitRequested = true;
     s->exitCode = code;
     QCoreApplication::exit(code);
@@ -277,6 +415,7 @@ extern "C" Q_DECL_EXPORT int gqt_close(Handle id) {
     if (!s) return 0;
     if (s->executing || s->relay.callbackDepth)
         return fail("Cannot close an executing Qt session; request exit first");
+    stopJobs(s);
     {
         std::lock_guard<std::mutex> lock(postMutex);
         active = nullptr;
