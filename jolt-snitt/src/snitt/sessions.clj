@@ -5,12 +5,13 @@
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
-            [glimmer-qt.widget :as widget]))
+            [glimmer-qt.widget :as widget]
+            [snitt.region :as region]))
 
 (defn manager [create & {:keys [start-capture]}]
   {:state (atom {:next-id 0 :order [] :sessions {} :last-active nil
                  :capture nil :capture-loaded false :capture-finished false
-                 :hidden [] :restore-focus nil})
+                 :hidden [] :restore-focus nil :picker nil :capture-mode nil})
    :create create :start-capture start-capture})
 
 (defn snapshot [manager] @(:state manager))
@@ -74,9 +75,26 @@
                #(when (q/read-property window "active") (active! manager id)))
     (subscribe (:root services) backend "captureFinished(bool)"
                (fn [captured]
+                 (region/close! (:picker (snapshot manager)))
+                 (swap! (:state manager) assoc :picker nil)
                  (when-not (or (q/read-property backend "recording")
                                (seq (q/read-property trim "path")))
                    (capture-finished! manager id captured))))
+    (subscribe (:root services) (:root services) "capturePickerReady()"
+               (fn []
+                 (when (= id (:capture (snapshot manager)))
+                   (try
+                     (let [[multiple video] (:capture-mode (snapshot manager))
+                           screens (object/invoke! (:root services) "capturePickerScreens()" [])
+                           picker (region/open! backend screens multiple video)]
+                       (swap! (:state manager) assoc :picker picker))
+                     (catch Throwable error
+                       (report-error! manager id (str "Could not open the region picker: " (.getMessage error)))
+                       (object/invoke! backend "pickerCancel()" []))))))
+    (subscribe (:root services) (:root services) "capturePickerNotice(QString)"
+               (fn [message]
+                 (when-let [picker (:picker (snapshot manager))]
+                   (swap! (:state picker) assoc :notice message))))
     (subscribe (:root services) backend "captureScreenReady(int,int)"
                (fn [completed total]
                  (when (= id (:capture (snapshot manager)))
@@ -158,8 +176,10 @@
 (defn complete-capture! [manager id captured]
   (when (= id (:capture (snapshot manager)))
     (let [{:keys [hidden restore-focus]} (snapshot manager)]
+      (region/close! (:picker (snapshot manager)))
       (swap! (:state manager) assoc :capture nil :capture-loaded false
-             :capture-finished false :hidden [] :restore-focus nil)
+             :capture-finished false :hidden [] :restore-focus nil
+             :picker nil :capture-mode nil)
       (restore-hidden! manager hidden nil)
       (if (and captured (current? manager id))
         (activate! manager id)
@@ -185,7 +205,8 @@
                                      (q/read-property (:window (session manager other)) "active"))
                                    existing))]
           (swap! (:state manager) assoc :capture id :capture-loaded false
-                 :capture-finished false :hidden hidden :restore-focus focus)
+                 :capture-finished false :hidden hidden :restore-focus focus
+                 :picker nil :capture-mode [multiple video])
           (doseq [[other _] hidden] (qt/hide! (:window (session manager other))))
           (try
             (if-let [start (:start-capture manager)]
@@ -216,6 +237,7 @@
   (when-let [{:keys [window review-window controls-window services]} (session manager id)]
     (let [capturing? (= id (:capture (snapshot manager)))
           {:keys [hidden restore-focus]} (snapshot manager)]
+      (when capturing? (region/close! (:picker (snapshot manager))))
       ;; Remove identity before disposing Qt objects. Queued deliveries, even
       ;; from a backend being destroyed, cannot target this or a later session.
       (swap! (:state manager)
@@ -226,7 +248,8 @@
                          (update :restore-focus #(when (not= id %) %))
                          (cond-> capturing?
                            (assoc :capture nil :capture-loaded false
-                                  :capture-finished false :hidden [] :restore-focus nil)))))
+                                  :capture-finished false :hidden [] :restore-focus nil
+                                  :picker nil :capture-mode nil)))))
       (object/disconnect-owner! window)
       (object/disconnect-owner! (:root services))
       (when (q/alive? (:root services))

@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" "CONFIG+=property_tests" >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+export JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1 SNITT_JOLT_FAKE_CAPTURE=1
+SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-region.XXXXXX")"
+export SNITT_JOLT_DATA_DIR
+export SNITT_JOLT_IMAGE="$SNITT_JOLT_DATA_DIR/source.png"
+trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+python3 "$ROOT/test/image_pixels.py" generate "$SNITT_JOLT_IMAGE"
+cd "$ROOT"
+"${JOLT:-jolt}" -A:test -m snitt.region-test

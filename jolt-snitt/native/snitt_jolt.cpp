@@ -3,7 +3,6 @@
 #include "../../src/backend.h"
 #include "../../src/editorcanvas.h"
 #include "../../src/globalhotkey.h"
-#include "../../src/regionselector.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -17,12 +16,14 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
-#include <algorithm>
+#include <QUuid>
 #include <memory>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -30,6 +31,13 @@
 
 namespace {
 QPointer<GlobalHotkey> applicationHotkey;
+QMutex pickerImagesMutex;
+QHash<QString, QImage> pickerImages;
+
+QImage pickerImageRequest(void *, const QString &id, QSize *, const QSize &) {
+    QMutexLocker lock(&pickerImagesMutex);
+    return pickerImages.value(id);
+}
 
 class Lifecycle final : public QObject {
     Q_OBJECT
@@ -164,6 +172,25 @@ public:
         // descendant check, then expose only a borrowed handle to Jolt.
         m_backend->trim()->setParent(m_backend);
         m_backend->setExternalCaptureRouting(true);
+        m_backend->setExternalRegionPicker(true);
+        connect(m_backend, &Backend::pickerReady, this, [this] {
+            clearPickerImages();
+            m_pickerScreens = m_backend->pickerScreens();
+            const QString captureId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            QMutexLocker lock(&pickerImagesMutex);
+            for (QVariant &entry : m_pickerScreens) {
+                QVariantMap screen = entry.toMap();
+                const QString key = captureId + QStringLiteral("/") + QString::number(screen.value("index").toInt());
+                pickerImages.insert(key, m_backend->pickerImage(screen.value("index").toInt()));
+                m_pickerKeys.append(key);
+                screen.insert(QStringLiteral("source"), QStringLiteral("image://snitt-capture/") + key);
+                entry = screen;
+            }
+            lock.unlock();
+            emit capturePickerReady();
+        });
+        connect(m_backend, &Backend::captureFinished, this, [this] { clearPickerImages(); });
+        connect(m_backend, &Backend::pickerNotice, this, &Services::capturePickerNotice);
         // Backend removes its temporary file when the signal returns. Retain
         // pixels here until Jolt accepts or discards this session's result.
         connect(m_backend, &Backend::captured, this, [this](const QUrl &url) {
@@ -184,6 +211,8 @@ public:
             emit captureReady();
         });
     }
+
+    ~Services() override { clearPickerImages(); }
 
     QObject *settings() const { return m_settings; }
     QObject *backend() const { return m_backend; }
@@ -221,6 +250,8 @@ public:
         m_captureImage = QImage();
         m_captureRegions.clear();
     }
+
+    Q_INVOKABLE QVariantList capturePickerScreens() const { return m_pickerScreens; }
 
     Q_INVOKABLE bool queueCaptureFileForTest(const QString &path) {
         if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")) return false;
@@ -270,34 +301,6 @@ public:
                                       {QStringLiteral("scale"), screen->devicePixelRatio()}});
         }
         return result;
-    }
-
-    Q_INVOKABLE int captureSelectorCountForTest() const {
-        return captureSelectorsForTest().size();
-    }
-
-    Q_INVOKABLE bool selectCaptureRegionForTest(int monitor) {
-        const auto selectors = captureSelectorsForTest();
-        if (monitor < 0 || monitor >= selectors.size()) return false;
-        auto *selector = selectors[monitor];
-        const QImage image = selector->crop(testRegion(selector));
-        if (image.isNull()) return false;
-        emit selector->selected(image);
-        return true;
-    }
-
-    Q_INVOKABLE bool addCaptureRegionForTest(int monitor) {
-        const auto selectors = captureSelectorsForTest();
-        if (monitor < 0 || monitor >= selectors.size()) return false;
-        emit selectors[monitor]->regionAdded(testRegion(selectors[monitor]));
-        return true;
-    }
-
-    Q_INVOKABLE bool acceptCaptureRegionsForTest() {
-        const auto selectors = captureSelectorsForTest();
-        if (selectors.isEmpty()) return false;
-        emit selectors.first()->accepted();
-        return true;
     }
 
     Q_INVOKABLE bool loadRegionFilesForTest(const QStringList &paths) {
@@ -350,28 +353,21 @@ signals:
     void globalCaptureActivated();
     void captureReady();
     void captureDataError(const QString &message);
+    void capturePickerReady();
+    void capturePickerNotice(const QString &message);
 private:
-    static QRectF testRegion(const RegionSelector *selector) {
-        return QRectF(qMax(0, selector->width() / 2 - 50),
-                      qMax(0, selector->height() / 2 - 50), 100, 100);
-    }
-    QList<RegionSelector *> captureSelectorsForTest() const {
-        QList<RegionSelector *> selectors;
-        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")) return selectors;
-        for (QWidget *window : QApplication::topLevelWidgets())
-            if (auto *selector = qobject_cast<RegionSelector *>(window); selector && selector->isVisible())
-                selectors.append(selector);
-        std::sort(selectors.begin(), selectors.end(), [](RegionSelector *left, RegionSelector *right) {
-            return left->geometry().topLeft().x() < right->geometry().topLeft().x()
-                || (left->geometry().topLeft().x() == right->geometry().topLeft().x()
-                    && left->geometry().topLeft().y() < right->geometry().topLeft().y());
-        });
-        return selectors;
+    void clearPickerImages() {
+        QMutexLocker lock(&pickerImagesMutex);
+        for (const QString &key : m_pickerKeys) pickerImages.remove(key);
+        m_pickerKeys.clear();
+        m_pickerScreens.clear();
     }
     enum CaptureKind { None, Image, Regions };
     CaptureKind m_captureKind = None;
     QImage m_captureImage;
     QVariantList m_captureRegions;
+    QVariantList m_pickerScreens;
+    QStringList m_pickerKeys;
     AppSettings *m_settings = nullptr;
     Backend *m_backend = nullptr;
     QPointer<EditorCanvas> m_canvas;
@@ -389,7 +385,8 @@ static void initializeSnittResources() { Q_INIT_RESOURCE(resources); }
 extern "C" Q_DECL_EXPORT int snitt_jolt_register() {
     if (!qobject_cast<QApplication *>(qApp)) return 0;
     initializeSnittResources();
-    return gqt_register_factory("snitt-jolt.canvas", canvasFactory, nullptr)
+    return gqt_register_image_provider("snitt-capture", pickerImageRequest, nullptr, nullptr)
+        && gqt_register_factory("snitt-jolt.canvas", canvasFactory, nullptr)
         && gqt_register_factory("snitt-jolt.services", servicesFactory, nullptr)
         && gqt_register_factory("snitt-jolt.lifecycle", lifecycleFactory, nullptr);
 }

@@ -1,6 +1,7 @@
 #include "backend.h"
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QTimer>
 #include <QUuid>
 #include <QGuiApplication>
@@ -9,6 +10,7 @@
 #include <QPixmap>
 #include <QDir>
 #include <QWindow>
+#include <algorithm>
 #include "regionselector.h"
 #include "appsettings.h"
 #ifdef Q_OS_MACOS
@@ -247,6 +249,16 @@ void Backend::captureNextScreen() {
 }
 
 void Backend::showSelectors() {
+    if (m_externalRegionPicker) {
+        if (m_screens.isEmpty() || std::none_of(m_screens.cbegin(), m_screens.cend(),
+                                                [](const ScreenImage &screen) { return !screen.image.isNull(); })) {
+            emit error(QStringLiteral("Could not capture a screen. Check screen recording permission and that the desktop is unlocked."));
+            finish();
+        } else {
+            emit pickerReady();
+        }
+        return;
+    }
     QPointer<RegionSelector> active;
     for (const auto &screen : m_screens) {
         if (screen.image.isNull()) continue;
@@ -319,6 +331,122 @@ void Backend::showSelectors() {
     active->setFocus();
 }
 
+QVariantList Backend::pickerScreens() const {
+    QVariantList result;
+    if (!m_capturing || !m_externalRegionPicker) return result;
+    for (int i = 0; i < m_screens.size(); ++i) {
+        const auto &screen = m_screens[i];
+        if (screen.image.isNull()) continue;
+        result.append(QVariantMap{{QStringLiteral("index"), i},
+                                  {QStringLiteral("x"), screen.geometry.x()},
+                                  {QStringLiteral("y"), screen.geometry.y()},
+                                  {QStringLiteral("width"), screen.geometry.width()},
+                                  {QStringLiteral("height"), screen.geometry.height()},
+                                  {QStringLiteral("pixelWidth"), screen.image.width()},
+                                  {QStringLiteral("pixelHeight"), screen.image.height()}});
+    }
+    return result;
+}
+
+QImage Backend::pickerImage(int screen) const {
+    return m_capturing && m_externalRegionPicker && screen >= 0 && screen < m_screens.size()
+        ? m_screens[screen].image : QImage();
+}
+
+bool Backend::pickerFixture(const QStringList &paths, const QStringList &geometries,
+                            bool multiple, bool video) {
+    if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")
+        || m_capturing || paths.isEmpty() || paths.size() != geometries.size()) return false;
+    QList<ScreenImage> screens;
+    for (int i = 0; i < paths.size(); ++i) {
+        const QStringList parts = geometries[i].split(',');
+        if (parts.size() != 4) return false;
+        bool valid = true;
+        int coords[4]{};
+        for (int j = 0; j < 4; ++j) {
+            bool parsed = false;
+            coords[j] = parts[j].toInt(&parsed);
+            valid &= parsed;
+        }
+        QImageReader reader(paths[i]);
+        const QImage image = reader.read();
+        if (!valid || coords[2] <= 0 || coords[3] <= 0 || image.isNull()) return false;
+        screens.append({QRect(coords[0], coords[1], coords[2], coords[3]), image});
+    }
+    m_screens = screens;
+    m_multiple = multiple && !video;
+    m_video = video;
+    m_capturing = true;
+    m_output = m_temp.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png");
+    emit capturingChanged();
+    showSelectors();
+    return true;
+}
+
+bool Backend::pickerSingle(int screen, const QRectF &area) {
+    if (!m_capturing || !m_externalRegionPicker || screen < 0 || screen >= m_screens.size()) return false;
+    const auto &source = m_screens[screen];
+    const QRect pixels = RegionSelector::pixelRect(area, source.geometry.size(), source.image.size());
+    if (pixels.width() < 2 || pixels.height() < 2) return false;
+    const QImage image = source.image.copy(pixels);
+    if (image.isNull() || !image.save(m_output, "PNG")) {
+        emit error(QStringLiteral("Could not save the captured region."));
+        finish();
+        return false;
+    }
+    m_captureScreenGeometry = source.geometry;
+    emit captured(QUrl::fromLocalFile(m_output));
+    finish(true);
+    return true;
+}
+
+int Backend::pickerAdd(int screen, const QRectF &area) {
+    if (!m_capturing || !m_externalRegionPicker || screen < 0 || screen >= m_screens.size()) return -1;
+    const auto &source = m_screens[screen];
+    const QRect pixels = RegionSelector::pixelRect(area, source.geometry.size(), source.image.size());
+    if (pixels.width() < 2 || pixels.height() < 2) return -1;
+    const QImage image = source.image.copy(pixels);
+    qint64 bytes = image.sizeInBytes();
+    int count = 0;
+    for (const auto &region : m_pickerRegions) if (!region.isNull()) { ++count; bytes += region.sizeInBytes(); }
+    if (count >= 24 || image.isNull() || bytes > 256 * 1024 * 1024) {
+        emit pickerNotice(QStringLiteral("Selection limit reached. Remove a region or continue to Arrange."));
+        return -1;
+    }
+    m_pickerRegions.append(image);
+    m_pickerRegionScreens.append(screen);
+    return m_pickerRegions.size() - 1;
+}
+
+void Backend::pickerRemove(int token) {
+    if (m_capturing && token >= 0 && token < m_pickerRegions.size()) m_pickerRegions[token] = QImage();
+}
+
+bool Backend::pickerAccept(const QStringList &tokens) {
+    if (!m_capturing || !m_externalRegionPicker || tokens.isEmpty()) return false;
+    QVariantList images;
+    for (const QString &text : tokens) {
+        bool parsed = false;
+        const int token = text.toInt(&parsed);
+        if (!parsed || token < 0 || token >= m_pickerRegions.size() || m_pickerRegions[token].isNull())
+            return false;
+        images.append(m_pickerRegions[token]);
+        m_captureScreenGeometry = m_screens[m_pickerRegionScreens[token]].geometry;
+    }
+    emit regionsCaptured(images);
+    finish(true);
+    return true;
+}
+
+bool Backend::pickerVideo(int screen, const QRectF &area) {
+    if (!m_capturing || !m_externalRegionPicker || !m_video || screen < 0 || screen >= m_screens.size()) return false;
+    const auto &source = m_screens[screen];
+    const QRect pixels = RegionSelector::pixelRect(area, source.geometry.size(), source.image.size());
+    if (pixels.width() < 2 || pixels.height() < 2) return false;
+    startRecording(source.geometry, source.geometry.size(), area);
+    return true;
+}
+
 void Backend::updateSelections() {
     for (auto selector : m_selectors) {
         QList<QPair<int, QRectF>> areas;
@@ -351,23 +479,29 @@ void Backend::positionEditorForCapture(QObject *editor) {
 }
 
 void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
+    startRecording(selector->geometry(), selector->size(), area, selector);
+}
+
+void Backend::startRecording(const QRect &screenGeometry, const QSize &viewSize, const QRectF &area,
+                             RegionSelector *selector) {
     if (!m_capturing || !m_video) return;
     m_stopWhenReady = false;
     recording::Source source;
-    m_recordingRegion = area.toAlignedRect().translated(selector->geometry().topLeft());
+    m_recordingRegion = area.toAlignedRect().translated(screenGeometry.topLeft());
     if (auto *screen = QGuiApplication::screenAt(m_recordingRegion.center())) {
         m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, screen->geometry(),
                                                           screen->availableGeometry());
         m_recordingControlsGeometry = controlsGeometry(screen->availableGeometry());
     } else {
-        m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, selector->geometry(),
-                                                         selector->geometry());
-        m_recordingControlsGeometry = controlsGeometry(selector->geometry());
+        m_recordingIndicatorGeometry = indicatorGeometry(m_recordingRegion, screenGeometry,
+                                                         screenGeometry);
+        m_recordingControlsGeometry = controlsGeometry(screenGeometry);
     }
 #ifdef Q_OS_MACOS
+    Q_UNUSED(selector);
     source.platform = recording::Platform::Mac;
-    source.relativeRegion = QRectF(area.x() / selector->width(), area.y() / selector->height(),
-                                  area.width() / selector->width(), area.height() / selector->height());
+    source.relativeRegion = QRectF(area.x() / viewSize.width(), area.y() / viewSize.height(),
+                                  area.width() / viewSize.width(), area.height() / viewSize.height());
     // Match the native display ID, rather than assuming Qt and the capture
     // framework enumerate secondary displays in the same order.
     uint32_t count = 0;
@@ -379,7 +513,7 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
         const CGRect bounds = CGDisplayBounds(displays[i]);
         const QRect geometry(qRound(bounds.origin.x), qRound(bounds.origin.y),
                              qRound(bounds.size.width), qRound(bounds.size.height));
-        if (geometry == selector->geometry()) {
+        if (geometry == screenGeometry) {
             source.screenIndex = int(i);
             source.displayId = displays[i];
             break;
@@ -392,7 +526,11 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     }
 #elif defined(Q_OS_WIN)
     source.platform = recording::Platform::Windows;
-    const HMONITOR monitor = MonitorFromWindow(reinterpret_cast<HWND>(selector->winId()), MONITOR_DEFAULTTONEAREST);
+    const RECT monitorArea{m_recordingRegion.left(), m_recordingRegion.top(),
+                           m_recordingRegion.right() + 1, m_recordingRegion.bottom() + 1};
+    const HMONITOR monitor = selector
+        ? MonitorFromWindow(reinterpret_cast<HWND>(selector->winId()), MONITOR_DEFAULTTONEAREST)
+        : MonitorFromRect(&monitorArea, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info = {}; info.cbSize = sizeof(info);
     if (!GetMonitorInfoW(monitor, &info)) {
         emit error(QStringLiteral("Could not determine the selected display's recording coordinates."));
@@ -401,7 +539,7 @@ void Backend::startRecording(RegionSelector *selector, const QRectF &area) {
     }
     const QRect monitorPixels(info.rcMonitor.left, info.rcMonitor.top,
                               info.rcMonitor.right - info.rcMonitor.left, info.rcMonitor.bottom - info.rcMonitor.top);
-    source.pixelRegion = RegionSelector::pixelRect(area, selector->size(), monitorPixels.size()).translated(monitorPixels.topLeft());
+    source.pixelRegion = RegionSelector::pixelRect(area, viewSize, monitorPixels.size()).translated(monitorPixels.topLeft());
 #else
     emit error(QStringLiteral("Screen recording supports macOS and Windows."));
     finish();
@@ -440,6 +578,8 @@ void Backend::finish(bool captured) {
     }
     m_selectors.clear();
     m_selections.clear();
+    m_pickerRegions.clear();
+    m_pickerRegionScreens.clear();
     m_screens.clear();
     QFile::remove(m_output);
     m_capturing = false;

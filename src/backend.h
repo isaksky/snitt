@@ -53,7 +53,19 @@ public:
     Q_INVOKABLE void positionEditorForCapture(QObject *editor);
     Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void setExternalCaptureRouting(bool enabled) { m_externalCaptureRouting = enabled; }
+    Q_INVOKABLE void setExternalRegionPicker(bool enabled) { m_externalRegionPicker = enabled; }
     Q_INVOKABLE void advanceCapture(int nextScreen);
+    Q_INVOKABLE QVariantList pickerScreens() const;
+    QImage pickerImage(int screen) const;
+    Q_INVOKABLE bool pickerSingle(int screen, const QRectF &area);
+    Q_INVOKABLE int pickerAdd(int screen, const QRectF &area);
+    Q_INVOKABLE void pickerSetMode(bool video) { m_video = video; }
+    Q_INVOKABLE void pickerRemove(int token);
+    Q_INVOKABLE bool pickerAccept(const QStringList &tokens);
+    Q_INVOKABLE bool pickerVideo(int screen, const QRectF &area);
+    Q_INVOKABLE void pickerCancel() { if (m_capturing) finish(); }
+    Q_INVOKABLE bool pickerFixture(const QStringList &paths, const QStringList &geometries,
+                                   bool multiple, bool video);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();
@@ -66,6 +78,8 @@ signals:
     void regionsCaptured(const QVariantList &images);
     void captureFinished(bool captured);
     void captureScreenReady(int completed, int total);
+    void pickerReady();
+    void pickerNotice(const QString &message);
     void recordingChanged();
     void recordingProcessStarted();
     void recordingReady();
@@ -82,11 +96,15 @@ private:
     void updateSelections();
     void removeSelection(int index);
     void startRecording(RegionSelector *selector, const QRectF &area);
+    void startRecording(const QRect &screenGeometry, const QSize &viewSize, const QRectF &area,
+                        RegionSelector *selector = nullptr);
     struct ScreenImage { QRect geometry; QImage image; };
     struct Selection { RegionSelector *owner; QRectF area; QImage image; };
     QList<ScreenImage> m_screens;
     AppSettings *m_settings = nullptr;
     QList<Selection> m_selections;
+    QList<QImage> m_pickerRegions;
+    QList<int> m_pickerRegionScreens;
     int m_screenIndex = 0;
     bool m_multiple = false;
     bool m_video = false;
@@ -107,6 +125,7 @@ private:
     QProcess m_process;
     bool m_capturing = false;
     bool m_externalCaptureRouting = false;
+    bool m_externalRegionPicker = false;
     QString m_output;
     QList<QPointer<RegionSelector>> m_selectors;
 };

@@ -593,6 +593,8 @@
 
 (defn- settings-published! [{:keys [good-color bad-color pictures-root hints]}]
   (when-let [manager (:manager @runtime)]
+    (when-let [picker (:picker (sessions/snapshot manager))]
+      (swap! (:state picker) update :settings-revision (fnil inc 0)))
     (doseq [{:keys [context]} (sessions/sessions manager)]
       (when-let [handle (canvas context)]
         (q/set-property! handle "goodColor" (value/color good-color))
