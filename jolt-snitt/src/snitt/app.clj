@@ -181,7 +181,7 @@
                    (widget/dialog-visible? chooser)))
      :capturing? (or (and backend (q/read-property backend "capturing"))
                      (and manager (:capture (sessions/snapshot manager))))
-     :recording? (and backend (q/read-property backend "recording"))
+     :recording? (and manager (sessions/recording? manager (:id context)))
      :review? (and session (:review-window session)
                    (qt/window-alive? (:review-window session))
                    (q/read-property (:review-window session) "visible"))
@@ -535,24 +535,6 @@
       (sessions/set-review-window! manager id window)
       (refresh-context! context))))
 
-(defn- recording-controls! [manager id]
-  (when-let [{:keys [services controls-window]} (sessions/session manager id)]
-    (let [backend (:backend services)
-          recording? (q/read-property backend "recording")]
-      (cond
-        (and recording? (not (and controls-window (qt/window-alive? controls-window))))
-        (sessions/set-controls-window!
-         manager id
-         (qt/open-window!
-          (fn [] [:hbox {:padding 10 :spacing 8}
-                  [:label {:label "Recording"}]
-                  [:button {:label "Stop" :on-click #(object/invoke! backend "finishRecording()" [])}]
-                  [:button {:label "Cancel" :on-click #(object/invoke! backend "cancelRecording()" [])}]])
-          :title "Snitt — Recording" :width 320 :height 70
-          :on-close (fn [_] (object/invoke! backend "cancelRecording()" []) false)))
-        (and (not recording?) controls-window (qt/window-alive? controls-window))
-        (qt/close-window! controls-window)))))
-
 (defn- create-editor! [id label on-close]
   (let [services (native/create-services!)
         context {:id id :window (atom nil) :services (atom services)
@@ -584,8 +566,7 @@
         {:window window :services services :context context
          :load-url #(open-url! context %)
          :on-error (fn [_ message] (report! context message true))
-         :on-recording-saved review!
-         :on-recording-changed recording-controls!})
+         :on-recording-saved review!})
       (catch Throwable e
         (when-let [window @(:window context)] (qt/close-window! window))
         (widget/dispose! (:root services))

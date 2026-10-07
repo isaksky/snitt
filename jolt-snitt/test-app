@@ -25,6 +25,8 @@ cd "$ROOT"
 "${JOLT:-jolt}" -M:lifecycle
 "${JOLT:-jolt}" -M:test
 "${JOLT:-jolt}" -M:capture
+SNITT_JOLT_FAKE_RECORDER=manual "${JOLT:-jolt}" -M:recording
+SNITT_JOLT_FAKE_RECORDER=protection-failure "${JOLT:-jolt}" -M:recording
 SNITT_JOLT_CAPTURE_DIR="$ROOT/../build/jolt-snitt" QT_SCALE_FACTOR=2 "${JOLT:-jolt}" -M:annotation
 python3 "$ROOT/test/image_pixels.py" verify "$(cat "$SNITT_JOLT_SAVED_PATH")"
 python3 "$ROOT/test/image_pixels.py" verify "$SNITT_JOLT_COPIED_PATH"

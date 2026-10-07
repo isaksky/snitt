@@ -54,6 +54,7 @@ public:
     Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void setExternalCaptureRouting(bool enabled) { m_externalCaptureRouting = enabled; }
     Q_INVOKABLE void setExternalRegionPicker(bool enabled) { m_externalRegionPicker = enabled; }
+    void setExternalRecording(bool enabled) { m_externalRecording = enabled; }
     Q_INVOKABLE void advanceCapture(int nextScreen);
     Q_INVOKABLE QVariantList pickerScreens() const;
     QImage pickerImage(int screen) const;
@@ -80,6 +81,7 @@ signals:
     void captureScreenReady(int completed, int total);
     void pickerReady();
     void pickerNotice(const QString &message);
+    void recordingSourceReady(const recording::Source &source);
     void recordingChanged();
     void recordingProcessStarted();
     void recordingReady();
@@ -126,6 +128,7 @@ private:
     bool m_capturing = false;
     bool m_externalCaptureRouting = false;
     bool m_externalRegionPicker = false;
+    bool m_externalRecording = false;
     QString m_output;
     QList<QPointer<RegionSelector>> m_selectors;
 };

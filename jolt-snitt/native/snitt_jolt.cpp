@@ -23,6 +23,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QWindow>
 #include <QUuid>
 #include <memory>
 #ifdef Q_OS_WIN
@@ -173,6 +174,12 @@ public:
         m_backend->trim()->setParent(m_backend);
         m_backend->setExternalCaptureRouting(true);
         m_backend->setExternalRegionPicker(true);
+        m_backend->setExternalRecording(true);
+        connect(m_backend, &Backend::recordingSourceReady, this, [this](const recording::Source &source) {
+            m_recordingSource = source;
+            m_sourceAvailable = true;
+            emit recordingSourceReady();
+        });
         connect(m_backend, &Backend::pickerReady, this, [this] {
             clearPickerImages();
             m_pickerScreens = m_backend->pickerScreens();
@@ -223,6 +230,83 @@ public:
 #else
         return false;
 #endif
+    }
+
+    // Recorder instances never cross generations. Queued bridge events carry the
+    // Jolt generation, while platform callbacks retain their own native fence.
+    Q_INVOKABLE bool prepareRecorder(int generation, QObject *indicator, QObject *controls, QObject *outline) {
+        if (generation <= m_recordingGeneration || m_recording || !m_sourceAvailable) return false;
+        m_recordingGeneration = generation;
+        m_protected = false;
+        for (QObject *object : {indicator, controls, outline}) {
+            auto *window = qobject_cast<QWindow *>(object);
+            if (!window) return false;
+            window->winId(); // Create each native window before protection/start.
+#ifdef Q_OS_WIN
+            if (!m_backend->protectRecordingControls(window)) return false;
+#endif
+        }
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_RECORDER") == QStringLiteral("protection-failure")) return false;
+        // macOS ScreenCaptureKit excludes the entire current application before
+        // starting its stream, and reports an error if that exclusion fails.
+        m_protected = true;
+        return true;
+    }
+
+    Q_INVOKABLE bool startRecorder(int generation) {
+        if (!m_protected || !m_sourceAvailable || generation != m_recordingGeneration || m_recording) return false;
+        m_protected = false;
+        m_sourceAvailable = false;
+        if (fakeRecorder()) { ++m_recordingStarts; return true; }
+        auto *recorder = new Recorder(this);
+        m_recording = recorder;
+        connect(recorder, &Recorder::ready, this, [this, generation] { emit recorderEvent(generation, "ready", ""); });
+        connect(recorder, &Recorder::changed, this, [this, recorder, generation] {
+            if (recorder->finishing()) emit recorderEvent(generation, "finishing", "");
+        });
+        connect(recorder, &Recorder::elapsedChanged, this, [this, recorder, generation] {
+            emit recorderEvent(generation, "elapsed", QString::number(recorder->elapsed()));
+        });
+        connect(recorder, &Recorder::saved, this, [this, generation](const QString &path) {
+            emit recorderEvent(generation, "saved", path);
+        });
+        connect(recorder, &Recorder::canceled, this, [this, generation] { emit recorderEvent(generation, "canceled", ""); });
+        connect(recorder, &Recorder::error, this, [this, generation](const QString &error) { emit recorderEvent(generation, "failed", error); });
+        recorder->start(m_recordingSource, m_settings->videosRoot());
+        return true; // Synchronous startup failures are delivered as events too.
+    }
+    Q_INVOKABLE void finishRecorder(int generation) {
+        if (generation != m_recordingGeneration) return;
+        if (fakeRecorder()) ++m_recordingStops;
+        else if (m_recording) m_recording->finish();
+    }
+    Q_INVOKABLE void cancelRecorder(int generation) {
+        if (generation != m_recordingGeneration) return;
+        m_protected = m_sourceAvailable = false;
+        if (fakeRecorder() || !m_recording) emit recorderEvent(generation, "canceled", "");
+        else m_recording->cancel();
+    }
+    Q_INVOKABLE void retireRecorder(int generation) {
+        if (generation != m_recordingGeneration) return;
+        m_protected = m_sourceAvailable = false;
+        if (m_recording) {
+            m_recording->disconnect(this);
+            m_recording->cancel();
+            m_recording->deleteLater();
+            m_recording = nullptr;
+        }
+    }
+    Q_INVOKABLE void openRecording(const QString &path) {
+        static_cast<TrimSession *>(m_backend->trim())->open(path);
+    }
+    Q_INVOKABLE void recordingSourceForTest() {
+        if (fakeRecorder()) { m_sourceAvailable = true; emit recordingSourceReady(); }
+    }
+    Q_INVOKABLE void recorderEventForTest(int generation, const QString &event, const QString &data) {
+        if (fakeRecorder()) emit recorderEvent(generation, event, data);
+    }
+    Q_INVOKABLE QVariantList recorderCountsForTest() const {
+        return {m_recordingStarts, m_recordingStops};
     }
 
     Q_INVOKABLE bool bindCanvas(QObject *canvas) {
@@ -350,12 +434,25 @@ public:
             emit globalCaptureActivated();
     }
 signals:
+    void recordingSourceReady();
+    void recorderEvent(int generation, const QString &event, const QString &data);
     void globalCaptureActivated();
     void captureReady();
     void captureDataError(const QString &message);
     void capturePickerReady();
     void capturePickerNotice(const QString &message);
 private:
+    bool fakeRecorder() const {
+        const QString mode = qEnvironmentVariable("SNITT_JOLT_FAKE_RECORDER");
+        return mode == QStringLiteral("manual") || mode == QStringLiteral("protection-failure");
+    }
+    recording::Source m_recordingSource;
+    QPointer<Recorder> m_recording;
+    int m_recordingGeneration = 0;
+    int m_recordingStarts = 0;
+    int m_recordingStops = 0;
+    bool m_sourceAvailable = false;
+    bool m_protected = false;
     void clearPickerImages() {
         QMutexLocker lock(&pickerImagesMutex);
         for (const QString &key : m_pickerKeys) pickerImages.remove(key);

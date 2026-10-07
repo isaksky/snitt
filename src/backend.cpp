@@ -545,6 +545,11 @@ void Backend::startRecording(const QRect &screenGeometry, const QSize &viewSize,
     finish();
     return;
 #endif
+    if (m_externalRecording) {
+        emit recordingSourceReady(source);
+        finish(false);
+        return;
+    }
     // The native macOS recorder excludes every Snitt window. The selector is
     // also hidden promptly so the live desktop is visible to the user.
     for (auto overlay : m_selectors) if (overlay) overlay->hide();

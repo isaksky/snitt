@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM=offscreen JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1
+SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt-recording.XXXXXX")"
+export SNITT_JOLT_DATA_DIR
+trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+cd "$ROOT"
+SNITT_JOLT_FAKE_RECORDER=manual "${JOLT:-jolt}" -M:recording
+SNITT_JOLT_FAKE_RECORDER=protection-failure "${JOLT:-jolt}" -M:recording

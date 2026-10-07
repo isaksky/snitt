@@ -85,7 +85,21 @@ bridge. `tests/parity-fixtures.json` records commands and expected state; the
 runner generates images in separate temporary roots, compares every state and
 saved image pixel buffer, and prints the differing command and field on failure.
 It also runs the retained recording cancellation and failed replacement tests
-against generated clips. Recording has not migrated to Jolt yet, so those media
-checks remain a C++ regression gate. The text edit in the fixture is undone
+against generated clips. The retained recorder/media helpers continue using these C++ regression gates. The text edit in the fixture is undone
 before pixel comparison; font rendering is not treated as bit-identical across
 platforms. Use `--skip-build` for a quick rerun after the binaries are current.
+
+`snitt.recording` owns recording phases, controls, startup indicator, outline,
+stop-before-readiness, cancellation, and generation fencing. The native adapter
+retains the capture source and platform recorder only; it rejects starts until
+all overlay windows have been prepared for exclusion. Windows verifies capture
+affinity before start; macOS ScreenCaptureKit excludes the entire application
+before streaming. Jolt restores editor visibility/focus once on completion and
+opens the retained trim service for a saved file. The original backend/QML owner
+remains active only in the reference launcher.
+
+Run `./jolt-snitt/test-recording` for fake-recorder transition and UI tests,
+including protection failure and stale callbacks. On an unlocked macOS desktop,
+`./jolt-snitt/test-recording-desktop` records a real region, stops, checks review
+and restoration, cancels during a second startup, then probes and decodes the
+generated MP4. Both use disposable settings/output roots and fake global hotkeys.

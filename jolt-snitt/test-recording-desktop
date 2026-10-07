@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM=cocoa JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1
+unset SNITT_JOLT_FAKE_RECORDER
+SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt-recording-desktop.XXXXXX")"
+export SNITT_JOLT_DATA_DIR
+SNITT_JOLT_RECORDING_PATH="$SNITT_JOLT_DATA_DIR/recording-path.txt"
+export SNITT_JOLT_RECORDING_PATH
+trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+cd "$ROOT"
+"${JOLT:-jolt}" -M:recording-desktop
+python3 - "$SNITT_JOLT_DATA_DIR" "$SNITT_JOLT_RECORDING_PATH" <<'PYTEST'
+import json, pathlib, subprocess, sys
+root, receipt = map(pathlib.Path, sys.argv[1:])
+path = pathlib.Path(receipt.read_text())
+assert [item.resolve() for item in root.rglob("*.mp4")] == [path.resolve()], "Canceled recording left output behind"
+info = json.loads(subprocess.check_output([
+    "ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height",
+    "-show_entries", "format=duration", "-of", "json", str(path)], text=True))
+assert info["streams"] == [{"codec_name": "h264", "width": 320, "height": 200}], info
+assert float(info["format"]["duration"]) > 0, info
+print("PASS: valid 320×200 H.264 recording; canceled output removed")
+PYTEST
+ffmpeg -v error -i "$(cat "$SNITT_JOLT_RECORDING_PATH")" -f null -

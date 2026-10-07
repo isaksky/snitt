@@ -6,7 +6,8 @@
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
-            [snitt.region :as region]))
+            [snitt.region :as region]
+            [snitt.recording :as recording]))
 
 (defn manager [create & {:keys [start-capture]}]
   {:state (atom {:next-id 0 :order [] :sessions {} :last-active nil
@@ -32,6 +33,9 @@
     (swap! (:state manager) assoc :last-active id)))
 
 (declare close! complete-capture!)
+
+(defn recording? [manager id]
+  (recording/busy? (:recording (session manager id))))
 
 (defn- report-error! [manager id message]
   (let [{:keys [capture restore-focus last-active order]} (snapshot manager)
@@ -65,7 +69,7 @@
       (complete-capture! manager id false))))
 
 (defn- watch-session! [manager id]
-  (let [{:keys [window services on-recording-saved on-recording-changed]} (session manager id)
+  (let [{:keys [window services on-recording-saved]} (session manager id)
         backend (:backend services)
         trim (:trim services)
         subscribe (fn [owner target signal handler]
@@ -77,7 +81,7 @@
                (fn [captured]
                  (region/close! (:picker (snapshot manager)))
                  (swap! (:state manager) assoc :picker nil)
-                 (when-not (or (q/read-property backend "recording")
+                 (when-not (or (recording? manager id)
                                (seq (q/read-property trim "path")))
                    (capture-finished! manager id captured))))
     (subscribe (:root services) (:root services) "capturePickerReady()"
@@ -108,19 +112,36 @@
                  (when (= id (:capture (snapshot manager)))
                    (report-error! manager id message)
                    (complete-capture! manager id false))))
-    (subscribe (:root services) backend "recordingSaved(QString)"
-               (fn [path]
-                 (when on-recording-saved (on-recording-saved manager id path))
-                 (complete-capture! manager id true)))
-    (subscribe (:root services) backend "recordingCanceled()"
-               #(complete-capture! manager id false))
-    (subscribe (:root services) backend "recordingChanged()"
-               #(when on-recording-changed (on-recording-changed manager id)))
+    (subscribe (:root services) (:root services) "recordingSourceReady()"
+               (fn []
+                 (when (and (= id (:capture (snapshot manager)))
+                            (not (:recording (session manager id))))
+                   (region/close! (:picker (snapshot manager)))
+                   (swap! (:state manager) assoc :picker nil)
+                   (let [owner (recording/owner
+                                (:root services) backend id
+                                (fn [{:keys [phase path error]}]
+                                  (when (current? manager id)
+                                    (case phase
+                                      :saved (do
+                                               (object/invoke! (:root services) "openRecording(QString)" [path])
+                                               (when on-recording-saved (on-recording-saved manager id path))
+                                               (complete-capture! manager id true))
+                                      :failed (do (report-error! manager id error)
+                                                  (complete-capture! manager id false))
+                                      :canceled (complete-capture! manager id false)
+                                      nil))))]
+                     (swap! (:state manager) assoc-in [:sessions id :recording] owner)
+                     (recording/prepare! owner)))))
+    (subscribe (:root services) (:root services) "recorderEvent(int,QString,QString)"
+               (fn [generation event data]
+                 (when-let [owner (:recording (session manager id))]
+                   (recording/event! owner generation (keyword event) data))))
     (subscribe (:root services) backend "error(QString)"
                (fn [message]
                  (report-error! manager id message)
                  (when (and (not (q/read-property backend "capturing"))
-                            (not (q/read-property backend "recording")))
+                            (not (recording? manager id)))
                    (complete-capture! manager id false))))
     (subscribe (:root services) trim "finalized(QString)"
                (fn [_]
@@ -220,21 +241,15 @@
 
 (defn hotkey-capture! [manager]
   (if-let [id (:capture (snapshot manager))]
-    (when-let [backend (get-in (session manager id) [:services :backend])]
-      (when (q/read-property backend "recording")
-        (object/invoke! backend "stopRecordingFromHotkey()" [])))
+    (recording/dispatch! (:recording (session manager id)) :stop)
     (capture! manager false false)))
 
 (defn set-review-window! [manager id window]
   (when (current? manager id)
     (swap! (:state manager) assoc-in [:sessions id :review-window] window)))
 
-(defn set-controls-window! [manager id window]
-  (when (current? manager id)
-    (swap! (:state manager) assoc-in [:sessions id :controls-window] window)))
-
 (defn close! [manager id]
-  (when-let [{:keys [window review-window controls-window services]} (session manager id)]
+  (when-let [{:keys [window review-window recording services]} (session manager id)]
     (let [capturing? (= id (:capture (snapshot manager)))
           {:keys [hidden restore-focus]} (snapshot manager)]
       (when capturing? (region/close! (:picker (snapshot manager))))
@@ -250,12 +265,12 @@
                            (assoc :capture nil :capture-loaded false
                                   :capture-finished false :hidden [] :restore-focus nil
                                   :picker nil :capture-mode nil)))))
+      (recording/dispose! recording)
       (object/disconnect-owner! window)
       (object/disconnect-owner! (:root services))
       (when (q/alive? (:root services))
         (object/invoke! (:root services) "discardCapture()" []))
       (when (live-window? review-window) (qt/close-window! review-window))
-      (when (live-window? controls-window) (qt/close-window! controls-window))
       (when (live-window? window) (qt/close-window! window))
       (when (q/alive? (:root services)) (widget/dispose! (:root services)))
       (when capturing? (restore-hidden! manager hidden restore-focus))
