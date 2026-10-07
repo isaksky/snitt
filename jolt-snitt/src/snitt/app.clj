@@ -223,6 +223,21 @@
       (do (report! context failure-message true)
           false))))
 
+(defn reveal-saved! [backend path]
+  (object/invoke! backend "revealFile(QString)" [path]))
+
+(defn- finish-save! [context manager handle]
+  (let [{:keys [ok? path error]} (native/save-result! handle)]
+    (if-not ok?
+      (report! context (or error "Could not save the image. Check the Pictures folder and try again.") true)
+      (if (reveal-saved! (:backend @(:services context)) path)
+        (do (report! context path false)
+            (sessions/close! manager (:id context)))
+        (do (report! context (str "Screenshot saved at " path
+                                  ", but could not reveal it in the file manager.") true)
+            (swap! (:state context) assoc :saved-path path :modal? true)
+            (widget/open-dialog! (item context "reveal-dialog")))))))
+
 (defn command-state [context]
   (let [handle (canvas context)
         services @(:services context)
@@ -308,13 +323,12 @@
       :finish (do
                 (cancel-gesture! context)
                 (native/cancel! handle)
-                (when (case (first args)
-                        :copy (result! context native/copy! "Copied to clipboard"
+                (case (first args)
+                  :copy (when (result! context native/copy! "Copied to clipboard"
                                        "Could not copy to the clipboard. Try again.")
-                        :save (result! context native/save! "Saved"
-                                       "Could not save the image. Check the Pictures folder and try again.")
-                        false)
-                  (sessions/close! manager (:id context))))
+                          (sessions/close! manager (:id context)))
+                  :save (finish-save! context manager handle)
+                  nil))
       :dismiss (when-not (or (cancel-gesture! context) (native/cancel! handle))
                  (sessions/close! manager (:id context)))
       :review (when-let [owner @(:review context)]
@@ -590,6 +604,13 @@
                  :on-click #(widget/reject-dialog! (item context "rearrange-dialog"))}]
        [:button {:id "discard-edits" :label "Discard edits"
                  :on-click #(widget/accept-dialog! (item context "rearrange-dialog"))}]]]
+     [:dialog {:id "reveal-dialog" :title "Could not reveal screenshot"
+               :on-accepted #(swap! (:state context) assoc :modal? false)
+               :on-rejected #(swap! (:state context) assoc :modal? false)}
+      [:label {:label (str "Screenshot saved at " (:saved-path @(:state context))
+                           ", but could not reveal it in the file manager.")}]
+      [:button {:id "reveal-ok" :label "OK"
+                :on-click #(widget/accept-dialog! (item context "reveal-dialog"))}]]
      (for [action commands/editor-actions]
        [:shortcut {:id (str "command-" action) :sequences (binding action)
                    :enabled (enabled? action)

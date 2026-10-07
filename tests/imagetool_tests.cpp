@@ -13,6 +13,9 @@
 #include "editorcanvas.h"
 #include "annotationfont.h"
 #include "screenshotsave.h"
+#include <atomic>
+#include <thread>
+#include <vector>
 
 class ImageToolTests : public QObject {
     Q_OBJECT
@@ -38,6 +41,7 @@ private slots:
     void fractionalCutsKeepEarlierAnnotationsInsideMasks();
     void failedSavePreservesSession();
     void savePngUsesUniqueNamesAndKeepsSource();
+    void exclusiveSaveResistsSimultaneousCollision();
     void saveUsesConfiguredMediaRoot();
     void savePngUsesLocalYearAndMonthFolders();
 };
@@ -1107,6 +1111,32 @@ void ImageToolTests::savePngUsesUniqueNamesAndKeepsSource() {
     QVERIFY(screenshots::savePng(original, blocked, &error).isEmpty());
     QVERIFY(error.contains("Could not create the screenshots folder"));
     QCOMPARE(QImage(first).convertToFormat(original.format()), original);
+}
+
+void ImageToolTests::exclusiveSaveResistsSimultaneousCollision() {
+    QTemporaryDir pictures;
+    QVERIFY(pictures.isValid());
+    const QString path = pictures.filePath(QStringLiteral("写真/snitt-collision.png"));
+    const QImage original = sourceImage();
+    std::atomic<bool> go{false};
+    std::vector<screenshots::PngResult> results(8);
+    std::vector<std::thread> writers;
+    for (int i = 0; i < 8; ++i)
+        writers.emplace_back([&, i] {
+            while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+            results[size_t(i)] = screenshots::writePngExclusive(original, path);
+        });
+    go.store(true, std::memory_order_release);
+    for (auto &writer : writers) writer.join();
+    int saved = 0, collisions = 0;
+    for (const auto &result : results) {
+        if (result.status == screenshots::PngResult::Saved) ++saved;
+        else if (result.status == screenshots::PngResult::Collision) ++collisions;
+        else QVERIFY2(false, qPrintable(result.error));
+    }
+    QCOMPARE(saved, 1);
+    QCOMPARE(collisions, 7);
+    QCOMPARE(QImage(path).convertToFormat(original.format()), original);
 }
 
 void ImageToolTests::saveUsesConfiguredMediaRoot() {

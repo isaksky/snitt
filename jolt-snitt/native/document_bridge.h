@@ -1,9 +1,14 @@
 #pragma once
 #include "../../src/editorcanvas.h"
 #include <QHash>
+#include <QDateTime>
+#include <QMimeData>
 #include <QPainter>
 #include <QSet>
+#include <QUuid>
 #include <QVariantMap>
+#include "../../src/clipboard.h"
+#include "../../src/screenshotsave.h"
 #include <limits>
 #include <stdexcept>
 
@@ -116,6 +121,44 @@ public:
         return {{"images", m_images.size()}, {"operations", m_operations.size()},
                 {"bytes", bytes}, {"sampleBytes", samples}};
     }
+    Q_INVOKABLE QVariantMap exportFacts() const {
+        try {
+            const auto &doc = documentProjection();
+            return {{"annotations", doc.hasAnnotations()},
+                    {"width", doc.image().width()}, {"height", doc.image().height()},
+                    {"sourceWidth", doc.source().width()}, {"sourceHeight", doc.source().height()}};
+        } catch (...) { return {{"error", "Could not inspect the image."}}; }
+    }
+    Q_INVOKABLE QVariantMap saveStamp() const {
+        try {
+            const QDateTime now = QDateTime::currentDateTime();
+            return {{"year", now.toString(QStringLiteral("yyyy"))},
+                    {"month", now.date().month()},
+                    {"time", now.toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))},
+                    {"token", QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)}};
+        } catch (...) { return {}; }
+    }
+    Q_INVOKABLE QVariantMap copyDocumentRender(double scale) const {
+        try {
+            const QImage image = exportedImage(scale);
+            if (image.isNull()) return {{"ok", false}, {"error", "Could not render the image."}};
+            auto data = std::make_unique<QMimeData>();
+            data->setImageData(image);
+            if (!snittClipboard::publish(std::move(data)))
+                return {{"ok", false}, {"error", "Could not copy the image to the clipboard. Please try again."}};
+            return {{"ok", true}};
+        } catch (...) { return {{"ok", false}, {"error", "Could not copy the image."}}; }
+    }
+    Q_INVOKABLE QVariantMap saveDocumentPng(const QString &path, double scale) const {
+        try {
+            const QImage image = exportedImage(scale);
+            const screenshots::PngResult result = screenshots::writePngExclusive(image, path);
+            if (result.status == screenshots::PngResult::Collision) return {{"status", "collision"}};
+            if (result.status == screenshots::PngResult::Error)
+                return {{"status", "error"}, {"error", result.error}};
+            return {{"status", "saved"}, {"path", path}};
+        } catch (...) { return {{"status", "error"}, {"error", "Could not save the image."}}; }
+    }
     Q_INVOKABLE bool saveDocumentRender(const QString &path, double scale, bool preview) {
         if (qEnvironmentVariable("SNITT_JOLT_DOCUMENT_TEST") != "1") return false;
         const auto &doc = documentProjection();
@@ -139,6 +182,13 @@ public:
 signals:
     void documentSourceChanged();
 private:
+    QImage exportedImage(double scale) const {
+        if (!std::isfinite(scale) || scale < 1.0 || scale > 3.0) return {};
+        const auto &doc = documentProjection();
+        if (doc.image().isNull()) return {};
+        const QImage rendered = doc.render(scale);
+        return rendered.isNull() ? doc.image() : rendered;
+    }
     int next() {
         if (m_next == std::numeric_limits<int>::max()) throw std::overflow_error("image handles exhausted");
         return ++m_next;

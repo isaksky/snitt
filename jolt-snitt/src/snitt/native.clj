@@ -2,6 +2,7 @@
   "Application-owned Snitt objects exposed through glimmer-qt's factory seam."
   (:require [snitt.trim :as trim]
             [snitt.document :as document]
+            [snitt.export :as export]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
@@ -94,5 +95,6 @@
   (if (document/owned? canvas) (document/undo! canvas) (object/invoke! canvas "undo()" [])))
 (defn redo! [canvas]
   (if (document/owned? canvas) (document/redo! canvas) (object/invoke! canvas "redo()" [])))
-(defn copy! [canvas] (object/invoke! canvas "copy()" []))
-(defn save! [canvas] (object/invoke! canvas "save()" []))
+(defn copy! [canvas] (:ok? (export/copy! canvas)))
+(defn save-result! [canvas] (export/save! canvas (q/read-property canvas "saveRoot")))
+(defn save! [canvas] (:path (save-result! canvas)))

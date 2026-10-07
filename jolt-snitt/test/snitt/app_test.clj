@@ -177,6 +177,15 @@
                 "Failed copy error reaches visible status label")
         (check! (= @initial-canvas (app/canvas))
                 "Error rerender keeps the canvas and document")
+        (with-redefs [app/reveal-saved! (fn [_ _] false)]
+          (click! "save"))
+        (check! (q/read-property canvas "hasImage") "Reveal failure keeps the editor")
+        (check! (q/read-property canvas "canUndo") "Reveal failure keeps document history")
+        (check! (str/includes? (:status @app/state) "Screenshot saved at ")
+                "Reveal failure reports the saved path")
+        (check! (widget/dialog-visible? (id "reveal-dialog"))
+                "Reveal failure opens recoverable dialog")
+        (widget/accept-dialog! (id "reveal-dialog"))
         (let [manager (:manager @app/runtime)
               second-id (sessions/open-image! manager (str "file://" image) "second.png")
               second (sessions/session manager second-id)
@@ -285,7 +294,8 @@
                     (qt/later! 120
                       (fn []
                         (let [save-button (qt/find-by-id save-window "save")]
-                          (check! (= 1 (click-native save-button)) "Save toolbar activates")
+                          (with-redefs [app/reveal-saved! (fn [_ _] true)]
+                            (check! (= 1 (click-native save-button)) "Save toolbar activates"))
                           (check! (nil? (sessions/session manager save-id))
                                   "Save toolbar closes its editor after success")
                           (check! (q/read-property canvas "hasImage")
