@@ -3,6 +3,7 @@
   Event signatures match glimmer-gtk: :on-change receives text; :on-click and
   :on-activate take no arguments. Handlers are refreshed on every render."
   (:require [glimmer-qt.ffi :as q]
+            [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]))
 
 (defonce session (atom nil))
@@ -23,9 +24,10 @@
 (defn register!
   "Register a tag before starting a session. :source is an absolute QML URL
   (qrc:/ or file:/) or native:factory-name. :props maps keys to [Qt-name type
-  default], with :string/:number/:bool/:color types. :events maps handler keys
+  default], with :string/:number/:bool/:color/:value types. :events maps handler keys
   to :none or :string payloads. :required lists props required on every render.
-  :children is :none (default), :self, or an owned QQuickItem property name.
+  :children is :none (default), :self, or an owned QObject property name.
+  Every tag accepts :qt/subscriptions; see glimmer-qt.object/reconcile!.
   :relay names an optional QtObject property for relay.dispatch(object,event,text).
   :dispose is an optional zero-argument notification, run once on disposal.
   Registrations are immutable while a session is running. Duplicate tags fail."
@@ -39,12 +41,12 @@
                 (string? relay) (or (nil? dispose) (ifn? dispose)))
     (throw (ex-info "Invalid Qt registration descriptor." {:tag tag})))
   (doseq [[key entry] props]
-    (when-not (and (keyword? key) (vector? entry) (= 3 (count entry))
+    (when-not (and (keyword? key) (not= key :qt/subscriptions) (vector? entry) (= 3 (count entry))
                   (string? (first entry)) (seq (first entry))
-                  (#{:string :number :bool :color} (second entry)))
+                  (#{:string :number :bool :color :value} (second entry)))
       (throw (ex-info "Invalid Qt property schema." {:property key}))))
   (doseq [[key arity] events]
-    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :work :work-canceled} key))
+    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions} key))
                    (#{:none :string} arity) (not (contains? props key)))
       (throw (ex-info "Invalid Qt event schema." {:event key}))))
   (when-not (every? #(contains? props %) required)
@@ -84,15 +86,17 @@
     data))
 
 (defn- validate-props! [tag props]
+  (object/validate-subscriptions! (:qt/subscriptions props))
   (let [spec (spec-for tag)]
     (doseq [key (:required (registration tag))]
       (when-not (contains? props key)
         (throw (ex-info "Missing required Qt property." {:tag tag :property key}))))
-    (doseq [[key value] props]
+    (doseq [[key value] (dissoc props :qt/subscriptions)]
       (when-not (contains? spec key)
         (throw (ex-info "Unsupported glimmer-qt property." {:tag tag :property key})))
       (if-let [[_ type] (get spec key)]
-        (when-not (case type :string (string? value) :color (string? value) :number (number? value) :bool (boolean? value))
+        (when-not (case type :string (string? value) :color (string? value) :number (number? value) :bool (boolean? value)
+                        :value (do (value/wire value) true))
           (throw (ex-info "Invalid Qt property value." {:property key :value value})))
         (when (and value (not (ifn? value)))
           (throw (ex-info "Qt event handler must be callable." {:property key})))))))
@@ -107,12 +111,9 @@
       (let [[property type default] entry
             value (get props key default)]
         (when (or (nil? previous) (= key :text) (not= value (get previous key default)))
-          (case type
-            :string (q/set-string widget property value)
-            :number (q/set-number widget property value)
-            :color (q/set-property! widget property (value/color value))
-            :bool (q/set-bool widget property (if value 1 0))))))
-    (swap! widgets assoc-in [widget :props] props))
+          (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
+    (swap! widgets assoc-in [widget :props] props)
+    (object/reconcile! widget (:qt/subscriptions props)))
   nil)
 
 (defn- forget-tree! [widget]
@@ -121,6 +122,7 @@
       ;; Release every descendant even when an application hook throws.
       (doseq [child (:children data)]
         (try (forget-tree! child) (catch Throwable e (reset! failure e))))
+      (try (object/disconnect-owner! widget) (catch Throwable e (reset! failure e)))
       (when-let [parent (:parent data)]
         (swap! widgets update-in [parent :children] #(vec (remove #{widget} %))))
       (swap! widgets dissoc widget)
@@ -150,6 +152,7 @@
       (when-not (= children :none)
         (swap! widgets assoc-in [widget :target]
                (q/child-target widget (if (= children :self) "" children))))
+      (object/reconcile! widget (:qt/subscriptions props))
       widget
       (catch Throwable error (dispose! widget) (throw error)))))
 

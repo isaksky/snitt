@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <cstdint>
 // Application libraries link against glimmer_qt and register on the GUI thread
 // during an active session. Factories return a fresh, unparented object. The
 // bridge owns it, writes checked initial properties, then calls complete.
@@ -13,3 +14,7 @@ using GqtComplete = void (*)(QObject *);
 #endif
 extern "C" GQT_API int gqt_register_factory(const char *name, GqtFactory factory,
                                                  GqtComplete complete);
+
+// Expose an existing live GUI-thread descendant of a registered object.
+// Ownership stays with its native parent; never pass a dangling pointer.
+extern "C" GQT_API uint64_t gqt_expose_object(QObject *object);

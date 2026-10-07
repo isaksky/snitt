@@ -8,12 +8,12 @@
 
 (ffi/defcfn native-error "gqt_error" [] :string)
 
-(defmacro defchecked [sym native types result-type]
+(defmacro defchecked [sym native types result-type & options]
   (let [raw (symbol (str "native-" (name sym)))
         args (vec (repeatedly (count types) #(gensym "arg")))
         result (gensym "result")]
     `(do
-       (ffi/defcfn ~raw ~native ~types ~result-type)
+       (ffi/defcfn ~raw ~native ~types ~result-type ~@options)
        (defn ~sym ~args
          (let [~result (~raw ~@args)]
            (when ~(if (= result-type :string) `(nil? ~result) `(zero? ~result))
@@ -29,6 +29,11 @@
 (defchecked read-value "gqt_read_value" [:uint64 :string] :string)
 (defchecked reset-native "gqt_reset_property" [:uint64 :string] :int)
 (defchecked local-path-native "gqt_local_path" [:string] :string)
+(defchecked invoke-native "gqt_invoke" [:uint64 :pointer :pointer] :string :blocking)
+(defchecked subscribe-native "gqt_subscribe" [:uint64 :uint64 :string :int] :uint64)
+(defchecked disconnect-native "gqt_disconnect" [:uint64] :int)
+(defchecked write-controlled "gqt_write_controlled" [:uint64 :string :string] :int)
+(ffi/defcfn subscription-count "gqt_subscription_count" [] :int)
 (defn- property-args! [handle property]
   (when-not (and (integer? handle) (<= 1 handle 18446744073709551615N))
     (throw (ex-info "Invalid Qt object handle." {:handle handle})))
@@ -41,6 +46,23 @@
 (defn read-property [handle property]
   (property-args! handle property)
   (value/decode (read-value handle property)))
+(defn set-controlled-property! [handle property v]
+  (property-args! handle property)
+  (write-controlled handle property (value/encode v)))
+(defn invoke! [handle signature args]
+  (property-args! handle signature)
+  (when-not (vector? args) (throw (ex-info "Qt method arguments must be a vector." {})))
+  ;; Blocking calls must not retain movable managed string storage during GC.
+  (ffi/with-c-string [method-name signature]
+    (ffi/with-c-string [arguments (value/encode args)]
+      (value/decode (invoke-native handle method-name arguments)))))
+(defn subscribe [owner target name property?]
+  (property-args! owner name)
+  (property-args! target name)
+  (subscribe-native owner target name (if property? 1 0)))
+(defn disconnect [token]
+  (property-args! token "subscription")
+  (disconnect-native token))
 (defn reset-property!
   "With no default, invokes Qt RESET or throws if unsupported. With a default,
   performs a checked write. Does not reconstruct arbitrary removed QML bindings."

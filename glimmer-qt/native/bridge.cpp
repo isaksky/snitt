@@ -40,6 +40,11 @@ static Handle freshHandle() {
 static std::mutex postMutex;
 static QSet<Handle> liveOwners;
 static void cancelOwner(Handle owner);
+static void cancelSubscriptions(Handle owner);
+static void stopSubscriptions();
+// Worker signal capture consults identities only under postMutex.
+static QHash<QObject *, Handle> referenceIds;
+static thread_local QSet<Handle> controlledWrites;
 
 class Relay : public QObject {
     Q_OBJECT
@@ -48,6 +53,7 @@ public:
     int callbackDepth = 0;
     QHash<Handle, QPointer<QObject>> objects;
     QHash<QObject *, Handle> identities;
+    QSet<Handle> disposable;
     // Preserve identities of references written through the managed boundary,
     // even if a raw QObject* in a QVariant survives deletion/address reuse.
     QHash<Handle, QHash<QString, QHash<QObject *, Handle>>> valueReferences;
@@ -59,18 +65,21 @@ public:
             --callbackDepth;
         }
     }
-    Handle track(QObject *object) {
+    Handle track(QObject *object, bool canDispose = true) {
         const Handle id = freshHandle();
         objects.insert(id, object);
         identities.insert(object, id);
+        if (canDispose) disposable.insert(id);
         ++ownedObjects;
-        { std::lock_guard<std::mutex> lock(postMutex); liveOwners.insert(id); }
+        { std::lock_guard<std::mutex> lock(postMutex); liveOwners.insert(id); referenceIds.insert(object, id); }
         connect(object, &QObject::destroyed, this, [this, object, id] {
+            { std::lock_guard<std::mutex> lock(postMutex); referenceIds.remove(object); }
             --ownedObjects;
             cancelOwner(id);
             if (objects.remove(id)) {
                 identities.remove(object);
                 valueReferences.remove(id);
+                disposable.remove(id);
                 notify(id, "destroyed");
             }
         });
@@ -86,14 +95,16 @@ public:
         }
         for (Handle id : removed) {
             cancelOwner(id);
+            { std::lock_guard<std::mutex> lock(postMutex); referenceIds.remove(objects.value(id)); }
             identities.remove(objects.take(id));
             valueReferences.remove(id);
+            disposable.remove(id);
         }
         for (Handle id : removed) notify(id, "destroyed");
     }
     Q_INVOKABLE void dispatch(QObject *widget, const QString &event, const QString &value) {
         const Handle id = identities.value(widget);
-        if (!id) return; // An event queued by a removed control is inert.
+        if (!id || controlledWrites.contains(id)) return;
         const auto eventBytes = event.toUtf8();
         const auto valueBytes = value.toUtf8();
         notify(id, eventBytes.constData(), valueBytes.constData());
@@ -167,6 +178,7 @@ static void cancelOwner(Handle owner) {
             } else ++it;
         }
     }
+    cancelSubscriptions(owner);
     for (Handle token : canceled) relay->notify(token, "work-canceled");
 }
 static void stopJobs(Session *s) {
@@ -177,6 +189,7 @@ static void stopJobs(Session *s) {
         for (const auto &job : s->jobs) retireJob(&s->relay, job);
         s->jobs.clear();
     }
+    stopSubscriptions();
     s->relay.notify(0, "shutdown");
 }
 static int enqueueJob(Session *s, const std::shared_ptr<Job> &job) {
@@ -226,6 +239,9 @@ static QObject *objectFor(Handle id) {
     if (!guiThread()) return nullptr;
     QObject *object = active ? active->relay.objects.value(id).data() : nullptr;
     if (!object) fail("Invalid or disposed Qt object handle");
+    else if (object->thread() != QCoreApplication::instance()->thread()) {
+        fail("Qt objects require GUI affinity"); return nullptr;
+    }
     return object;
 }
 static QQuickItem *itemFor(Handle id) {
@@ -281,6 +297,7 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
     return 1;
 }
 #include "values.h"
+#include "objects.h"
 struct Factory { GqtFactory create; GqtComplete complete; };
 static QHash<QString, Factory> factories;
 extern "C" Q_DECL_EXPORT int gqt_register_factory(const char *name, GqtFactory factory, GqtComplete complete) {
@@ -312,6 +329,7 @@ extern "C" Q_DECL_EXPORT Handle gqt_create_registered(Handle id, const char *sou
         }
         if (!object) Values::reject("Qt component/factory returned no object");
         if (object->parent()) Values::reject("Qt factory must return an unparented object");
+        if (object->thread() != QCoreApplication::instance()->thread()) Values::reject("Qt factory requires GUI affinity");
         auto map = Values::parse(wire);
         if (map[0].toString() != "map") Values::reject("Initial properties must be a map");
         QVariantMap props;
@@ -372,14 +390,15 @@ extern "C" Q_DECL_EXPORT Handle gqt_child_target(Handle id, const char *property
     auto *target = QQmlProperty::read(object, QString::fromUtf8(property)).value<QObject *>();
     bool owned = false;
     for (auto *p = target; p; p = p->parent()) if (p == object) owned = true;
-    if (!owned || !qobject_cast<QQuickItem *>(target)) { fail("Child target must be an owned QQuickItem"); return 0; }
+    if (!owned) { fail("Child target must be an owned QObject"); return 0; }
     auto handle = active->relay.identities.value(target);
-    return handle ? handle : active->relay.track(target);
+    return handle ? handle : active->relay.track(target, false);
 }
 extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
     auto *parent = objectFor(parentId);
     auto *child = objectFor(childId);
     if (!parent || !child) return 0;
+    if (!active->relay.disposable.contains(childId)) return fail("Cannot reparent a borrowed Qt object");
     if (!qobject_cast<QQuickItem *>(child)) {
         for (auto *p = parent; p; p = p->parent()) if (p == child) return fail("Qt ownership cycle");
         if (child->parent() != &active->engine) return fail("Qt child already has a parent");
@@ -418,6 +437,7 @@ extern "C" Q_DECL_EXPORT int gqt_remove(Handle id) {
     auto *child = objectFor(id);
     if (!child) return 0;
     if (id == active->container) return fail("Cannot remove the session mount point");
+    if (!active->relay.disposable.contains(id)) return fail("Cannot remove a borrowed Qt object");
     active->relay.invalidate(child);
     if (auto *item = qobject_cast<QQuickItem *>(child)) item->setParentItem(nullptr);
     child->setParent(&active->engine);
@@ -432,6 +452,7 @@ extern "C" Q_DECL_EXPORT Handle gqt_owner(Handle sessionId) {
 extern "C" Q_DECL_EXPORT int gqt_destroy_owner(Handle owner) {
     auto *object = objectFor(owner);
     if (!object) return 0;
+    if (!active->relay.disposable.contains(owner)) return fail("Cannot destroy a borrowed Qt object");
     if (object->metaObject() != &QObject::staticMetaObject)
         return fail("Use widget disposal for a widget owner");
     active->relay.invalidate(object);
@@ -541,12 +562,19 @@ extern "C" Q_DECL_EXPORT int gqt_request_close(Handle id) {
 extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
     auto *object = objectFor(id);
     if (!object) return 0;
+    if (!active->relay.disposable.contains(id)) return fail("Cannot destroy a borrowed Qt object");
     object->deleteLater();
     return 1;
 }
 #include "bridge.moc"
 #ifdef GQT_PROPERTY_TESTS
 #include "../test/native/value_fixture.h"
+#include "../test/native/object_fixture.h"
+extern "C" Q_DECL_EXPORT int gqt_register_object_fixture() {
+    return gqt_register_factory("test.object", []() -> QObject * { return new ObjectFixture; }, nullptr);
+}
+extern "C" Q_DECL_EXPORT int gqt_test_awaiting_gc() { return ObjectFixture::awaitingGc; }
+extern "C" Q_DECL_EXPORT void gqt_test_gc_completed() { ObjectFixture::collected = true; }
 extern "C" Q_DECL_EXPORT Handle gqt_value_fixture(Handle id) {
     auto *s = sessionFor(id);
     return s ? s->relay.track(new ValueFixture(&s->engine)) : 0;

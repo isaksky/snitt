@@ -108,7 +108,7 @@ static QVariant decode(const QJsonValue &node, int depth = 0, References *refere
     return {};
 }
 static QJsonArray node(const char *tag, const QJsonValue &v) { return {QString::fromLatin1(tag), v}; }
-static QJsonArray encode(const QVariant &v, int depth = 0, const References &references = {}) {
+static QJsonArray encode(const QVariant &v, int depth = 0, const References &references = {}, bool strictReferences = false) {
     if (depth > 64) reject("Qt value nesting exceeds 64");
     if (!v.isValid()) return node("nil", "");
     const int type = v.metaType().id();
@@ -121,7 +121,7 @@ static QJsonArray encode(const QVariant &v, int depth = 0, const References &ref
         if (!object) return node("nil", "");
         Handle id = active->relay.identities.value(object);
         if (!id || active->relay.objects.value(id).data() != object ||
-            (references.contains(object) && references.value(object) != id))
+            ((strictReferences || references.contains(object)) && references.value(object) != id))
             reject("Unmanaged or disposed Qt object reference");
         return node("object", QString::number(id));
     }
@@ -148,13 +148,13 @@ static QJsonArray encode(const QVariant &v, int depth = 0, const References &ref
     case QMetaType::QRectF: { auto p = v.toRectF(); return node("rect-f", QJsonArray{QString::number(p.x(), 'g', 17), QString::number(p.y(), 'g', 17), QString::number(p.width(), 'g', 17), QString::number(p.height(), 'g', 17)}); }
     case QMetaType::QStringList: case QMetaType::QVariantList: {
         QJsonArray result;
-        for (const auto &x : v.toList()) result.append(encode(x, depth + 1, references));
+        for (const auto &x : v.toList()) result.append(encode(x, depth + 1, references, strictReferences));
         return node("list", result);
     }
     case QMetaType::QVariantMap: {
         QJsonArray result;
         const auto map = v.toMap();
-        for (auto i = map.cbegin(); i != map.cend(); ++i) result.append(QJsonArray{i.key(), encode(i.value(), depth + 1, references)});
+        for (auto i = map.cbegin(); i != map.cend(); ++i) result.append(QJsonArray{i.key(), encode(i.value(), depth + 1, references, strictReferences)});
         return node("map", result);
     }
     default: reject("Unsupported Qt property return type");
@@ -174,28 +174,7 @@ static QQmlProperty property(QObject *object, const char *name) {
     if (!prop.isValid() || !prop.isProperty()) reject("Missing Qt property");
     return prop;
 }
-static QVariant checked(const QQmlProperty &prop, const QJsonArray &wire, References &references) {
-    if (!prop.isWritable()) reject("Read-only Qt property");
-    auto meta = prop.property();
-    if (meta.isEnumType()) {
-        auto e = meta.enumerator();
-        auto tag = text(wire[0]);
-        if (tag != (e.isFlag() ? "flags" : "enum")) reject("Qt enum/flags requires symbolic keys");
-        auto keys = array(wire[1]);
-        if (!e.isFlag() && keys.size() != 1) reject("Qt enum requires one key");
-        int value = 0;
-        for (const auto &key : keys) {
-            bool ok;
-            auto bytes = text(key).toUtf8();
-            if (bytes.contains('\0')) reject("Invalid Qt enum/flag key");
-            int part = e.keyToValue(bytes.constData(), &ok);
-            if (!ok) reject("Invalid Qt enum/flag key");
-            value |= part;
-        }
-        return value;
-    }
-    QVariant v = decode(wire, 0, &references);
-    auto target = QMetaType(prop.propertyType());
+static QVariant converted(QVariant v, QMetaType target) {
     if (target.id() == QMetaType::QVariant) return v;
     if (target.flags().testFlag(QMetaType::PointerToQObject)) {
         if (!v.isValid()) return QVariant(target, nullptr);
@@ -228,6 +207,28 @@ static QVariant checked(const QQmlProperty &prop, const QJsonArray &wire, Refere
     }
     reject("Wrong Qt property value type or numeric range");
     return {};
+}
+static QVariant checked(const QQmlProperty &prop, const QJsonArray &wire, References &references) {
+    if (!prop.isWritable()) reject("Read-only Qt property");
+    auto meta = prop.property();
+    if (meta.isEnumType()) {
+        auto e = meta.enumerator();
+        auto tag = text(wire[0]);
+        if (tag != (e.isFlag() ? "flags" : "enum")) reject("Qt enum/flags requires symbolic keys");
+        auto keys = array(wire[1]);
+        if (!e.isFlag() && keys.size() != 1) reject("Qt enum requires one key");
+        int value = 0;
+        for (const auto &key : keys) {
+            bool ok;
+            auto bytes = text(key).toUtf8();
+            if (bytes.contains('\0')) reject("Invalid Qt enum/flag key");
+            int part = e.keyToValue(bytes.constData(), &ok);
+            if (!ok) reject("Invalid Qt enum/flag key");
+            value |= part;
+        }
+        return value;
+    }
+    return converted(decode(wire, 0, &references), QMetaType(prop.propertyType()));
 }
 // QVariant equality permits cross-type numeric/string conversion, including
 // inside containers. Equal-write suppression must preserve the type as well.

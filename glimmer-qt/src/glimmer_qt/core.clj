@@ -5,6 +5,7 @@
             [glimmer.backend :as b]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.widget :as w]
+            [glimmer-qt.object :as object]
             [jolt.ffi :as ffi]
             [jolt.host :as host]))
 
@@ -95,6 +96,7 @@
 
 (defn- dispatch! [widget event value]
   (case event
+    ("signal" "signal-error" "subscription-ended") (object/dispatch! widget event value)
     "shutdown" (locking jobs (reset! jobs {:session nil :work {}}))
     "work-canceled" (locking jobs (swap! jobs update :work dissoc widget))
     "work" (let [[generation elapsed] (str/split value #",")
@@ -157,7 +159,7 @@
             (abandon!)
             (q/close session)
             (when @callback (ffi/free-callable @callback))
-            (try (w/clear!) (finally (reset! b/loop-running? false)))))))))
+            (try (w/clear!) (finally (object/clear!) (reset! b/loop-running? false)))))))))
 
 (def backend
   {:name :qt-quick

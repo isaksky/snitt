@@ -47,7 +47,7 @@
              (throws! (fn [] (w/create! :hello/spinner {})) #"Missing required")
              (throws! (fn [] (w/create! :hello/spinner {:angle 1 :typo true})) #"Unsupported")
              (let [before (q/live-count)]
-               (throws! (fn [] (w/create! :hello/bad-slot {})) #"owned QQuickItem")
+               (throws! (fn [] (w/create! :hello/bad-slot {})) #"owned QObject")
                (check! (= before (q/live-count)) "Failed composition target releases created object")
                (throws! (fn [] (q/create-registered @w/session ext/spinner-source (v/encode {}) "relay"))
                         #"(?s)qrc:/hello/Spinner.qml:.*Required property angle")
