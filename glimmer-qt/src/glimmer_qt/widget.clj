@@ -46,7 +46,7 @@
                   (#{:string :number :bool :color :value} (second entry)))
       (throw (ex-info "Invalid Qt property schema." {:property key}))))
   (doseq [[key arity] events]
-    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions} key))
+    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :close-request :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions} key))
                    (#{:none :string} arity) (not (contains? props key)))
       (throw (ex-info "Invalid Qt event schema." {:event key}))))
   (when-not (every? #(contains? props %) required)
@@ -161,6 +161,11 @@
   (swap! widgets assoc widget {:tag :window :children [] :parent nil :target widget})
   widget)
 
+(defn forget-window!
+  "Release managed mount-point bookkeeping before native window disposal."
+  [widget]
+  (forget-tree! widget))
+
 (defn- check-container! [tag parent]
   (tagged-widget tag parent)
   (when-not (:target (live-widget parent))
@@ -230,9 +235,21 @@
         nil))))
 
 (defn find-by-id
-  "Find a live opaque handle on the GUI thread. It becomes invalid at disposal."
-  [id]
-  (some (fn [[widget data]] (when (= id (get-in data [:props :id])) widget)) @widgets))
+  "Find a live handle, optionally scoped to a window's mount point. With no
+  scope, duplicate IDs are rejected rather than returning another editor's object."
+  ([id] (find-by-id nil id))
+  ([container id]
+   (let [within? (fn [widget]
+                   (or (nil? container)
+                       (loop [current widget]
+                         (cond (= current container) true
+                               (nil? current) false
+                               :else (recur (:parent (get @widgets current)))))))
+         matches (keep (fn [[widget data]]
+                         (when (and (= id (get-in data [:props :id])) (within? widget)) widget))
+                       @widgets)]
+     (when (next matches) (throw (ex-info "Ambiguous Qt object ID; specify a window." {:id id})))
+     (first matches))))
 
 (defn live-count [] (count @widgets))
 

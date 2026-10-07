@@ -1,10 +1,64 @@
 # Glimmer Qt lifetimes
 
 This Jolt backend supports `:vbox`, `:hbox`, `:label`, `:entry`, and `:button`.
-`glimmer.core/run` owns one session/window at a time. `glimmer.core/reload!`
-remounts the current root inside that window. A session can be run again after
-normal closure or an exception. The hello-world entry point is
+`glimmer.core/run` starts an application with one initial window, and
+`glimmer.core/reload!` remounts that initial root. Closing the final window exits
+this convenience runner by default; pass `:keep-alive true` for background use.
+An application can be run again after normal closure or an exception. The hello-world entry point is
 `./experiment/run`; `./experiment/run --smoke-test` remains available.
+
+## Independent windows and background applications
+
+`glimmer-qt.core/run-application!` takes a startup function and keyword options
+`:app-id`, `:on-ready`, `:auto-quit-ms`, and `:keep-alive` (default true). Startup
+runs on the GUI thread and can create zero or more windows and retained services.
+The one Qt event loop runs until `quit!`; with `:keep-alive false`, accepting the
+last editor close also quits. Hiding a window never quits the runtime.
+
+```clojure
+(qt/run-application!
+  (fn []
+    (let [editor (qt/open-window! editor-root :title "Editor")
+          review (qt/open-window! review-root :title "Review" :visible false)]
+      (qt/activate! editor)
+      (qt/later! 1000 #(qt/show! review)))))
+```
+
+`open-window!` returns an opaque window handle. Each root has independent
+subscriptions, callbacks, and reload state. `reload-window!` takes that handle
+and an optional replacement root function. It uses Glimmer's public `mount`,
+`unmount!`, and `abandon!` contract; no private reconciler state is inspected.
+`find-by-id` in `glimmer-qt.core` takes `[window id]`. The widget namespace also
+accepts `[mount-point id]`; its original unscoped arity rejects duplicate IDs.
+
+Window commands are `show!`, `hide!`, `minimize!`, `restore!`, `raise!`, and
+`request-activate!`. `activate!` combines show, minimized restoration, raise,
+and an activation request (the desktop window manager controls focus).
+`window-container`, `window-alive?`, and `window-count` expose lifetime state.
+Window mutation and lookup require the GUI thread; use `later!` from workers.
+
+`:on-close (fn [window] ...)` is optional. Returning exactly `true` accepts the
+request; any other result rejects/defers it. Without a callback, closure is
+accepted. Native close events are consumed, and policy delivery is queued after
+the event returns; pending duplicate requests coalesce. `request-close!` uses
+that same event path, including hidden windows. Call `close-window!` to accept
+later without invoking policy again. It is idempotent and queues destruction,
+so even calls from control callbacks leave the native sender alive until return.
+Logical invalidation cancels window-owned jobs; physical deletion is deferred.
+Closing or reloading one root does not change other roots or retained services.
+
+A window handle can own `later!`/`every!` jobs: they survive its root reload and
+cancel at window disposal. Widget-owned jobs cancel with their widget subtree.
+Unowned jobs and standalone services live until explicit removal or final quit.
+`quit!` stops scheduling and leaves the event loop; the runner then unmounts all
+roots and destroys native objects before returning. Callback errors abandon all
+root subscriptions, perform the same cleanup, and rethrow outside C++.
+
+Native factories may return an unparented QWidget for a retained service. Create
+it with `widget/create!` during startup/callbacks, use the checked QObject API,
+and release it with `widget/dispose!` or final quit. QWidget services are retained
+explicitly without a QObject engine parent and cannot be children in a Qt Quick
+composition. Their native QWidget descendants retain normal Qt ownership.
 
 ## Explicit Glimmer contract extension
 
@@ -28,6 +82,11 @@ three callbacks. Their return values are unspecified:
 Legacy `:run` backends retain their existing mount callback contract. The core
 also detaches their subscriptions when `run` returns, but such backends need the
 explicit seam to unmount native objects before destroying their containers.
+The public `glimmer.core/abandon!` operation takes an instance returned by
+`mount`, immediately detaches subscriptions without native calls, and clears
+that instance. It is idempotent. This explicit portable extension supports
+independent backend-owned roots; their owner must release the native arena.
+
 `:dispose!` is the optional backend operation to release a just-created widget
 whose attachment failed.
 
@@ -47,8 +106,9 @@ remain with the application.
 There is one process-owned `QApplication`, created on the main thread. It remains
 available across sessions. It is reclaimed by the OS at process exit: Jolt may
 exit from a worker, where a static C++ QApplication destructor is unsafe.
-Each session explicitly owns a relay, QML engine, window, and every created
-control, including unattached controls. They are destroyed before `run` returns.
+Each application session explicitly owns a relay, QML engine, independent
+windows, retained QWidget services, and every created control, including
+unattached controls. They are destroyed before `run` returns.
 There is no second Qt event loop or application object.
 
 Session and object handles are monotonically allocated `uint64` identities,
@@ -112,7 +172,7 @@ the relay as their Qt context, and no native lock is held across a managed
 callback. Glimmer's existing per-component pending flag coalesces worker ratom
 bursts through this same scheduler; there is no separate reconciler path.
 
-Window/application quit stops admission and cancels all remaining jobs. No job
+Final application quit stops admission and cancels all remaining jobs. No job
 survives into a later session. A scheduled exception follows the handler policy:
 abandon subscriptions, exit, clean up, and rethrow from `run`. One collect-safe
 foreign callable serves all events for a session, including every timer tick;
@@ -129,6 +189,7 @@ export SNITT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6"
 ./glimmer-qt/build-native
 ./glimmer-qt/test-lifecycle
 ./glimmer-qt/test-scheduling
+./glimmer-qt/test-windows
 ./experiment/run --smoke-test
 (cd glimmer-qt/vendor/glimmer && jolt -M:test)
 ```
@@ -145,6 +206,14 @@ Qt deadlines. It covers canceled/installed/restarted timers, owner destruction,
 monotonic elapsed time during a stall, self-cancellation, callback exceptions,
 concurrent worker posts and ratom changes under explicit GC, coalesced renders,
 main-thread delivery, shutdown races, and zero retained jobs/timers after close.
+
+The window runner exercises independent roots with duplicate control IDs,
+per-window reload/close, close rejection and deferred acceptance, background
+lifetime with zero editors, a real retained QWidget, failed creation/reload/close,
+and full cleanup on quit. QtTest sends mouse and keyboard events through the
+window for hit testing and focus routing. Run `QT_QPA_PLATFORM=cocoa ./glimmer-qt/test-windows` with desktop access to additionally verify activation
+and minimized restoration on macOS. Offscreen execution cannot prove desktop
+activation. Windows execution is deferred for this change.
 
 On Windows, build `native/bridge.pro` with UCRT64 `qmake6` and
 `mingw32-make` from `glimmer-qt/build`, put that Qt SDK's `bin` on `PATH`, set

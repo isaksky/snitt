@@ -448,6 +448,15 @@
   (try (destroy-inst! root-inst-atom container-widget container-tag)
        (finally (reset! root-inst-atom nil))))
 
+(defn abandon!
+  "Detach a mounted root's subscriptions without touching native widgets.
+  The owner must release its native arena afterward. Idempotent; for backends
+  managing independent roots when native destruction or a callback fails."
+  [root-inst-atom]
+  (dispose-tree! root-inst-atom)
+  (reset! root-inst-atom nil)
+  nil)
+
 (defn run
   "Run a root with the installed backend. Lifecycle-aware backends receive
   explicit :mount!, :unmount! and :abandon! callbacks via :run-lifecycle.

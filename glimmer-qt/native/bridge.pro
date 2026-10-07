@@ -10,6 +10,7 @@ SOURCES += bridge.cpp
 RESOURCES += resources.qrc
 HEADERS += values.h objects.h extensions.h
 contains(CONFIG, property_tests) {
+    QT += testlib
     DEFINES += GQT_PROPERTY_TESTS
     HEADERS += ../test/native/value_fixture.h ../test/native/object_fixture.h
 }

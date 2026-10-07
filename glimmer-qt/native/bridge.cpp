@@ -1,6 +1,7 @@
 #include <QApplication>
 #include "extensions.h"
 #include <QElapsedTimer>
+#include <QCloseEvent>
 #include <QSet>
 #include <QImage>
 #include <QPointer>
@@ -12,6 +13,7 @@
 #include <QQuickWindow>
 #include <QThread>
 #include <QTimer>
+#include <QWidget>
 #include <QDebug>
 #include <cstdint>
 #include <limits>
@@ -131,14 +133,24 @@ struct Job {
     QTimer *timer = nullptr; // GUI thread only
     QElapsedTimer elapsed;
 };
+struct WidgetServices : QList<QPointer<QWidget>> {
+    ~WidgetServices() {
+        while (!isEmpty()) delete takeLast().data();
+    }
+};
 struct Session {
     Handle id = freshHandle();
     bool accepting = true; // under postMutex; outlives QObject destruction callbacks
     QHash<Handle, std::shared_ptr<Job>> jobs; // under postMutex
     Relay relay;
+    // QWidget::parentWidget() assumes every QObject parent is a QWidget. Retain
+    // standalone services explicitly, never parent them to the QML engine.
+    // Declared before engine so services outlive its windows during teardown.
+    WidgetServices widgetServices;
     QQmlEngine engine;
     QPointer<QQuickWindow> window;
     Handle container = 0;
+    QHash<Handle, Handle> windows; // window -> mount point
     bool exitRequested = false;
     bool executing = false;
     int exitCode = 0;
@@ -251,9 +263,30 @@ static QQuickItem *itemFor(Handle id) {
 }
 
 extern "C" Q_DECL_EXPORT const char *gqt_error() { return error.constData(); }
-extern "C" Q_DECL_EXPORT Handle gqt_open(const char *title, int width, int height, const char *appId) {
-    // Qt does not know its main thread until the first application is created.
-    // The managed entry point uses host/call-on-main-thread on every platform.
+// Consume the native close event first. Managed policy runs on a later turn,
+// never on QWindow's close-event stack, and duplicate pending requests coalesce.
+class CloseFilter : public QObject {
+public:
+    Session *session;
+    Handle window;
+    bool pending = false;
+    CloseFilter(Session *s, Handle id, QObject *parent)
+        : QObject(parent), session(s), window(id) {}
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() != QEvent::Close) return false;
+        static_cast<QCloseEvent *>(event)->ignore();
+        if (!pending) {
+            pending = true;
+            QTimer::singleShot(0, this, [this] {
+                pending = false;
+                if (session->accepting && session->windows.contains(window))
+                    session->relay.notify(window, "close-request");
+            });
+        }
+        return true;
+    }
+};
+extern "C" Q_DECL_EXPORT Handle gqt_open_application(const char *appId) {
 #ifdef Q_OS_MACOS
     if (!pthread_main_np()) { fail("Qt session must open on the main thread"); return 0; }
 #endif
@@ -266,25 +299,88 @@ extern "C" Q_DECL_EXPORT Handle gqt_open(const char *title, int width, int heigh
         QQuickStyle::setStyle("Material");
         application = new Application;
     }
-    auto session = std::make_unique<Session>();
+    application->app.setQuitOnLastWindowClosed(false);
     application->app.setApplicationName(QString::fromUtf8(appId));
-    session->window = qobject_cast<QQuickWindow *>(session->create("window"));
-    if (!session->window) return 0;
-    session->relay.track(session->window);
-    auto *container = session->window->property("mountPoint").value<QObject *>();
-    if (!container) { fail("Qt window has no mount point"); return 0; }
-    session->container = session->relay.track(container);
-    session->window->setTitle(QString::fromUtf8(title));
-    session->window->resize(width, height);
+    auto session = std::make_unique<Session>();
     auto *s = session.get();
-    QObject::connect(session->window, &QObject::destroyed, &session->relay, [s] {
-        stopJobs(s); QCoreApplication::exit(1);
-    });
     QObject::connect(&application->app, &QCoreApplication::aboutToQuit, &session->relay, [s] { stopJobs(s); });
-    QObject::connect(&application->app, &QGuiApplication::lastWindowClosed, &session->relay, [s] { stopJobs(s); });
     std::lock_guard<std::mutex> lock(postMutex);
     active = session.release();
     return active->id;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_window_create(Handle id, const char *title, int width, int height) {
+    auto *s = sessionFor(id);
+    if (!s) return 0;
+    if (!s->accepting) { fail("Qt application is shutting down"); return 0; }
+    auto *window = qobject_cast<QQuickWindow *>(s->create("window"));
+    if (!window) return 0;
+    auto *container = window->property("mountPoint").value<QObject *>();
+    if (!container) { delete window; fail("Qt window has no mount point"); return 0; }
+    Handle handle = s->relay.track(window, false);
+    Handle mount = s->relay.track(container);
+    s->windows.insert(handle, mount);
+    if (!s->container) { s->window = window; s->container = mount; }
+    window->installEventFilter(new CloseFilter(s, handle, window));
+    window->setTitle(QString::fromUtf8(title));
+    window->resize(width, height);
+    return handle;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_window_container(Handle id) {
+    if (!objectFor(id) || !active->windows.contains(id)) { fail("Invalid Qt window handle"); return 0; }
+    return active->windows.value(id);
+}
+static QQuickWindow *windowFor(Handle id) {
+    auto *window = qobject_cast<QQuickWindow *>(objectFor(id));
+    if (!window || !active->windows.contains(id)) { fail("Invalid or disposed Qt window handle"); return nullptr; }
+    return window;
+}
+extern "C" Q_DECL_EXPORT int gqt_window_action(Handle id, int action) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    switch (action) {
+    case 0: window->show(); break;
+    case 1: window->hide(); break;
+    case 2: window->showMinimized(); break;
+    case 3: window->showNormal(); break;
+    case 4:
+        if (window->windowState() == Qt::WindowMinimized) window->showNormal();
+        window->show(); window->raise(); window->requestActivate(); break;
+    case 5: window->raise(); break;
+    case 6: window->requestActivate(); break;
+    case 7: {
+        // sendEvent also handles hidden windows; QWindow::close may skip those.
+        QCloseEvent event;
+        QCoreApplication::sendEvent(window, &event);
+        break;
+    }
+    default: return fail("Invalid Qt window action");
+    }
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_window_destroy(Handle id) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    active->windows.remove(id);
+    active->relay.invalidate(window);
+    window->hide();
+    window->deleteLater();
+    return 1;
+}
+// Preserve the original low-level single-window entry point.
+extern "C" Q_DECL_EXPORT Handle gqt_open(const char *title, int width, int height, const char *appId) {
+    Handle id = gqt_open_application(appId);
+    if (!id) return 0;
+    Handle window = gqt_window_create(id, title, width, height);
+    if (!window) {
+        auto *s = active;
+        { std::lock_guard<std::mutex> lock(postMutex); active = nullptr; }
+        delete s;
+        return 0;
+    }
+    active->window = windowFor(window);
+    active->container = active->windows.value(window);
+    active->window->show();
+    return id;
 }
 extern "C" Q_DECL_EXPORT Handle gqt_container(Handle id) {
     auto *s = sessionFor(id);
@@ -370,7 +466,13 @@ extern "C" Q_DECL_EXPORT Handle gqt_create_registered(Handle id, const char *sou
             if (factory.complete) factory.complete(object.get());
         }
         QQmlEngine::setObjectOwnership(object.get(), QQmlEngine::CppOwnership);
-        object->setParent(&s->engine);
+        if (auto *widget = qobject_cast<QWidget *>(object.get())) {
+            s->widgetServices.append(widget);
+            QObject::connect(widget, &QObject::destroyed, &s->relay, [s] {
+                s->widgetServices.removeIf([](const auto &entry) { return entry.isNull(); });
+            });
+        } else
+            object->setParent(&s->engine);
         Handle handle = s->relay.track(object.release());
         s->relay.valueReferences.insert(handle, refs);
         return handle;
@@ -398,6 +500,8 @@ extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
     auto *parent = objectFor(parentId);
     auto *child = objectFor(childId);
     if (!parent || !child) return 0;
+    if (parent->isWidgetType() || child->isWidgetType())
+        return fail("QWidget services cannot be composed into a Qt Quick tree");
     if (!active->relay.disposable.contains(childId)) return fail("Cannot reparent a borrowed Qt object");
     if (!qobject_cast<QQuickItem *>(child)) {
         for (auto *p = parent; p; p = p->parent()) if (p == child) return fail("Qt ownership cycle");
@@ -440,7 +544,7 @@ extern "C" Q_DECL_EXPORT int gqt_remove(Handle id) {
     if (!active->relay.disposable.contains(id)) return fail("Cannot remove a borrowed Qt object");
     active->relay.invalidate(child);
     if (auto *item = qobject_cast<QQuickItem *>(child)) item->setParentItem(nullptr);
-    child->setParent(&active->engine);
+    if (!child->isWidgetType()) child->setParent(&active->engine);
     // May be inside this control's signal delivery. Invalidate now, delete later.
     child->deleteLater();
     return 1;
@@ -504,8 +608,6 @@ extern "C" Q_DECL_EXPORT int gqt_exec(Handle id) {
     if (!s) return -1;
     if (s->executing) { fail("Qt event loop is already running"); return -1; }
     if (s->exitRequested) return s->exitCode;
-    if (!s->window) { fail("Qt window was destroyed"); return -1; }
-    s->window->show();
     s->executing = true;
     const int code = application->app.exec();
     s->executing = false;
@@ -557,7 +659,7 @@ extern "C" Q_DECL_EXPORT int gqt_save_window(Handle id, const char *path) {
 }
 extern "C" Q_DECL_EXPORT int gqt_request_close(Handle id) {
     auto *s = sessionFor(id);
-    return s && s->window && s->window->close();
+    return s && s->window ? gqt_window_action(s->relay.identities.value(s->window), 7) : 0;
 }
 extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
     auto *object = objectFor(id);
@@ -568,10 +670,30 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
 }
 #include "bridge.moc"
 #ifdef GQT_PROPERTY_TESTS
+#include <QTest>
 #include "../test/native/value_fixture.h"
 #include "../test/native/object_fixture.h"
 extern "C" Q_DECL_EXPORT int gqt_register_object_fixture() {
     return gqt_register_factory("test.object", []() -> QObject * { return new ObjectFixture; }, nullptr);
+}
+extern "C" Q_DECL_EXPORT int gqt_register_window_fixture() {
+    return gqt_register_factory("test.widget", []() -> QObject * {
+        if (!qobject_cast<QApplication *>(QCoreApplication::instance())) return nullptr;
+        return new QWidget;
+    }, nullptr);
+}
+extern "C" Q_DECL_EXPORT int gqt_test_click(Handle id) {
+    auto *item = itemFor(id);
+    if (!item || !item->window()) return 0;
+    QTest::mouseClick(item->window(), Qt::LeftButton, Qt::NoModifier,
+                     item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint());
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_space(Handle id) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    QTest::keyClick(window, Qt::Key_Space);
+    return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_test_awaiting_gc() { return ObjectFixture::awaitingGc; }
 extern "C" Q_DECL_EXPORT void gqt_test_gc_completed() { ObjectFixture::collected = true; }

@@ -181,8 +181,16 @@
                                    (qt/later! 60000 #(swap! calls inc)))
                                  :finished))))
                 (deliver released true)
-                (if (= mode :quit) (qt/quit!) (q/request-close @w/session))
-                (check! (nil? (qt/later! 0 #(swap! calls inc))) "Shutdown closes admission immediately")))
+                (if (= mode :quit)
+                  (do (qt/quit!)
+                      (check! (nil? (qt/later! 0 #(swap! calls inc)))
+                              "Explicit shutdown closes admission immediately"))
+                  (do (q/request-close @w/session)
+                      ;; Window close policy runs on a later event-loop turn and
+                      ;; may reject/defer closure; it cannot stop admission yet.
+                      (check! (integer? (qt/later! 60000 #(swap! calls inc)))
+                              "Pending window close preserves application admission")))))
+      (check! (nil? (qt/later! 0 #(swap! calls inc))) "Accepted final close stops admission")
       (doseq [worker @workers]
         (check! (= :finished (deref worker 4000 :timeout)) "Posting workers finish across shutdown"))
       (clean-scheduler!)

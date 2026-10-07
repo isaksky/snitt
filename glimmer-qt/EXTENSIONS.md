@@ -53,7 +53,9 @@ name with `gqt_register_factory(name, create, complete)`, then use
 zero with `gqt_error()` on failure. The example registers during the first root
 render, before its native elements are created.
 
-`create` returns a fresh, unparented QObject or QQuickItem. The bridge owns it,
+`create` returns a fresh, unparented QObject, QQuickItem, or standalone QWidget.
+QWidget services are retained explicitly until disposal or application quit;
+they cannot be composed as children in a Qt Quick tree. The bridge owns it,
 writes schema properties, then calls the optional `complete(QObject*)` hook.
 Hooks must not throw, destroy the object, or enter a nested event loop. They can
 initialize native services after required values are available. Factories remain

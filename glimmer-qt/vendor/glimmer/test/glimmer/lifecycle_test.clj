@@ -107,3 +107,17 @@
         (finally
           (deliver release true)
           (doseq [run runs] @run))))))
+
+(deftest abandon-detaches-only-the-selected-independent-root
+  (let [cell (r/atom 0) a (mock/widget :window {}) b (mock/widget :window {})
+        root (fn [] [:label {:label @cell}])
+        root-a (ui/mount a :window [root]) root-b (ui/mount b :window [root])]
+    (is (= 2 (count @(:watches cell))))
+    (ui/abandon! root-a)
+    (ui/abandon! root-a)
+    (is (= 1 (count @(:watches cell))))
+    (reset! cell 1)
+    (is (= 0 (get-in @(first (mock/children a)) [:props :label])))
+    (is (= 1 (get-in @(first (mock/children b)) [:props :label])))
+    (ui/unmount! root-b b :window)
+    (is (empty? @(:watches cell)))))

@@ -21,6 +21,11 @@
            ~result)))))
 
 (defchecked open "gqt_open" [:string :int :int :string] :uint64)
+(defchecked open-application "gqt_open_application" [:string] :uint64)
+(defchecked window-create "gqt_window_create" [:uint64 :string :int :int] :uint64)
+(defchecked window-container "gqt_window_container" [:uint64] :uint64)
+(defchecked window-action "gqt_window_action" [:uint64 :int] :int)
+(defchecked window-destroy "gqt_window_destroy" [:uint64] :int)
 (defchecked container "gqt_container" [:uint64] :uint64)
 (defchecked set-handler "gqt_set_handler" [:uint64 :pointer] :int)
 (defchecked create-registered "gqt_create_registered" [:uint64 :string :string :string] :uint64)
