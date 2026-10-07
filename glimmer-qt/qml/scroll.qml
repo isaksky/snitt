@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Item {
+Geometry {
     id: control
     required property QtObject relay
     property alias content: viewport.contentItem

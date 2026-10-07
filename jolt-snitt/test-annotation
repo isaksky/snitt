@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" "CONFIG+=property_tests" >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+export QT_SCALE_FACTOR=2 JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1
+SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-annotation.XXXXXX")"
+SNITT_JOLT_DATA_DIR="$(cd "$SNITT_JOLT_DATA_DIR" && pwd -P)"
+export SNITT_JOLT_DATA_DIR
+trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+export SNITT_JOLT_IMAGE="$SNITT_JOLT_DATA_DIR/source.png"
+export SNITT_JOLT_CAPTURE_DIR="$ROOT/../build/jolt-snitt"
+python3 "$ROOT/test/image_pixels.py" generate "$SNITT_JOLT_IMAGE"
+cd "$ROOT"
+"${JOLT:-jolt}" -M:annotation

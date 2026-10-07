@@ -76,6 +76,7 @@
           :icon ["iconSource" :string ""]
           :icon-only ["iconOnly" :bool false]
           :mode ["mode" :string "normal"]
+          :mode-color ["modeColor" :color "transparent"]
           :accent ["Material.accent" :color "#91bff0"]
           :theme ["Material.theme" :value (value/enum "Dark")]
           :content-source ["contentSource" :string ""]
@@ -149,13 +150,13 @@
           {:on-status :string :on-loaded :none :on-error :string} :none "relay"]
          [:label (merge common typography accessible text-layout
                         {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
-         [:scroll (merge common
+         [:scroll (merge common geometry
                          {:padding ["padding" :number 0]
                           :content-width ["explicitContentWidth" :number -1]
                           :horizontal-scrollbar ["horizontalPolicy" :string "as-needed"]
                           :vertical-scrollbar ["verticalPolicy" :string "as-needed"]})
           {:on-wheel :pointer} "content" "relay"]
-         [:text-area (merge common typography
+         [:text-area (merge common typography (dissoc accessible :tooltip)
                             {:tab-focus ["activeFocusOnTab" :bool true]
                              :text ["text" :string ""]
                              :padding ["padding" :number 6]
@@ -441,7 +442,7 @@
 
 (defn- placement! [tag child]
   (validate-placement! tag (:props (live-widget child)))
-  (when (#{:item :overlay :rectangle :spacer :pointer-area :image} (:tag (live-widget child)))
+  (when (#{:item :overlay :rectangle :spacer :pointer-area :image :scroll} (:tag (live-widget child)))
     (q/set-property! child "positionManaged" (boolean (#{:window :hbox :vbox :flow} tag)))
     (q/set-property! child "sizeManaged" (boolean (#{:window :hbox :vbox} tag)))))
 

@@ -5,6 +5,8 @@ import QtQuick.Layouts
 TextArea {
     id: control
     required property QtObject relay
+    property string accessibleName: ""
+    Accessible.name: accessibleName
     textFormat: TextEdit.PlainText
     wrapMode: TextEdit.Wrap
     selectByMouse: true

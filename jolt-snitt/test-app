@@ -21,6 +21,7 @@ cd "$ROOT"
 "${JOLT:-jolt}" -M:commands
 "${JOLT:-jolt}" -M:lifecycle
 "${JOLT:-jolt}" -M:test
+SNITT_JOLT_CAPTURE_DIR="$ROOT/../build/jolt-snitt" QT_SCALE_FACTOR=2 "${JOLT:-jolt}" -M:annotation
 python3 "$ROOT/test/image_pixels.py" verify "$(cat "$SNITT_JOLT_SAVED_PATH")"
 python3 "$ROOT/test/image_pixels.py" verify "$SNITT_JOLT_COPIED_PATH"
 python3 "$ROOT/test/image_pixels.py" compare "$(cat "$SNITT_JOLT_SAVED_PATH")" "$SNITT_JOLT_COPIED_PATH"

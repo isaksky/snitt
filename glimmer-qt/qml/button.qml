@@ -12,9 +12,11 @@ Button {
     icon.source: iconSource
     property bool iconOnly: false
     property string mode: "normal"
+    property color modeColor: "transparent"
     property string contentSource: ""
     property string backgroundSource: ""
-    readonly property color actionColor: mode === "good" ? "#a3e6ca" : mode === "bad" ? "#f29a9a" : Material.accent
+    readonly property color actionColor: modeColor.a > 0 ? modeColor
+        : mode === "good" ? "#a3e6ca" : mode === "bad" ? "#f29a9a" : Material.accent
     readonly property color foreground: !enabled ? "#8f99a8" : highlighted ? "#142820" : checked ? actionColor : Material.foreground
     Accessible.name: accessibleName || text
     hoverEnabled: true
