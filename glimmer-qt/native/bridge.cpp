@@ -2,6 +2,8 @@
 #include "extensions.h"
 #include <QElapsedTimer>
 #include <QCloseEvent>
+#include <QKeyEvent>
+#include <QInputMethodEvent>
 #include <QSet>
 #include <QImage>
 #include <QFontMetricsF>
@@ -414,6 +416,53 @@ extern "C" Q_DECL_EXPORT int gqt_pointer_accept(Handle token, int accepted) {
     active->relay.pointerReplies[token] = accepted != 0;
     return 1;
 }
+// Owned by the watched item. Only key events are intercepted; IME preedit and
+// commit events continue untouched to Qt's text control.
+class KeyFilter : public QObject {
+public:
+    bool composing = false;
+    explicit KeyFilter(QQuickItem *item) : QObject(item) { item->installEventFilter(this); }
+    bool eventFilter(QObject *object, QEvent *event) override {
+        if (event->type() == QEvent::InputMethod)
+            composing = !static_cast<QInputMethodEvent *>(event)->preeditString().isEmpty();
+        if (event->type() == QEvent::FocusOut) composing = false;
+        if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease) return false;
+        auto *item = static_cast<QQuickItem *>(object);
+        if (!item->isEnabled() || composing || item->property("inputMethodComposing").toBool()) return false;
+        const char *name = event->type() == QEvent::KeyPress ? "on-key-press" : "on-key-release";
+        if (!item->property(name).toBool()) return false;
+        auto *key = static_cast<QKeyEvent *>(event);
+        // Unknown/dead keys belong to the input method, not command handlers.
+        if (!key->key() || key->key() == Qt::Key_unknown ||
+            (key->key() >= Qt::Key_Dead_Grave && key->key() <= Qt::Key_Dead_Longsolidusoverlay)) return false;
+        QVariantMap payload{{"key", key->key()}, {"text", key->text()},
+                            {"modifiers", int(key->modifiers())}, {"auto-repeat", key->isAutoRepeat()},
+                            {"count", key->count()}};
+        QPointer<QQuickItem> guard(item);
+        const bool accepted = active->relay.pointer(item, QString::fromLatin1(name), payload);
+        if (accepted) key->accept();
+        return accepted || !guard;
+    }
+};
+extern "C" Q_DECL_EXPORT int gqt_keys(Handle id, int press, int release) {
+    auto *item = itemFor(id); if (!item) return 0;
+    if (!item->property("gqtKeyFilter").toBool()) {
+        new KeyFilter(item);
+        item->setProperty("gqtKeyFilter", true);
+    }
+    item->setProperty("on-key-press", press != 0);
+    item->setProperty("on-key-release", release != 0);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_focus(Handle id, int direction) {
+    auto *item = itemFor(id); if (!item) return 0;
+    if (!item->window()) return fail("Focus requires an attached item");
+    if (direction < -1 || direction > 1) return fail("Invalid focus direction");
+    auto *target = direction ? item->nextItemInFocusChain(direction > 0) : item;
+    if (!target || !target->isVisible() || !target->isEnabled()) return fail("Focus target is unavailable");
+    target->forceActiveFocus(direction > 0 ? Qt::TabFocusReason : direction < 0 ? Qt::BacktabFocusReason : Qt::OtherFocusReason);
+    return 1;
+}
 extern "C" Q_DECL_EXPORT const char *gqt_map_point(Handle from, Handle to, double x, double y) {
     auto *source = itemFor(from);
     if (!source) return nullptr;
@@ -754,6 +803,33 @@ extern "C" Q_DECL_EXPORT int gqt_test_action_input(Handle id, int action) {
     case 3: QTest::keyClick(window, Qt::Key_Tab); break;
     default: return fail("Unknown test input");
     }
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_key(Handle id, int key, int modifiers) {
+    auto *window = qobject_cast<QQuickWindow *>(objectFor(id)); if (!window) return 0;
+    // QtTest forwards its delay argument as the synthetic key count.
+    QTest::keyClick(window, Qt::Key(key), Qt::KeyboardModifiers(modifiers), 1);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_modal(Handle id, int show) {
+    auto *window = qobject_cast<QQuickWindow *>(objectFor(id)); if (!window) return 0;
+    static QPointer<QWindow> dialog;
+    if (show) {
+        if (dialog) return 0;
+        dialog = new QWindow(window);
+        dialog->setModality(Qt::WindowModal);
+        dialog->setTransientParent(window);
+        dialog->resize(200, 100);
+        dialog->show();
+        dialog->requestActivate();
+    } else { delete dialog.data(); dialog = nullptr; }
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_ime(Handle id, int phase) {
+    auto *item = itemFor(id); if (!item) return 0;
+    QInputMethodEvent event(phase == 0 ? QString::fromUtf8("に") : QString(), {});
+    if (phase == 1) event.setCommitString(QString::fromUtf8("日本"));
+    QCoreApplication::sendEvent(item, &event);
     return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_test_space(Handle id) {

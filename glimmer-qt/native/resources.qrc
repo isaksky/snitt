@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/glimmer-qt">
+        <file alias="shortcut.qml">../qml/shortcut.qml</file>
         <file alias="window.qml">../qml/window.qml</file>
         <file alias="vbox.qml">../qml/vbox.qml</file>
         <file alias="hbox.qml">../qml/hbox.qml</file>

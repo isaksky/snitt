@@ -130,3 +130,6 @@
   desktop coordinates. Preserves fractional pixels, transforms and negative origins."
   [from to x y]
   (value/decode (map-point-native from (or to 0) (double x) (double y))))
+
+(defchecked configure-keys "gqt_keys" [:uint64 :int :int] :int)
+(defchecked focus-native "gqt_focus" [:uint64 :int] :int)

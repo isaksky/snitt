@@ -27,6 +27,7 @@
    :max-width ["Layout.maximumWidth" :number 16777215]
    :max-height ["Layout.maximumHeight" :number 16777215]
    :alignment ["Layout.alignment" :value (value/flags "AlignVCenter")]
+   :tab-focus ["activeFocusOnTab" :bool false]
    :clip ["clip" :bool false]
    :opacity ["opacity" :number 1]
    :z ["z" :number 0]
@@ -69,7 +70,8 @@
    :elide ["elide" :value (value/enum "ElideNone")]})
 (def ^:private actions
   (merge common typography accessible
-         {:label ["text" :string ""] :highlighted ["highlighted" :bool false]
+         {:tab-focus ["activeFocusOnTab" :bool true]
+          :label ["text" :string ""] :highlighted ["highlighted" :bool false]
           :checked ["checked" :bool false] :checkable ["checkable" :bool false]
           :icon ["iconSource" :string ""]
           :icon-only ["iconOnly" :bool false]
@@ -101,12 +103,12 @@
                 (string? relay) (or (nil? dispose) (ifn? dispose)))
     (throw (ex-info "Invalid Qt registration descriptor." {:tag tag})))
   (doseq [[key entry] props]
-    (when-not (and (keyword? key) (not= key :qt/subscriptions) (vector? entry) (= 3 (count entry))
+    (when-not (and (keyword? key) (not (#{:qt/subscriptions :on-key-press :on-key-release} key)) (vector? entry) (= 3 (count entry))
                   (string? (first entry)) (seq (first entry))
                   (#{:string :number :bool :color :value} (second entry)))
       (throw (ex-info "Invalid Qt property schema." {:property key}))))
   (doseq [[key arity] events]
-    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :close-request :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions} key))
+    (when-not (and (keyword? key) (not (#{:destroyed :shutdown :close-request :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions :on-key-press :on-key-release} key))
                    (#{:none :string :pointer} arity) (not (contains? props key)))
       (throw (ex-info "Invalid Qt event schema." {:event key}))))
   (when-not (every? #(contains? props %) required)
@@ -137,18 +139,27 @@
                                             :border-color ["border.color" :color "transparent"]}) {} :self ""]
          [:label (merge common typography accessible text-layout
                         {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
-         [:entry (merge common {:text ["text" :string ""] :placeholder ["hint" :string ""]})
+         [:entry (merge common {:tab-focus ["activeFocusOnTab" :bool true] :text ["text" :string ""] :placeholder ["hint" :string ""]})
           {:on-change :string :on-activate :none} :none "relay"]
          [:button actions
           {:on-click :none} :none "relay"]]]
   (register! tag {:source (str "qrc:/glimmer-qt/" (name tag) ".qml")
                   :props props :events events :children children :relay relay}))
 
+(register! :shortcut
+  {:source "qrc:/glimmer-qt/shortcut.qml" :relay "relay"
+   :props {:id ["objectName" :string ""]
+           :sequences ["sequences" :value []]
+           :enabled ["enabled" :bool true]
+           :scope ["scope" :string "window"]
+           :auto-repeat ["repeatKeys" :bool false]}
+   :events {:on-activate :none :on-ambiguous :none}})
+
 (defn- registration [tag]
   (or (get @registry tag) (throw (ex-info "Unsupported glimmer-qt tag." {:tag tag}))))
 (defn- spec-for [tag]
   (let [{:keys [props events]} (registration tag)]
-    (merge props (into {} (map (fn [[key _]] [key nil]) events)))))
+    (merge {:on-key-press nil :on-key-release nil} props (into {} (map (fn [[key _]] [key nil]) events)))))
 
 (defn- live-widget [widget]
   (or (and (integer? widget) (q/alive? widget) (get @widgets widget))
@@ -165,6 +176,12 @@
                    (get props :margin 0) default)))
 
 (defn- validate-props! [tag props]
+  (when (= tag :shortcut)
+    (when-not (#{"window" "application"} (get props :scope "window"))
+      (throw (ex-info "Shortcut scope must be window or application." {})))
+    (when-not (and (vector? (get props :sequences []))
+                   (every? #(and (string? %) (seq %) (not (.contains % "\u0000"))) (get props :sequences [])))
+      (throw (ex-info "Shortcut sequences must be a vector of nonempty Qt sequence strings." {}))))
   (when (and (= tag :button) (contains? props :mode) (not (#{"normal" "good" "bad"} (:mode props))))
     (throw (ex-info "Action mode must be normal, good or bad." {})))
   (when (and (= tag :button) (:icon-only props) (empty? (:accessible-name props)))
@@ -226,6 +243,9 @@
             value (prop-value props key default)]
         (when (or (nil? previous) (#{:text :checked} key) (not= value (prop-value previous key default)))
           (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
+    (when (or (:on-key-press props) (:on-key-release props)
+              (:on-key-press previous) (:on-key-release previous))
+      (q/configure-keys widget (if (:on-key-press props) 1 0) (if (:on-key-release props) 1 0)))
     (swap! widgets assoc-in [widget :props] props)
     (object/reconcile! widget (:qt/subscriptions props)))
   nil)
@@ -266,6 +286,8 @@
       (when-not (= children :none)
         (swap! widgets assoc-in [widget :target]
                (q/child-target widget (if (= children :self) "" children))))
+      (when (or (:on-key-press props) (:on-key-release props))
+        (q/configure-keys widget (if (:on-key-press props) 1 0) (if (:on-key-release props) 1 0)))
       (object/reconcile! widget (:qt/subscriptions props))
       widget
       (catch Throwable error (dispose! widget) (throw error)))))
@@ -351,7 +373,8 @@
       ;; Core abandons its subscriptions and closes the remaining session arena.
       (throw (ex-info "Qt destroyed a mounted object." {:widget widget})))
     (when-let [handler (get-in @widgets [widget :props (keyword event)])]
-      (case (get-in @registry [(get-in @widgets [widget :tag]) :events (keyword event)])
+      (case (if (#{"on-key-press" "on-key-release"} event) :pointer
+                (get-in @registry [(get-in @widgets [widget :tag]) :events (keyword event)]))
         :pointer (let [payload (value/decode value)
                        event (into {} (map (fn [[k v]] [(keyword k) v]) (dissoc payload "token")))
                        accepted (handler event)]
@@ -386,3 +409,13 @@
     (reset! widgets {})
     (reset! session nil)
     (when @failure (throw @failure))))
+
+(defn focus!
+  "Request focus for a live attached item on the GUI thread (e.g. after commit/cancel)."
+  [widget] (live-widget widget) (q/focus-native widget 0) nil)
+(defn focus-next!
+  "Traverse Qt's focus chain; pass false to move backwards."
+  ([widget] (focus-next! widget true))
+  ([widget forward?]
+   (when-not (boolean? forward?) (throw (ex-info "Focus direction must be boolean." {})))
+   (live-widget widget) (q/focus-native widget (if forward? 1 -1)) nil))

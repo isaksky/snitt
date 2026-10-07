@@ -2,7 +2,8 @@
  ;; Explicit lifecycle extension of upstream 09b8ab08705fa1e6f20145c2e99eaaba9ea812cc.
  ;; See LIFECYCLE.md; do not substitute the unextended upstream dependency.
  :deps {jolt-lang/glimmer {:local/root "vendor/glimmer"}}
- :aliases {:pointer-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.pointer-test"]}
+ :aliases {:keyboard-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.keyboard-test"]}
+           :pointer-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.pointer-test"]}
            :actions-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.actions-test"]}
            :layout-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.layout-test"]}
            :windows-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.windows-test"]}
