@@ -1,5 +1,6 @@
 (ns snitt.review-test
-  (:require [clojure.test :refer [deftest is run-tests]]
+  (:require [snitt.trim :as trim]
+            [clojure.test :refer [deftest is run-tests]]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.media :as media]
@@ -48,18 +49,18 @@
 
 (defn check-load-failure! [owner trim video clip missing]
   (wait-for! "filmstrip thumbnail"
-    #(seq (first (q/read-property trim "thumbnails")))
+    #(seq (first (trim/property trim "thumbnails")))
     #(do
        (let [image (qt/find-by-id @(:window owner) "review-thumb-0")]
-         (check! (= (value/url (first (q/read-property trim "thumbnails")))
+         (check! (= (value/url (first (trim/property trim "thumbnails")))
                     (q/read-property image "imageSource"))
                  "Glimmer filmstrip follows the native thumbnail"))
        (media/source! video (value/local-file missing))
        (wait-for! "playback failure" #(seq (:error @(:state owner)))
          #(do
-            (check! (= clip (q/read-property trim "path"))
+            (check! (= clip (trim/property trim "path"))
                     "Playback failure retains saved media")
-            (media/source! video (q/read-property trim "source"))
+            (media/source! video (trim/property trim "source"))
             (wait-for! "playback recovery" #(:primed @(:state owner))
               #(review/command! owner :close) 120)) 120)) 180))
 
@@ -68,14 +69,14 @@
     (= "1" (System/getenv "SNITT_REVIEW_CANCEL_BUSY"))
     (do
       (review/command! owner :export)
-      (wait-for! "active export" #(q/read-property trim "busy")
+      (wait-for! "active export" #(trim/property trim "busy")
         #(do
            (review/command! owner :close)
            (check! (:dismiss-after-cancel @(:state owner))
                    "Close waits for active export cancellation")
            (wait-for! "active export canceled"
-             #(empty? (q/read-property trim "path"))
-             #(check! (not (q/read-property trim "busy"))
+             #(empty? (trim/property trim "path"))
+             #(check! (not (trim/property trim "busy"))
                       "Cancellation keeps saved media") 120)) 120))
     (= "1" (System/getenv "SNITT_REVIEW_EXPORT"))
     (do
@@ -83,9 +84,9 @@
       (check! (= (value/url "") (:source (media/state video)))
               "Export releases playback source")
       (wait-for! "export result"
-        #(or (empty? (q/read-property trim "path"))
-             (seq (q/read-property trim "problem")))
-        #(check! (empty? (q/read-property trim "problem"))
+        #(or (empty? (trim/property trim "path"))
+             (seq (trim/property trim "problem")))
+        #(check! (empty? (trim/property trim "problem"))
                  "Export replaced validated media") 240))
     :else (check-load-failure! owner trim video clip missing)))
 
@@ -95,7 +96,7 @@
         root (:root services)
         trim (:trim services)
         owner-ref (atom nil)]
-    (object/invoke! root "openRecording(QString)" [clip])
+    (trim/open! trim clip)
     (let [owner (review/open! root trim
                               #(do (reset! finished true)
                                    (review/dispose! @owner-ref)
@@ -156,7 +157,7 @@
                           (wait-for! "source restored"
                             #(not= (value/url "") (:source (media/state video)))
                             #(do
-                               (check! (= clip (q/read-property trim "path"))
+                               (check! (= clip (trim/property trim "path"))
                                        "Cancellation retains original media")
                                (finish-after-cancel! owner trim video clip missing))
                             100)) 120)) 100)) 100)) 120))))

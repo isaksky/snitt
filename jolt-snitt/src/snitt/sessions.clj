@@ -1,7 +1,8 @@
 (ns snitt.sessions
   "Jolt owns editor lifetimes, focus and capture admission. Native objects are
   borrowed from exactly one session and never used after that session closes."
-  (:require [glimmer-qt.core :as qt]
+  (:require [snitt.trim :as trim]
+            [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
@@ -24,7 +25,7 @@
 (defn activate! [manager id]
   (when-let [{:keys [window review-window]} (session manager id)]
     (let [target (if (and (live-window? review-window)
-                          (seq (q/read-property (get-in (session manager id) [:services :trim]) "path")))
+                          (seq (trim/property (get-in (session manager id) [:services :trim]) "path")))
                    review-window window)]
       (when (live-window? target) (qt/activate! target)))))
 
@@ -82,7 +83,7 @@
                  (region/close! (:picker (snapshot manager)))
                  (swap! (:state manager) assoc :picker nil)
                  (when-not (or (recording? manager id)
-                               (seq (q/read-property trim "path")))
+                               (seq (trim/property trim "path")))
                    (capture-finished! manager id captured))))
     (subscribe (:root services) (:root services) "capturePickerReady()"
                (fn []
@@ -124,7 +125,7 @@
                                   (when (current? manager id)
                                     (case phase
                                       :saved (do
-                                               (object/invoke! (:root services) "openRecording(QString)" [path])
+                                               (trim/open! trim path)
                                                (when on-recording-saved (on-recording-saved manager id path))
                                                (complete-capture! manager id true))
                                       :failed (do (report-error! manager id error)
@@ -143,7 +144,7 @@
                  (when (and (not (q/read-property backend "capturing"))
                             (not (recording? manager id)))
                    (complete-capture! manager id false))))
-    (subscribe (:root services) trim "finalized(QString)"
+    (subscribe (:root services) (:handle trim) "finalized(QString)"
                (fn [_]
                  (qt/later! (:root services) 0
                    #(when-let [{:keys [window]} (session manager id)]
@@ -211,7 +212,7 @@
   (let [{:keys [capture order]} (snapshot manager)]
     (when-not capture
       (if-let [review (first (filter
-                              #(seq (q/read-property (get-in % [:services :trim]) "path"))
+                              #(seq (trim/property (get-in % [:services :trim]) "path"))
                               (sessions manager)))]
         (activate! manager (:id review))
         (let [id (create! manager nil)

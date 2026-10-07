@@ -1,6 +1,7 @@
 (ns snitt.app
   "Jolt-owned editor sessions; native canvases retain pixels and annotation history."
-  (:require [glimmer.ratom :as r]
+  (:require [snitt.trim :as trim]
+            [glimmer.ratom :as r]
             [clojure.string :as str]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
@@ -170,7 +171,7 @@
   (let [handle (canvas context)
         services @(:services context)
         backend (when (and (:backend services) (q/alive? (:backend services))) (:backend services))
-        trim (when (and (:trim services) (q/alive? (:trim services))) (:trim services))
+        trim (when (and (:trim services) (q/alive? (:handle (:trim services)))) (:trim services))
         manager (:manager @runtime)
         session (when manager (sessions/session manager (:id context)))
         document (fn [property fallback]
@@ -188,7 +189,7 @@
                    (q/read-property (:review-window session) "visible"))
      :review-can-edit? (and trim @(:review context)
                             (review/editable? @(:state @(:review context))
-                                              (q/read-property trim "busy")))
+                                              (trim/property trim "busy")))
      :session-manager? (boolean manager)
      :has-image? (document "hasImage" false)
      :can-undo? (document "canUndo" false)
@@ -555,7 +556,7 @@
             (throw (ex-info "Could not bind editor document to session" {:id id})))
           (doseq [[target signal] [[(:backend services) "capturingChanged()"]
                                    [(:backend services) "recordingChanged()"]
-                                   [(:trim services) "changed()"]]]
+                                   [(:handle (:trim services)) "changed()"]]]
             (object/subscribe! (:root services) target signal
                                #(refresh-context! context)))
           (sync-canvas-size! context)

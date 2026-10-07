@@ -15,6 +15,7 @@
            :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}
            :capture {:extra-paths ["test"] :main-opts ["-m" "snitt.capture-test"]}
            :recording {:extra-paths ["test"] :main-opts ["-m" "snitt.recording-test"]}
+           :trim {:extra-paths ["test"] :main-opts ["-m" "snitt.trim-test"]}
            :review {:extra-paths ["test"] :main-opts ["-m" "snitt.review-test"]}
            :recording-desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.recording-desktop-test"]}
            :capture-desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.capture-desktop-test"]}}}

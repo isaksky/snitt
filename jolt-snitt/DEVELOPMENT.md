@@ -59,8 +59,8 @@ and their C++ dependencies against the same shared `glimmer_qt` and Qt runtime.
 reactive state. `snitt.sessions` owns session identity, active-window selection,
 capture admission, visibility snapshots, and teardown. Each session has its own
 retained native services root and canvas. `snitt.native/create-services!` returns
-that owned root plus borrowed settings, backend, and trim handles; disposing the
-root invalidates all borrowed handles. The native adapter retains captured pixels
+that owned root plus borrowed settings/backend handles and a Jolt trim owner;
+disposing the root invalidates its handles and terminates its media jobs. The native adapter retains captured pixels
 before the backend removes its temporary file. Jolt advances each display capture,
 then consumes or discards the retained result, positions the new editor, and
 restores prior editor visibility on completion or failure. Canvas mount/unmount
@@ -95,7 +95,7 @@ retains the capture source and platform recorder only; it rejects starts until
 all overlay windows have been prepared for exclusion. Windows verifies capture
 affinity before start; macOS ScreenCaptureKit excludes the entire application
 before streaming. Jolt restores editor visibility/focus once on completion and
-opens the retained trim service for a saved file. The original backend/QML owner
+opens the Jolt trim owner for a saved file. The original backend/QML owner
 remains active only in the reference launcher.
 
 Run `./jolt-snitt/test-recording` for fake-recorder transition and UI tests,
@@ -103,3 +103,15 @@ including protection failure and stale callbacks. On an unlocked macOS desktop,
 `./jolt-snitt/test-recording-desktop` records a real region, stops, checks review
 and restoration, cancels during a second startup, then probes and decodes the
 generated MP4. Both use disposable settings/output roots and fake global hotkeys.
+
+`snitt.trim` owns trim ranges, progress parsing, output verification policy,
+replacement sequencing, filmstrip windows, EOF retries, and cancellation recovery.
+Each process attempt has a distinct generation; queued results from retired jobs
+are ignored. `MediaJobs` provides Qt-thread process events and narrow file/probe
+operations. The MP4 duration editor and atomic platform replacement helper remain
+native, shared with the reference C++ launcher.
+
+Run `./jolt-snitt/test-trim` for generated audio/video, reordered-frame and short
+clips, packet/timing checks, thumbnail windows and EOF fallback, cancellation,
+process/probe/replacement failures, retry, teardown, and macOS held-file behavior.
+`./jolt-snitt/test-review` exercises the review UI against the same Jolt owner.

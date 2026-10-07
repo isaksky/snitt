@@ -52,7 +52,7 @@
   (sessions/close! manager 1)
   (check! (not (q/alive? settings)) "Disposal invalidates settings")
   (check! (not (q/alive? backend)) "Disposal invalidates backend")
-  (check! (not (q/alive? trim)) "Disposal invalidates trim")
+  (check! (not (q/alive? (:handle trim))) "Disposal invalidates trim")
   (check! (empty? (sessions/sessions manager)) "Last editor may close while the app lives")
   (check! (q/alive? (get-in @app/runtime [:host :root]))
           "Application hotkey survives the last editor")
@@ -75,7 +75,7 @@
         output-file (System/getenv "SNITT_JOLT_SAVED_PATH")]
     (reset! initial-canvas canvas)
     (check! (qt/window-alive? window) "Jolt owns a live editor window")
-    (check! (every? q/alive? [canvas root settings backend trim])
+    (check! (every? q/alive? [canvas root settings backend (:handle trim)])
             "Canvas and services share the Qt session")
     (check! (.startsWith (q/read-property settings "settingsFile") directory)
             "Development settings stay in isolated data directory")

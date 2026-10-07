@@ -1,6 +1,7 @@
 (ns snitt.native
   "Application-owned Snitt objects exposed through glimmer-qt's factory seam."
-  (:require [glimmer-qt.ffi :as q]
+  (:require [snitt.trim :as trim]
+            [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
@@ -38,7 +39,7 @@
       {:root root
        :settings (:value (q/read-property root "settings"))
        :backend (:value (q/read-property root "backend"))
-       :trim (:value (q/read-property root "trim"))}
+       :trim (trim/create! (:value (q/read-property root "trim")))}
       (catch Throwable error
         (widget/dispose! root)
         (throw error)))))

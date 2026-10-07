@@ -3,6 +3,7 @@
 #include "../../src/backend.h"
 #include "../../src/editorcanvas.h"
 #include "../../src/globalhotkey.h"
+#include "media_jobs.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -161,6 +162,7 @@ AppSettings::Paths applicationPaths() {
 
 class Services final : public QObject {
     Q_OBJECT
+    MediaJobs *m_media = nullptr;
     Q_PROPERTY(QObject *settings READ settings CONSTANT)
     Q_PROPERTY(QObject *backend READ backend CONSTANT)
     Q_PROPERTY(QObject *trim READ trim CONSTANT)
@@ -169,9 +171,7 @@ public:
     Services() {
         m_settings = new AppSettings(applicationPaths(), true, this);
         m_backend = new Backend(m_settings, this);
-        // Backend owns a member TrimSession; parent it for the bridge's
-        // descendant check, then expose only a borrowed handle to Jolt.
-        m_backend->trim()->setParent(m_backend);
+        m_media = new MediaJobs(this);
         m_backend->setExternalCaptureRouting(true);
         m_backend->setExternalRegionPicker(true);
         m_backend->setExternalRecording(true);
@@ -223,7 +223,7 @@ public:
 
     QObject *settings() const { return m_settings; }
     QObject *backend() const { return m_backend; }
-    QObject *trim() const { return m_backend->trim(); }
+    QObject *trim() const { return m_media; }
     bool macOS() const {
 #ifdef Q_OS_MACOS
         return true;
@@ -295,9 +295,6 @@ public:
             m_recording->deleteLater();
             m_recording = nullptr;
         }
-    }
-    Q_INVOKABLE void openRecording(const QString &path) {
-        static_cast<TrimSession *>(m_backend->trim())->open(path);
     }
     Q_INVOKABLE void recordingSourceForTest() {
         if (fakeRecorder()) { m_sourceAvailable = true; emit recordingSourceReady(); }
@@ -400,7 +397,7 @@ public:
 
     Q_INVOKABLE bool expose() {
         return gqt_expose_object(m_settings) && gqt_expose_object(m_backend)
-            && gqt_expose_object(m_backend->trim());
+            && gqt_expose_object(m_media);
     }
     Q_INVOKABLE bool activateGlobalShortcut(const QString &configured) {
         if (qEnvironmentVariable("SNITT_JOLT_FAKE_HOTKEY") == QStringLiteral("1")) {

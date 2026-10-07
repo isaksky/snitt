@@ -1,6 +1,7 @@
 (ns snitt.review
-  "Jolt-owned recording review, using Qt Multimedia and the retained TrimSession."
-  (:require [glimmer.ratom :as r]
+  "Jolt-owned recording review, using Qt Multimedia and Jolt trim operations."
+  (:require [snitt.trim :as trim]
+            [glimmer.ratom :as r]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.media :as media]
@@ -55,9 +56,9 @@
     (when (qt/window-alive? window)
       (let [handle (qt/find-by-id window "review-video")]
         (when (and handle (q/alive? handle)) handle)))))
-(defn- busy? [owner] (q/read-property (:trim owner) "busy"))
+(defn- busy? [owner] (trim/property (:trim owner) "busy"))
 (defn- invoke-trim! [owner signature args]
-  (when-not @(:closed owner) (object/invoke! (:trim owner) signature args)))
+  (when-not @(:closed owner) (trim/invoke! (:trim owner) signature args)))
 (defn- position! [owner seconds]
   (when-let [video (surface owner)]
     (media/position! video (long (Math/round (* 1000 seconds))))))
@@ -132,9 +133,9 @@
                       (swap! (:state owner) assoc :preparing false)
                       (when (busy? owner) (invoke-trim! owner "cancelExport()" []))
                       (when (and (not (busy? owner))
-                                 (seq (q/read-property (:trim owner) "path")))
+                                 (seq (trim/property (:trim owner) "path")))
                         (when-let [video (surface owner)]
-                          (media/source! video (q/read-property (:trim owner) "source")))))
+                          (media/source! video (trim/property (:trim owner) "source")))))
                   (invoke-trim! owner "keepOriginal()" []))
         :close (if (busy? owner)
                  (do (swap! (:state owner) assoc :dismiss-after-cancel true)
@@ -234,12 +235,12 @@
 (defn- refresh-trim! [owner]
   (when-not @(:closed owner)
     (let [trim (:trim owner)
-          path (q/read-property trim "path")
-          duration (q/read-property trim "duration")
-          busy (q/read-property trim "busy")
-          problem (q/read-property trim "problem")
-          progress (q/read-property trim "progress")
-          thumbnails (vec (q/read-property trim "thumbnails"))]
+          path (trim/property trim "path")
+          duration (trim/property trim "duration")
+          busy (trim/property trim "busy")
+          problem (trim/property trim "problem")
+          progress (trim/property trim "progress")
+          thumbnails (vec (trim/property trim "thumbnails"))]
       (swap! (:state owner)
              #(cond-> (assoc % :busy busy :problem problem :progress progress
                              :thumbnails thumbnails)
@@ -252,10 +253,10 @@
         (and (not busy) (not (:preparing @(:state owner))))
         (when-let [video (surface owner)]
           (when (= (value/url "") (:source (media/state video)))
-            (media/source! video (q/read-property trim "source"))))))))
+            (media/source! video (trim/property trim "source"))))))))
 (defn open! [root trim on-finished]
   (let [owner {:root root :trim trim :window (atom nil) :closed (atom false)
-               :state (r/atom (initial (q/read-property trim "duration")))
+               :state (r/atom (initial (trim/property trim "duration")))
                :prime-timer (atom nil) :export-timer (atom nil) :clock (atom nil)
                :on-finished on-finished}]
     (try
@@ -264,7 +265,7 @@
                                     :on-close (fn [_] (command! owner :close) false))]
         (reset! (:window owner) window)
         (let [video (surface owner)]
-          (media/source! video (q/read-property trim "source"))
+          (media/source! video (trim/property trim "source"))
           (doseq [[property handler]
                   [[:source #(do (when (= % (value/url ""))
                                   (swap! (:state owner) assoc :primed false :priming false
@@ -291,7 +292,7 @@
                                           (:error-string (media/state video)))))]]]
             (media/observe! video video property
               #(when-not @(:closed owner) (handler %))))
-          (object/subscribe! video trim "changed()" #(refresh-trim! owner))
+          (object/subscribe! video (:handle trim) "changed()" #(refresh-trim! owner))
           (reset! (:clock owner)
                   (qt/every! video 40
                     (fn [{:keys [delta-seconds]}]

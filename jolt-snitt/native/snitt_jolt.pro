@@ -11,7 +11,7 @@ SOURCES += snitt_jolt.cpp \
     ../../src/screenshotsave.cpp ../../src/appsettings.cpp ../../src/globalhotkey.cpp \
     ../../src/backend.cpp ../../src/regionselector.cpp ../../src/trimsession.cpp \
     ../../src/mp4duration.cpp ../../src/videorecorder.cpp
-HEADERS += ../../glimmer-qt/native/extensions.h ../../src/clipboard.h \
+HEADERS += media_jobs.h ../../src/recordingfile.h ../../glimmer-qt/native/extensions.h ../../src/clipboard.h \
     ../../src/imagedocument.h ../../src/editorcanvas.h ../../src/appsettings.h \
     ../../src/globalhotkey.h ../../src/backend.h ../../src/regionselector.h \
     ../../src/trimsession.h ../../src/videorecorder.h
