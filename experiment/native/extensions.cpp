@@ -1,4 +1,5 @@
 #include "../../glimmer-qt/native/extensions.h"
+#include "../../src/clipboard.h"
 #include <QQuickItem>
 #include <QDir>
 #include <QColor>
@@ -67,5 +68,11 @@ extern "C" Q_DECL_EXPORT int hello_register_extensions() {
     initializeResources();
     return gqt_register_factory("hello.marker", marker, complete) &&
            gqt_register_factory("hello.service", service, nullptr);
+}
+// The example application can opt into Snitt's verified native clipboard
+// publisher. In particular this retains the Windows lock/retry and PNG/DIBV5
+// publication behavior rather than treating Qt setMimeData as proof of copy.
+extern "C" Q_DECL_EXPORT int hello_register_snitt_clipboard(uint64_t session) {
+    return gqt_register_clipboard_publisher(session, snittClipboard::publish);
 }
 #include "extensions.moc"

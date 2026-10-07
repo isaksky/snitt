@@ -1,5 +1,8 @@
 #include <QApplication>
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QFileInfo>
+#include <QProcess>
 #include <QMimeData>
 #include <QMediaPlayer>
 #include <QVideoFrame>
@@ -171,6 +174,10 @@ struct Session {
     WidgetServices widgetServices;
     QHash<Handle, QPointer<QSystemTrayIcon>> trays;
     QHash<Handle, QPointer<QMenu>> trayMenus;
+    QHash<Handle, QImage> images; // Owned copies; handles die with this session.
+    GqtClipboardPublisher clipboardPublisher = nullptr;
+    GqtUrlOpener urlOpener = nullptr;
+    GqtFileRevealer fileRevealer = nullptr;
     QQmlEngine engine;
     QPointer<QQuickWindow> window;
     Handle container = 0;
@@ -299,6 +306,128 @@ static QQuickItem *itemFor(Handle id) {
 }
 
 extern "C" Q_DECL_EXPORT const char *gqt_error() { return error.constData(); }
+
+extern "C" Q_DECL_EXPORT int gqt_register_clipboard_publisher(Handle id, GqtClipboardPublisher hook) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    s->clipboardPublisher = hook;
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_register_url_opener(Handle id, GqtUrlOpener hook) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    s->urlOpener = hook;
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_register_file_revealer(Handle id, GqtFileRevealer hook) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    s->fileRevealer = hook;
+    return 1;
+}
+
+static bool publishClipboard(Session *s, std::unique_ptr<QMimeData> mime) {
+    if (s->clipboardPublisher) {
+        try { return s->clipboardPublisher(std::move(mime)); }
+        catch (...) { fail("Clipboard publisher threw an exception"); return false; }
+    }
+#ifdef Q_OS_WIN
+    // Qt setMimeData does not prove that Windows accepted the contents. The
+    // application must install a publisher such as snittClipboard::publish.
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) return false;
+#endif
+    QMimeData *published = mime.release(); // QClipboard takes ownership.
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    clipboard->setMimeData(published);
+    return clipboard->mimeData() == published;
+}
+
+extern "C" Q_DECL_EXPORT const char *gqt_clipboard_text(Handle id) {
+    if (!sessionFor(id)) return nullptr;
+    const QMimeData *mime = QGuiApplication::clipboard()->mimeData();
+    if (!mime || !mime->hasText()) { fail("Clipboard has no text"); return nullptr; }
+    static thread_local QByteArray text;
+    text = mime->text().toUtf8();
+    return text.constData();
+}
+extern "C" Q_DECL_EXPORT Handle gqt_clipboard_image(Handle id) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    const QMimeData *mime = QGuiApplication::clipboard()->mimeData();
+    if (!mime || !mime->hasImage()) { fail("Clipboard has no image"); return 0; }
+    QImage image = qvariant_cast<QImage>(mime->imageData());
+    if (image.isNull()) { fail("Clipboard image is unsupported"); return 0; }
+    QImage owned = image.copy(); // Independent of clipboard ownership.
+    if (owned.isNull()) { fail("Could not copy clipboard image"); return 0; }
+    Handle imageId = freshHandle();
+    s->images.insert(imageId, std::move(owned));
+    return imageId;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_image_load(Handle id, const char *path) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    if (!path || !*path) { fail("Image path is empty"); return 0; }
+    QImage image(QString::fromUtf8(path));
+    if (image.isNull()) { fail("Could not load image"); return 0; }
+    Handle imageId = freshHandle();
+    s->images.insert(imageId, std::move(image));
+    return imageId;
+}
+static QImage *imageFor(Handle session, Handle imageId) {
+    auto *s = sessionFor(session); if (!s) return nullptr;
+    auto it = s->images.find(imageId);
+    if (it == s->images.end()) { fail("Invalid or disposed Qt image handle"); return nullptr; }
+    return &it.value();
+}
+extern "C" Q_DECL_EXPORT int gqt_image_save(Handle session, Handle imageId, const char *path) {
+    auto *image = imageFor(session, imageId); if (!image) return 0;
+    if (!path || !*path || !image->save(QString::fromUtf8(path), "PNG"))
+        return fail("Could not save image as PNG");
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_image_equal(Handle session, Handle left, Handle right) {
+    auto *a = imageFor(session, left); if (!a) return -1;
+    auto *b = imageFor(session, right); if (!b) return -1;
+    return *a == *b ? 1 : 0;
+}
+extern "C" Q_DECL_EXPORT int gqt_image_dispose(Handle session, Handle imageId) {
+    auto *s = sessionFor(session); if (!s) return 0;
+    if (!s->images.remove(imageId)) return fail("Invalid or disposed Qt image handle");
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_clipboard_publish_text(Handle id, const char *text) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    if (!text) return fail("Text is null");
+    auto mime = std::make_unique<QMimeData>();
+    mime->setText(QString::fromUtf8(text));
+    return publishClipboard(s, std::move(mime)) ? 1 : fail("Could not publish text to clipboard");
+}
+extern "C" Q_DECL_EXPORT int gqt_clipboard_publish_image(Handle id, Handle imageId) {
+    auto *image = imageFor(id, imageId); if (!image) return 0;
+    auto mime = std::make_unique<QMimeData>();
+    mime->setImageData(*image); // QImage implicit copy retains its own pixels.
+    return publishClipboard(active, std::move(mime)) ? 1 : fail("Could not publish image to clipboard");
+}
+extern "C" Q_DECL_EXPORT int gqt_open_url(Handle id, const char *raw) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    if (!raw || !*raw) return fail("URL is empty");
+    const QUrl url(QString::fromUtf8(raw), QUrl::StrictMode);
+    if (!url.isValid() || url.scheme().isEmpty()) return fail("Invalid absolute URL");
+    try {
+        const bool opened = s->urlOpener ? s->urlOpener(url) : QDesktopServices::openUrl(url);
+        return opened ? 1 : fail("Could not open URL");
+    } catch (...) { return fail("URL opener threw an exception"); }
+}
+extern "C" Q_DECL_EXPORT int gqt_reveal_file(Handle id, const char *raw) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    if (!raw || !*raw) return fail("File path is empty");
+    const QString path = QString::fromUtf8(raw);
+    if (!QFileInfo(path).isFile()) return fail("File does not exist");
+    try {
+        if (s->fileRevealer) return s->fileRevealer(path) ? 1 : fail("Could not reveal file");
+#ifdef Q_OS_MACOS
+        return QProcess::startDetached(QStringLiteral("/usr/bin/open"), {QStringLiteral("-R"), path})
+            ? 1 : fail("Could not reveal file");
+#else
+        return fail("Register a native file revealer for this platform");
+#endif
+    } catch (...) { return fail("File revealer threw an exception"); }
+}
 // Consume the native close event first. Managed policy runs on a later turn,
 // never on QWindow's close-event stack, and duplicate pending requests coalesce.
 class CloseFilter : public QObject {
@@ -1050,6 +1179,50 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
 #include "../test/native/pointer_fixture.h"
 #include "../test/native/value_fixture.h"
 #include "../test/native/object_fixture.h"
+static QString serviceTestUrl;
+static QString serviceTestFile;
+static int serviceTestMode = 0;
+extern "C" Q_DECL_EXPORT int gqt_test_service_hooks(Handle id, int mode) {
+    auto *s = sessionFor(id); if (!s) return 0;
+    serviceTestMode = mode;
+    serviceTestUrl.clear();
+    serviceTestFile.clear();
+    gqt_register_clipboard_publisher(id, mode ? +[](std::unique_ptr<QMimeData>) { return false; } : nullptr);
+    gqt_register_url_opener(id, mode ? +[](const QUrl &url) {
+        serviceTestUrl = url.toString(QUrl::FullyEncoded);
+        return serviceTestMode == 1;
+    } : nullptr);
+    gqt_register_file_revealer(id, mode ? +[](const QString &path) {
+        serviceTestFile = path;
+        return serviceTestMode == 1;
+    } : nullptr);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT const char *gqt_test_service_url() {
+    static thread_local QByteArray bytes;
+    bytes = serviceTestUrl.toUtf8();
+    return bytes.constData();
+}
+extern "C" Q_DECL_EXPORT const char *gqt_test_service_file() {
+    static thread_local QByteArray bytes;
+    bytes = serviceTestFile.toUtf8();
+    return bytes.constData();
+}
+extern "C" Q_DECL_EXPORT int gqt_test_service_fixture(const char *path) {
+    if (!guiThread()) return 0;
+    QImage image(3, 2, QImage::Format_RGBA8888);
+    image.setPixelColor(0, 0, QColor(5, 100, 240, 17));
+    image.setPixelColor(1, 0, QColor(220, 30, 12, 190));
+    image.setPixelColor(2, 1, QColor(30, 190, 120, 255));
+    return image.save(QString::fromUtf8(path), "PNG") ? 1 : fail("Could not save service fixture");
+}
+extern "C" Q_DECL_EXPORT int gqt_test_service_unsupported(Handle id) {
+    if (!sessionFor(id)) return 0;
+    auto *mime = new QMimeData;
+    mime->setData("application/x-glimmer-test", "unsupported");
+    QGuiApplication::clipboard()->setMimeData(mime);
+    return 1;
+}
 extern "C" Q_DECL_EXPORT int gqt_test_tray_desktop(Handle id, int actions) {
     auto *tray = trayFor(id);
     if (!tray) return 0;

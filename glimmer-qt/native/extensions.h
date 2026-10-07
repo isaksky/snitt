@@ -3,7 +3,10 @@
 #include <QImage>
 #include <QSize>
 #include <QString>
+#include <QMimeData>
+#include <QUrl>
 #include <cstdint>
+#include <memory>
 // Application libraries link against glimmer_qt and register on the GUI thread
 // during an active session. Factories return a fresh, unparented object. The
 // bridge owns it, writes checked initial properties, then calls complete.
@@ -37,3 +40,15 @@ extern "C" GQT_API int gqt_register_image_provider(const char *name,
                                                      GqtImageRequest request,
                                                      void *userData,
                                                      GqtImageRelease release);
+
+// Register application-specific desktop services for one active session. The
+// publisher consumes the MIME object on every path, including failure. Hooks
+// must not throw and must stay loaded until the session closes. Without a
+// publisher Windows fails closed instead of claiming an optimistic Qt copy;
+// Snitt can register snittClipboard::publish to retain its native retry path.
+using GqtClipboardPublisher = bool (*)(std::unique_ptr<QMimeData>);
+using GqtUrlOpener = bool (*)(const QUrl &);
+using GqtFileRevealer = bool (*)(const QString &);
+extern "C" GQT_API int gqt_register_clipboard_publisher(uint64_t session, GqtClipboardPublisher);
+extern "C" GQT_API int gqt_register_url_opener(uint64_t session, GqtUrlOpener);
+extern "C" GQT_API int gqt_register_file_revealer(uint64_t session, GqtFileRevealer);

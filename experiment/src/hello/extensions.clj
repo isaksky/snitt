@@ -8,6 +8,7 @@
             [jolt.ffi :as ffi]))
 
 (ffi/defcfn register-native "hello_register_extensions" [] :int)
+(ffi/defcfn register-snitt-clipboard "hello_register_snitt_clipboard" [:uint64] :int)
 (defonce installed? (atom false))
 (def disposed (atom 0))
 (def spinner-source "qrc:/hello/Spinner.qml")
@@ -30,6 +31,13 @@
   (when-not @installed?
     (when (zero? (register-native)) (throw (ex-info (q/native-error) {})))
     (reset! installed? true)))
+
+(defn install-snitt-clipboard!
+  "Install Snitt's publisher for this Qt session, including its Windows retry."
+  []
+  (when-not @w/session (throw (ex-info "No running Qt application." {})))
+  (when (zero? (register-snitt-clipboard @w/session))
+    (throw (ex-info (q/native-error) {}))))
 
 (def rotation (r/atom 0.0))
 (defn demo []

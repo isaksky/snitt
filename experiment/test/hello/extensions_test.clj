@@ -5,6 +5,7 @@
             [glimmer-qt.widget :as w]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.value :as v]
+            [glimmer-qt.services :as services]
             [hello.extensions :as ext]
             [jolt.host :as host]))
 (def checks (atom 0))
@@ -41,6 +42,9 @@
       (ui/run root :on-ready
         #(steps!
           [(fn []
+             (ext/install-snitt-clipboard!)
+             (check! (:ok? (services/publish-text! "Snitt 漢字 🦉")) "Snitt publisher accepts Unicode")
+             (check! (= "Snitt 漢字 🦉" (:value (services/read-text))) "Snitt publisher round trip")
              (reset! original (widget "custom"))
              (reset! child (widget "b"))
              (check! (= 35.0 (property "custom" "completedAngle")) "Required value before QML completion")

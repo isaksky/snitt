@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" CONFIG+=property_tests >/dev/null
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM=offscreen
+SNITT_SERVICES_FIXTURE_DIR="$(mktemp -d)"
+export SNITT_SERVICES_FIXTURE_DIR
+trap 'rm -rf "$SNITT_SERVICES_FIXTURE_DIR"' EXIT
+cd "$ROOT"
+python3 - "${JOLT:-jolt}" <<'PYTHON'
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.argv[1], '-M:services-test'], timeout=45).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit('Qt services tests exceeded 45 seconds')
+PYTHON
