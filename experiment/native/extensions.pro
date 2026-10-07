@@ -1,0 +1,12 @@
+QT += core gui qml quick
+TEMPLATE = lib
+TARGET = hello_extensions
+CONFIG += c++17 shared release unversioned_libname unversioned_soname
+CONFIG -= lib_bundle
+macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
+SOURCES += extensions.cpp
+HEADERS += ../../glimmer-qt/native/extensions.h
+RESOURCES += resources.qrc
+win32: LIBS += -L$$PWD/../../glimmer-qt/build/release
+LIBS += -L$$PWD/../../glimmer-qt/build -lglimmer_qt
+QMAKE_RPATHDIR += $$PWD/../../glimmer-qt/build

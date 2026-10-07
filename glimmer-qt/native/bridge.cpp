@@ -1,4 +1,5 @@
 #include <QApplication>
+#include "extensions.h"
 #include <QElapsedTimer>
 #include <QSet>
 #include <QImage>
@@ -279,29 +280,129 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
     s->relay.handler = handler;
     return 1;
 }
-extern "C" Q_DECL_EXPORT Handle gqt_create(Handle id, const char *tag) {
-    auto *s = sessionFor(id);
-    if (!s) return 0;
-    const QString type = QString::fromUtf8(tag);
-    if (type != "vbox" && type != "hbox" && type != "label" && type != "entry" && type != "button") {
-        fail("Unsupported Qt component tag"); return 0;
-    }
-    auto *object = s->create(type);
-    return object ? s->relay.track(object) : 0;
-}
 #include "values.h"
-extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
-    auto *parent = itemFor(parentId);
-    auto *child = itemFor(childId);
-    if (!parent || !child) return 0;
-    if (child->parentItem()) return fail("Qt child already has a parent");
-    for (auto *p = parent; p; p = p->parentItem())
-        if (p == child) return fail("Qt ownership cycle");
-    child->setParent(parent);
-    child->setParentItem(parent);
+struct Factory { GqtFactory create; GqtComplete complete; };
+static QHash<QString, Factory> factories;
+extern "C" Q_DECL_EXPORT int gqt_register_factory(const char *name, GqtFactory factory, GqtComplete complete) {
+    if (!guiThread()) return 0;
+    QString key = QString::fromUtf8(name);
+    if (key.isEmpty() || !factory || factories.contains(key)) return fail("Invalid or duplicate Qt factory");
+    factories.insert(key, {factory, complete});
     return 1;
 }
+extern "C" Q_DECL_EXPORT Handle gqt_create_registered(Handle id, const char *source,
+                                                        const char *wire, const char *relayProperty) {
+    auto *s = sessionFor(id);
+    if (!s) return 0;
+    QQmlComponent component(&s->engine);
+    std::unique_ptr<QObject> object;
+    bool begun = false;
+    try {
+        QString uri = QString::fromUtf8(source);
+        Factory factory{};
+        if (uri.startsWith("native:")) {
+            factory = factories.value(uri.mid(7));
+            if (!factory.create) Values::reject("Unregistered Qt native factory");
+            object.reset(factory.create());
+        } else {
+            component.loadUrl(QUrl(uri), QQmlComponent::PreferSynchronous);
+            if (component.isError()) throw std::runtime_error(component.errorString().toStdString());
+            object.reset(component.beginCreate(s->engine.rootContext()));
+            begun = bool(object);
+        }
+        if (!object) Values::reject("Qt component/factory returned no object");
+        if (object->parent()) Values::reject("Qt factory must return an unparented object");
+        auto map = Values::parse(wire);
+        if (map[0].toString() != "map") Values::reject("Initial properties must be a map");
+        QVariantMap props;
+        QHash<QString, Values::References> refs;
+        for (const auto &entry : Values::array(map[1])) {
+            auto pair = Values::array(entry);
+            if (pair.size() != 2) Values::reject("Malformed initial property entry");
+            auto name = Values::text(pair[0]);
+            if (props.contains(name)) Values::reject("Duplicate initial property");
+            auto prop = Values::property(object.get(), name.toUtf8().constData());
+            props.insert(name, Values::checked(prop, Values::array(pair[1]), refs[name]));
+        }
+        if (*relayProperty) {
+            auto prop = Values::property(object.get(), relayProperty);
+            auto type = QMetaType(prop.propertyType());
+            if (!prop.isWritable() || !type.flags().testFlag(QMetaType::PointerToQObject) ||
+                !s->relay.metaObject()->inherits(type.metaObject()))
+                Values::reject("Relay property must accept a QObject");
+            props.insert(QString::fromUtf8(relayProperty), QVariant::fromValue(&s->relay));
+        }
+        if (begun) {
+            // Qt's initial-property API rejects dotted/grouped properties. These
+            // cannot be QML required declarations; write them before completion.
+            for (auto it = props.begin(); it != props.end();) {
+                if (it.key().contains('.')) {
+                    if (!QQmlProperty::write(object.get(), it.key(), it.value(), qmlContext(object.get())))
+                        Values::reject("Qt rejected grouped initial property");
+                    it = props.erase(it);
+                } else ++it;
+            }
+            component.setInitialProperties(object.get(), props);
+            component.completeCreate();
+            begun = false;
+            if (component.isError()) throw std::runtime_error(component.errorString().toStdString());
+        } else {
+            for (auto it = props.cbegin(); it != props.cend(); ++it)
+                if (!QQmlProperty::write(object.get(), it.key(), it.value())) Values::reject("Qt factory property write failed");
+            if (factory.complete) factory.complete(object.get());
+        }
+        QQmlEngine::setObjectOwnership(object.get(), QQmlEngine::CppOwnership);
+        object->setParent(&s->engine);
+        Handle handle = s->relay.track(object.release());
+        s->relay.valueReferences.insert(handle, refs);
+        return handle;
+    } catch (const std::exception &e) {
+        // Balance beginCreate even when schema validation rejects an initial value.
+        if (begun) component.completeCreate();
+        error = QByteArray(source) + ": " + e.what();
+        if (component.isError()) error += "\n" + component.errorString().toUtf8();
+        return 0;
+    }
+}
+// Composition targets are owned descendants, never arbitrary external objects.
+extern "C" Q_DECL_EXPORT Handle gqt_child_target(Handle id, const char *property) {
+    auto *object = objectFor(id);
+    if (!object) return 0;
+    if (!*property) return id;
+    auto *target = QQmlProperty::read(object, QString::fromUtf8(property)).value<QObject *>();
+    bool owned = false;
+    for (auto *p = target; p; p = p->parent()) if (p == object) owned = true;
+    if (!owned || !qobject_cast<QQuickItem *>(target)) { fail("Child target must be an owned QQuickItem"); return 0; }
+    auto handle = active->relay.identities.value(target);
+    return handle ? handle : active->relay.track(target);
+}
+extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
+    auto *parent = objectFor(parentId);
+    auto *child = objectFor(childId);
+    if (!parent || !child) return 0;
+    if (!qobject_cast<QQuickItem *>(child)) {
+        for (auto *p = parent; p; p = p->parent()) if (p == child) return fail("Qt ownership cycle");
+        if (child->parent() != &active->engine) return fail("Qt child already has a parent");
+        child->setParent(parent); return 1;
+    }
+    auto *parentItem = qobject_cast<QQuickItem *>(parent);
+    auto *childItem = qobject_cast<QQuickItem *>(child);
+    if (!parentItem) return fail("Visual child requires a visual parent");
+    if (childItem->parentItem()) return fail("Qt child already has a parent");
+    for (auto *p = parentItem; p; p = p->parentItem())
+        if (p == child) return fail("Qt ownership cycle");
+    child->setParent(parent);
+    childItem->setParentItem(parentItem);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_is_item(Handle id) {
+    return qobject_cast<QQuickItem *>(objectFor(id)) != nullptr;
+}
 extern "C" Q_DECL_EXPORT int gqt_reorder(Handle parentId, Handle childId, Handle siblingId) {
+    auto *obj = objectFor(childId);
+    auto *owner = objectFor(parentId);
+    if (obj && owner && !qobject_cast<QQuickItem *>(obj))
+        return obj->parent() == owner || fail("Qt reorder requires a child of this parent");
     auto *parent = itemFor(parentId);
     auto *child = itemFor(childId);
     auto *sibling = siblingId ? itemFor(siblingId) : nullptr;
@@ -314,11 +415,11 @@ extern "C" Q_DECL_EXPORT int gqt_reorder(Handle parentId, Handle childId, Handle
     return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_remove(Handle id) {
-    auto *child = itemFor(id);
+    auto *child = objectFor(id);
     if (!child) return 0;
     if (id == active->container) return fail("Cannot remove the session mount point");
     active->relay.invalidate(child);
-    child->setParentItem(nullptr);
+    if (auto *item = qobject_cast<QQuickItem *>(child)) item->setParentItem(nullptr);
     child->setParent(&active->engine);
     // May be inside this control's signal delivery. Invalidate now, delete later.
     child->deleteLater();

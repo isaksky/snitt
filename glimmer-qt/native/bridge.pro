@@ -4,9 +4,11 @@ TARGET = glimmer_qt
 CONFIG += c++17 shared release unversioned_libname unversioned_soname
 CONFIG -= lib_bundle
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
+macx: QMAKE_SONAME_PREFIX = @rpath
+DEFINES += GQT_BUILD
 SOURCES += bridge.cpp
 RESOURCES += resources.qrc
-HEADERS += values.h
+HEADERS += values.h extensions.h
 contains(CONFIG, property_tests) {
     DEFINES += GQT_PROPERTY_TESTS
     HEADERS += ../test/native/value_fixture.h

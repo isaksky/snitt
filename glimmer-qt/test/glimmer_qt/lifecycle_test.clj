@@ -147,12 +147,9 @@
                      (throws! #(ui/mount host :vbox [:vbox [child] [:unsupported]]) #"Unsupported")
                      (check! (= count-before (q/live-count)) "Failed child mount releases prior native allocations")
                      (check! (zero? (watches cell)) "Partial creation failure releases prior child subscriptions")
-                     (let [setter q/set-string]
-                       (with-redefs [q/set-string (fn [id prop value]
-                                                    (if (= value "inject-failure")
-                                                      (throw (ex-info "injected property failure" {}))
-                                                      (setter id prop value)))]
-                         (throws! #(w/create! :label {:label "inject-failure"}) #"injected")))
+                     ;; Initial properties now cross the native creation boundary,
+                     ;; so exercise a real checked write failure after allocation.
+                     (throws! #(w/create! :label {:font-size 2147483648}) #"numeric range")
                      (check! (= count-before (q/live-count)) "Failed property application disposes the new allocation")
                      (with-redefs [q/append (fn [& _] (throw (ex-info "injected attachment failure" {})))]
                        (throws! #(ui/mount host :vbox [:label]) #"attachment"))

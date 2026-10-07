@@ -1,4 +1,10 @@
 {:paths ["src"]
+ :jolt/native [{:name "hello-extensions" :optional true
+                :darwin ["build/extensions/libhello_extensions.dylib"]
+                :windows ["build/extensions/release/hello_extensions.dll" "build/extensions/hello_extensions.dll"]
+                :linux ["build/extensions/libhello_extensions.so"]}]
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}
- :aliases {:run {:main-opts ["-m" "hello.core"]}
+ :aliases {:extensions {:extra-paths ["test"] :main-opts ["-m" "hello.extensions-test"]}
+           :extensions-demo {:main-opts ["-m" "hello.extensions"]}
+           :run {:main-opts ["-m" "hello.core"]}
            :smoke {:extra-paths ["test"] :main-opts ["-m" "hello.smoke"]}}}

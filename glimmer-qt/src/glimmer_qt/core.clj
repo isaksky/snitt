@@ -157,8 +157,7 @@
             (abandon!)
             (q/close session)
             (when @callback (ffi/free-callable @callback))
-            (w/clear!)
-            (reset! b/loop-running? false)))))))
+            (try (w/clear!) (finally (reset! b/loop-running? false)))))))))
 
 (def backend
   {:name :qt-quick

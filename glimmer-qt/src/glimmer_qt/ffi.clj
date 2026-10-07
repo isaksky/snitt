@@ -23,7 +23,8 @@
 (defchecked open "gqt_open" [:string :int :int :string] :uint64)
 (defchecked container "gqt_container" [:uint64] :uint64)
 (defchecked set-handler "gqt_set_handler" [:uint64 :pointer] :int)
-(defchecked create "gqt_create" [:uint64 :string] :uint64)
+(defchecked create-registered "gqt_create_registered" [:uint64 :string :string :string] :uint64)
+(defchecked child-target "gqt_child_target" [:uint64 :string] :uint64)
 (defchecked write-value "gqt_write_value" [:uint64 :string :string] :int)
 (defchecked read-value "gqt_read_value" [:uint64 :string] :string)
 (defchecked reset-native "gqt_reset_property" [:uint64 :string] :int)
@@ -51,6 +52,7 @@
 (defn set-number [handle property v] (set-property! handle property v))
 (defn set-bool [handle property v] (set-property! handle property (not (zero? v))))
 (defchecked append "gqt_append" [:uint64 :uint64] :int)
+(ffi/defcfn is-item "gqt_is_item" [:uint64] :int)
 (defchecked reorder "gqt_reorder" [:uint64 :uint64 :uint64] :int)
 (defchecked remove-widget "gqt_remove" [:uint64] :int)
 (defchecked owner "gqt_owner" [:uint64] :uint64)
@@ -74,3 +76,11 @@
 (defchecked save-window "gqt_save_window" [:uint64 :string] :int)
 (defchecked request-close "gqt_request_close" [:uint64] :int)
 (defchecked destroy-native "gqt_destroy_native" [:uint64] :int)
+
+(defn create
+  "Compatibility constructor for built-ins; application code uses widget/create!."
+  [session tag]
+  (when-not (#{"vbox" "hbox" "label" "entry" "button"} tag)
+    (throw (ex-info "Unsupported Qt component tag" {:tag tag})))
+  (create-registered session (str "qrc:/glimmer-qt/" tag ".qml")
+                     (value/encode {}) (if (#{"entry" "button"} tag) "relay" "")))

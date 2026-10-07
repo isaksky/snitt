@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+mkdir -p "$ROOT/build/extensions"
+cd "$ROOT/build/extensions"
+"$QMAKE" "$ROOT/native/extensions.pro"
+make -j"$("$ROOT/../bin/build-jobs")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+if [ "${1:-}" = --demo ]; then
+    shift
+    exec "${JOLT:-jolt}" -M:extensions-demo "$@"
+fi
+exec "${JOLT:-jolt}" -M:extensions "$@"
