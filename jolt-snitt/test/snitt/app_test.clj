@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
+            [glimmer-qt.object :as object]
             [glimmer-qt.widget :as widget]
             [jolt.ffi :as ffi]
             [snitt.app :as app]
@@ -52,8 +53,19 @@
   (check! (not (q/alive? settings)) "Disposal invalidates settings")
   (check! (not (q/alive? backend)) "Disposal invalidates backend")
   (check! (not (q/alive? trim)) "Disposal invalidates trim")
-  (reset! completed? true)
-  (qt/close-window! window))
+  (check! (empty? (sessions/sessions manager)) "Last editor may close while the app lives")
+  (check! (q/alive? (get-in @app/runtime [:host :root]))
+          "Application hotkey survives the last editor")
+  (object/invoke! (get-in @app/runtime [:host :root]) "emitGlobalCaptureForTest()" [])
+  (qt/later! 120
+    (fn []
+      (check! (= 3 (count @capture-starts)) "Fake global hotkey enters Jolt capture")
+      (let [id (:capture (sessions/snapshot manager))]
+        (check! (some? id) "Hotkey creates a capture with no visible editor")
+        (sessions/complete-capture! manager id false))
+      (check! (empty? (sessions/sessions manager)) "Canceled capture returns to background")
+      (reset! completed? true)
+      (qt/quit!))))
 
 (defn exercise! [image]
   (let [{:keys [window services]} @app/runtime
@@ -288,7 +300,7 @@
        #(do (app/start! :capture-start (fn [_ id multiple video]
                                         (swap! capture-starts conj [id multiple video])))
             (qt/later! 250 #(exercise! image)))
-       :app-id "snitt-jolt-development" :keep-alive false :auto-quit-ms 8000)
+       :app-id "snitt-jolt-development" :keep-alive true :auto-quit-ms 8000)
       (check! @completed? "Editor exercised before event loop exit")
       (check! (zero? (widget/live-count)) "Managed widgets released")
       (check! (zero? (q/owned-count)) "Native objects released")

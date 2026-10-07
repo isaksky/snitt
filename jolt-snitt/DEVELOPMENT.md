@@ -1,6 +1,6 @@
 # Jolt Snitt development entry point
 
-Run `./jolt-snitt/run [image-path]` from the repository root. This builds the
+Run `./jolt-snitt/run [image-path | --show | --background | --quit]` from the repository root. This builds the
 Glimmer Qt bridge and the separate Snitt native library, then starts a Jolt-owned
 editor window. `./jolt-snitt/test-app` exercises the real canvas and retained
 services offscreen, then builds and smoke-tests both `jolt build --dev` and the
@@ -10,13 +10,19 @@ Launch those from `jolt-snitt/` with the matching Qt SDK's `QT_PLUGIN_PATH` and
 `QML_IMPORT_PATH` (as the scripts set them). The hello-world experiment remains
 at `./experiment/run`; the C++ application remains at `./bin/run`.
 
-This development process uses Qt application ID `snitt-jolt-development`. It
-does not contact `AppService::serverName()`, install the production hotkey/tray,
-or forward commands to the installed Snitt. Its settings and default picture/
-video output live below Qt's application-local data directory for that ID.
+This development process uses Qt application ID `snitt-jolt-development` and
+its own user-scoped IPC identity. It never contacts `AppService::serverName()`
+or the installed Snitt. A second Jolt invocation forwards its normalized
+arguments to the running instance. The first invocation captures by default,
+opens a path, shows the editor, or stays in the tray according to its arguments.
+The app stays alive after its last editor closes; the tray and application hotkey
+can create another editor. Its settings and default picture/video output live
+below Qt's application-local data directory for that ID.
 Set `SNITT_JOLT_DATA_DIR` to an absolute disposable directory for tests or an
-isolated workspace. The C++ production entry point and its IPC identity are
-unchanged.
+isolated workspace. Set `SNITT_JOLT_IPC_ID` to a unique value when testing
+multiple processes. Automated tests set `SNITT_JOLT_FAKE_HOTKEY=1` to exercise
+hotkey dispatch without registering a system shortcut. The C++ production entry
+point and its IPC identity are unchanged.
 
 `snitt.settings` parses and validates the INI, owns the published settings
 snapshot, and applies accepted values to every editor session. The native
@@ -32,6 +38,15 @@ loader until the application cutover.
 Run `./jolt-snitt/test-settings` for isolated macOS settings cases, including
 ordinary saves, atomic replacement, deletion/recreation, validation errors,
 multi-editor projection, and native hotkey rollback.
+
+`./jolt-snitt/test-app` also runs startup/forwarding policy tests and launches
+the release executable as several isolated processes. Those cases cover command
+forwarding, stale and unresponsive sockets, and simultaneous startup using
+temporary settings.
+
+On an unlocked macOS desktop, `./jolt-snitt/test-desktop` checks the actual
+menu-bar tray, its Show and Quit callbacks, and survival after closing the last
+editor. It uses a disposable settings directory and a fake global hotkey.
 
 `snitt.native/install!` registers `snitt-jolt.canvas` and
 `snitt-jolt.services` with the generic Glimmer factory seam on the Qt thread.

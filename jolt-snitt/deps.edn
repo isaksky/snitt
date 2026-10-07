@@ -8,4 +8,6 @@
  :aliases {:run {:main-opts ["-m" "snitt.app"]}
            :test {:extra-paths ["test"] :main-opts ["-m" "snitt.app-test"]}
            :commands {:extra-paths ["test"] :main-opts ["-m" "snitt.commands-test"]}
+           :lifecycle {:extra-paths ["test"] :main-opts ["-m" "snitt.lifecycle-test"]}
+           :desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.desktop-test"]}
            :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}}}

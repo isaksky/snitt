@@ -9,6 +9,7 @@
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
             [snitt.commands :as commands]
+            [snitt.lifecycle :as lifecycle]
             [snitt.native :as native]
             [snitt.sessions :as sessions]
             [snitt.settings :as settings]))
@@ -153,15 +154,35 @@
 (defn dispatch-global!
   "Dispatch tray, native hotkey, or external application commands."
   [action]
-  (when-let [manager (:manager @runtime)]
-    (when-let [effects (commands/global-decide
-                       {:session-manager? true
-                        :capture? (boolean (:capture (sessions/snapshot manager)))} action)]
-      (doseq [[effect] effects]
-        (case effect
-          :hotkey-capture (sessions/hotkey-capture! manager)
-          :show-editor (sessions/show-editor! manager)))
-      true)))
+  (if (= action "quit") (do (qt/quit!) true)
+    (when-let [manager (:manager @runtime)]
+      (if (= action "capture")
+        (sessions/capture! manager false false)
+        (when-let [effects (commands/global-decide
+                           {:session-manager? true
+                            :capture? (boolean (:capture (sessions/snapshot manager)))} action)]
+          (doseq [[effect] effects]
+            (case effect
+              :hotkey-capture (sessions/hotkey-capture! manager)
+              :show-editor (sessions/show-editor! manager)))
+          true)))))
+
+(defn dispatch-arguments!
+  ([arguments] (dispatch-arguments! arguments false))
+  ([arguments startup?]
+   (when-let [manager (:manager @runtime)]
+     (let [[action path] ((if startup? lifecycle/startup-command lifecycle/command) arguments)]
+       (case action
+         :quit (qt/quit!)
+         :background nil
+         :show (dispatch-global! "showEditor")
+         :image (try (sessions/open-image! manager
+                                          (object/invoke! (:endpoint @runtime) "fileUrl(QString)" [path])
+                                          (last (str/split path #"[/\\]")))
+                     (catch Throwable e
+                       (when-let [icon (:tray @runtime)]
+                         (tray/notify! icon "Could not open editor" (ex-message e) :kind :warning))))
+         :capture (sessions/capture! manager false false))))))
 
 (defn- accept-image! [context url]
   (swap! (:state context) assoc :modal? false)
@@ -316,49 +337,73 @@
     (when (q/alive? icon)
       (tray/notify! icon "Snitt settings not applied" message :kind :warning))))
 
-(defn start! [& {:keys [image capture-start]}]
+(defn start! [& {:keys [image capture-start background]}]
   (native/install!)
   (reset! state (initial-state))
   (settings/configure! :on-publish settings-published! :on-error settings-error!
                        :on-capture #(dispatch-global! "globalCapture"))
-  (let [manager (sessions/manager create-editor! :start-capture capture-start)]
-    (reset! runtime {:manager manager})
-    (let [id (sessions/create! manager nil)
-          {:keys [window services context]} (sessions/session manager id)]
-      (swap! runtime assoc :window window :services services :context context)
-      (when (tray/available?)
-        (let [icon (tray/create! ":/icons/square.svg"
-                                 :tooltip (str "Snitt — Capture "
-                                               (get-in @settings/published [:hints "globalCapture"])))
-              action (tray/add-action! icon :label "Capture"
-                                        :shortcut-hint (get-in @settings/published [:hints "globalCapture"])
-                                        :on-trigger #(dispatch-global! "globalCapture"))]
-          (tray/add-action! icon :label "Show Snitt"
-                            :on-trigger #(dispatch-global! "showEditor"))
+  (let [manager (sessions/manager create-editor! :start-capture capture-start)
+        host (native/create-services!)]
+    (reset! runtime {:manager manager :host host})
+    (settings/register! host)
+    (when-not background
+      (let [id (sessions/create! manager nil)
+            {:keys [window services context]} (sessions/session manager id)]
+        (swap! runtime assoc :window window :services services :context context)
+        (qt/activate! window)
+        (when image
+          (when-not (native/load-image! (canvas context) image)
+            (report! context (str "Could not open " image) true)))))
+    (when (tray/available?)
+      (let [icon (tray/create! ":/icons/square.svg"
+                               :tooltip (str "Snitt — Capture "
+                                             (get-in @settings/published [:hints "globalCapture"]))
+                               :on-activate #(when (= % :double-click)
+                                               (dispatch-global! "capture")))
+            action (tray/add-action! icon :label "Capture region"
+                                      :shortcut-hint (get-in @settings/published [:hints "globalCapture"])
+                                      :on-trigger #(dispatch-global! "capture"))
+            show-action (tray/add-action! icon :label "Open editor"
+                                          :on-trigger #(dispatch-global! "showEditor"))]
+        (tray/add-separator! icon)
+        (let [quit-action (tray/add-action! icon :label "Quit Snitt"
+                                            :on-trigger #(dispatch-global! "quit"))]
           (tray/show! icon)
-          (swap! runtime assoc :tray icon :capture-action action)))
-      (qt/activate! window)
-      (when image
-        (when-not (native/load-image! (canvas context) image)
-          (report! context (str "Could not open " image) true)))
-      @runtime)))
+          (swap! runtime assoc :tray icon :capture-action action
+                 :show-action show-action :quit-action quit-action))))
+    @runtime))
 
 (defn -main [& args]
   (let [smoke? (= args ["--smoke-test"])
-        image (when (and (= 1 (count args)) (not smoke?)) (first args))]
-    (when (and (seq args) (not smoke?) (nil? image))
-      (throw (ex-info "Usage: run [image-path | --smoke-test]" {:args args})))
+        result (atom nil)]
     (try
       (qt/run-application!
-       #(do (start! :image image)
-            (when smoke?
-              (qt/later! 250
-                (fn []
-                  (when-not (and (qt/window-alive? (:window @runtime))
-                                 (q/alive? (canvas))
-                                 (q/alive? (get-in @runtime [:services :backend])))
-                    (throw (ex-info "Snitt Jolt smoke failed" {})))
-                  (qt/quit!)))))
-       :app-id "snitt-jolt-development" :keep-alive false
+       #(do
+          (native/install!)
+          (if smoke?
+            (do (start!)
+                (qt/later! 250
+                  (fn []
+                    (when-not (and (qt/window-alive? (:window @runtime))
+                                   (q/alive? (canvas))
+                                   (q/alive? (get-in @runtime [:services :backend])))
+                      (throw (ex-info "Snitt Jolt smoke failed" {})))
+                    (qt/quit!))))
+            (let [endpoint (widget/create! :snitt/lifecycle {})
+                  arguments (lifecycle/absolute-arguments endpoint args)
+                  status (object/invoke! endpoint "start(QStringList)" [arguments])]
+              (reset! result status)
+              (case status
+                "owner" (do
+                          (start! :background true)
+                          (swap! runtime assoc :endpoint endpoint)
+                          (object/subscribe! endpoint endpoint "commandReceived(QStringList)"
+                                             dispatch-arguments!)
+                          (qt/later! 200 #(dispatch-arguments! arguments true)))
+                ("forwarded" "quit") (qt/later! 0 qt/quit!)
+                "error" (qt/later! 0 qt/quit!)))))
+       :app-id "snitt-jolt-development" :keep-alive true
        :auto-quit-ms (when smoke? 5000))
+      (when (= "error" @result)
+        (throw (ex-info "Another Snitt Jolt instance is starting or unresponsive." {})))
       (finally (settings/clear!) (reset! runtime nil) (shutdown-agents)))))

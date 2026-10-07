@@ -17,6 +17,9 @@
 (widget/register! :snitt/services
   {:source "native:snitt-jolt.services" :children :none
    :props {:id ["objectName" :string ""]}})
+(widget/register! :snitt/lifecycle
+  {:source "native:snitt-jolt.lifecycle" :children :none
+   :props {:id ["objectName" :string ""]}})
 
 (defn install! []
   (when-not @registered?

@@ -8,6 +8,7 @@ export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
 SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt-settings.XXXXXX")"
 export SNITT_JOLT_DATA_DIR
+export SNITT_JOLT_FAKE_HOTKEY=1
 trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
 cd "$ROOT"
 "${JOLT:-jolt}" -M:settings
