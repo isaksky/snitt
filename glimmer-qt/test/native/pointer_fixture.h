@@ -14,7 +14,7 @@ extern "C" Q_DECL_EXPORT int gqt_test_pointer(Handle id, int action, double x, d
         QWheelEvent event(p, window->mapToGlobal(p), QPoint(0, action == 4 ? 7 : 0),
                           QPoint(0, action == 4 ? 0 : 120), Qt::NoButton,
                           action == 4 ? Qt::ControlModifier : Qt::NoModifier,
-                          Qt::ScrollUpdate, false);
+                          action == 4 ? Qt::ScrollUpdate : Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(window, &event);
         break;
     }

@@ -139,6 +139,23 @@
                                             :border-color ["border.color" :color "transparent"]}) {} :self ""]
          [:label (merge common typography accessible text-layout
                         {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
+         [:scroll (merge common
+                         {:padding ["padding" :number 0]
+                          :content-width ["explicitContentWidth" :number -1]
+                          :horizontal-scrollbar ["horizontalPolicy" :string "as-needed"]
+                          :vertical-scrollbar ["verticalPolicy" :string "as-needed"]})
+          {:on-wheel :pointer} "content" "relay"]
+         [:text-area (merge common typography
+                            {:tab-focus ["activeFocusOnTab" :bool true]
+                             :text ["text" :string ""]
+                             :padding ["padding" :number 6]
+                             :color ["color" :color "#ffffff"]
+                             :selection-color ["selectionColor" :color "#3465a4"]
+                             :selected-text-color ["selectedTextColor" :color "#ffffff"]
+                             :wrap ["wrapMode" :value (value/enum "Wrap")]
+                             :cursor-position ["cursorIndex" :number -1]
+                             :selection-anchor ["anchorIndex" :number -1]})
+          {:on-change :string :on-cancel :none :on-commit :none :on-wheel :pointer} :none "relay"]
          [:entry (merge common {:tab-focus ["activeFocusOnTab" :bool true] :text ["text" :string ""] :placeholder ["hint" :string ""]})
           {:on-change :string :on-activate :none} :none "relay"]
          [:button actions
@@ -201,11 +218,19 @@
   (doseq [key [:width :height :relative-width :relative-height :implicit-width :implicit-height
                :min-width :min-height :preferred-width :preferred-height :max-width :max-height
                :padding :padding-left :padding-right :padding-top :padding-bottom :spacing
-               :radius :border-width]
+               :radius :border-width :content-width]
           :let [v (get props key)] :when (and (number? v) (neg? v))]
     (throw (ex-info "Geometry dimensions and spacing must be nonnegative; omit to use defaults." {:property key})))
   (when (and (number? (:opacity props)) (not (<= 0 (:opacity props) 1)))
     (throw (ex-info "Opacity must be between zero and one." {})))
+  (doseq [key [:horizontal-scrollbar :vertical-scrollbar]
+          :when (contains? props key)]
+    (when-not (#{"as-needed" "always" "never"} (get props key))
+      (throw (ex-info "Invalid scrollbar policy." {:property key}))))
+  (doseq [key [:cursor-position :selection-anchor]
+          :let [v (get props key)] :when (some? v)]
+    (when-not (and (integer? v) (<= 0 v 2147483647))
+      (throw (ex-info "Text positions require nonnegative codepoint indices." {:property key}))))
   (let [spec (spec-for tag)]
     (doseq [key (:required (registration tag))]
       (when-not (contains? props key)
@@ -225,7 +250,7 @@
              (or (some #(contains? props %) [:x :y :relative-x :relative-y :relative-width :relative-height :anchor])
                  (and (not= :flow parent-tag) (some #(contains? props %) [:width :height]))))
     (throw (ex-info "Layout owns child geometry; use preferred dimensions and an overlay container." {})))
-  (when (and (#{:flow :item :overlay :rectangle :pointer-area} parent-tag)
+  (when (and (#{:scroll :flow :item :overlay :rectangle :pointer-area} parent-tag)
              (some #(contains? props %) [:hexpand :vexpand :min-width :min-height :max-width :max-height
                                          :preferred-width :preferred-height :alignment :margin :margin-left
                                          :margin-right :margin-top :margin-bottom]))
@@ -243,6 +268,11 @@
             value (prop-value props key default)]
         (when (or (nil? previous) (#{:text :checked} key) (not= value (prop-value previous key default)))
           (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
+    (when (and (= tag :text-area) (contains? props :cursor-position)
+               (or (not= (:text props) (:text previous))
+                   (not= (:cursor-position props) (:cursor-position previous))
+                   (not= (:selection-anchor props) (:selection-anchor previous))))
+      (q/invoke! widget "applySelection()" []))
     (when (or (:on-key-press props) (:on-key-release props)
               (:on-key-press previous) (:on-key-release previous))
       (q/configure-keys widget (if (:on-key-press props) 1 0) (if (:on-key-release props) 1 0)))
@@ -321,8 +351,8 @@
   (check-container! tag parent)
   (when (:parent (live-widget child))
     (throw (ex-info "Qt child already has a parent." {:child child})))
-  (when (and (= tag :window) (seq (:children (live-widget parent))))
-    (throw (ex-info "A Qt window accepts one root component." {})))
+  (when (and (#{:window :scroll} tag) (seq (:children (live-widget parent))))
+    (throw (ex-info "A Qt window or scroll container accepts one root component." {})))
   (placement! tag child)
   (q/append (:target (live-widget parent)) child)
   (swap! widgets assoc-in [child :parent] parent)

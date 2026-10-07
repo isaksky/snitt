@@ -110,3 +110,61 @@ Run `./glimmer-qt/test-pointer` for offscreen Qt window input tests, or
 `QT_QPA_PLATFORM=cocoa ./glimmer-qt/test-pointer` for local macOS desktop delivery.
 These send mouse/wheel events through Qt hit testing and grabbing, not QML signal
 invocation. The offscreen run also models a negative desktop window origin.
+
+## Scrolling and multiline text
+
+`:scroll` owns one content root (use an item/box to group multiple children).
+It clips a Flickable viewport and exposes `contentWidth` and `contentHeight` for
+property subscriptions. `:padding` insets the viewport. Content width follows
+its viewport unless `:content-width` specifies a logical pixel width; height
+follows the child's bounds. `:horizontal-scrollbar` and `:vertical-scrollbar`
+accept `"as-needed"` (default), `"always"`, or `"never"`. Layout hints size the
+scroll frame, not its content. Primitive content can use `:relative-width 1`;
+`:text-area` automatically follows the content width and grows with its text.
+
+```clojure
+[:scroll {:hexpand true :vexpand true :padding 4
+          :on-wheel (fn [event]
+                      (when (font-wheel? event)
+                        (adjust-font! event)
+                        true))}
+ [:text-area {:text @draft :on-change #(reset! draft %)
+              :font-size @font-size :color "#ffffff" :padding 6
+              :on-cancel cancel! :on-commit commit!
+              :qt/subscriptions
+              {:height {:property "contentHeight" :handler layout-height!}}}]]
+```
+
+`:text-area` is plain text with mouse selection, multiline editing, and `Wrap`
+by default. `:wrap` takes a Qt symbolic enum (e.g. `Wrap`, `WordWrap`, `NoWrap`).
+It supports the shared font properties, `:color`, `:selection-color`, and
+`:selected-text-color`. Equal controlled text writes do not reset the document,
+selection, cursor, or preedit. Style-only `textChanged` notifications are filtered;
+programmatic prop assignment does not call `:on-change`. Keep the controlled
+`:text` atom current in `:on-change`; an actual external text replacement owns
+the document and may end an active edit/composition.
+
+Optional `:cursor-position` and `:selection-anchor` use zero-based **Unicode
+codepoint** offsets, not UTF-16 units or grapheme clusters. Positions beyond the
+text clamp to its end. Set both for a directed selection, or only the cursor to
+collapse it. Selection commands apply when those props or text change; unrelated
+renders leave the user's current selection intact. Removing them leaves selection
+uncontrolled. Read/observe `cursorCodepoint`, `selectionStartCodepoint`, and
+`selectionEndCodepoint` through the property API. Native `cursorPosition` and
+`selectionStart`/`selectionEnd` remain Qt UTF-16 values; do not pass them directly
+to Jolt string functions. Combining marks count separately, surrogate pairs once.
+
+Escape calls `:on-cancel`; Command+Return on macOS (Control+Return on Windows)
+calls `:on-commit`, also for keypad Enter. Both consume the key and ignore repeats;
+IME composition retains its own key handling. Plain Return inserts a newline.
+Use the handlers to implement application policy and restore focus as appropriate.
+`:on-wheel` on the scroll frame can consume wheel events before scrolling;
+`:text-area` also supports it when used independently. The payload includes
+angle/pixel deltas, modifiers, and inversion. Only literal `true` consumes it.
+The active editor keeps its cursor visible in its containing scroll viewport.
+
+`./glimmer-qt/test-text` sends Qt key, clipboard paste, input-method and wheel
+events through a real Qt window using the offscreen platform. For macOS desktop
+verification use `QT_QPA_PLATFORM=cocoa ./glimmer-qt/test-text`. Clipboard tests
+restore the original MIME formats. These are distinct execution modes; neither
+claims Windows validation.

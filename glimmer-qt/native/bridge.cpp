@@ -1,4 +1,6 @@
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include "extensions.h"
 #include <QElapsedTimer>
 #include <QCloseEvent>
@@ -823,6 +825,16 @@ extern "C" Q_DECL_EXPORT int gqt_test_modal(Handle id, int show) {
         dialog->show();
         dialog->requestActivate();
     } else { delete dialog.data(); dialog = nullptr; }
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_paste(Handle id, const char *text) {
+    auto *window = qobject_cast<QQuickWindow *>(objectFor(id)); if (!window) return 0;
+    auto *previous = new QMimeData;
+    if (const auto *mime = QApplication::clipboard()->mimeData())
+        for (const auto &format : mime->formats()) previous->setData(format, mime->data(format));
+    QApplication::clipboard()->setText(QString::fromUtf8(text));
+    QTest::keyClick(window, Qt::Key_V, Qt::ControlModifier);
+    QApplication::clipboard()->setMimeData(previous);
     return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_test_ime(Handle id, int phase) {

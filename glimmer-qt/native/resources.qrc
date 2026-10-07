@@ -5,6 +5,8 @@
         <file alias="vbox.qml">../qml/vbox.qml</file>
         <file alias="hbox.qml">../qml/hbox.qml</file>
         <file alias="label.qml">../qml/label.qml</file>
+        <file alias="scroll.qml">../qml/scroll.qml</file>
+        <file alias="text-area.qml">../qml/text-area.qml</file>
         <file alias="entry.qml">../qml/entry.qml</file>
         <file alias="button.qml">../qml/button.qml</file>
         <file alias="Geometry.qml">../qml/Geometry.qml</file>
