@@ -3,6 +3,7 @@
 #include "../../src/backend.h"
 #include "../../src/editorcanvas.h"
 #include "../../src/globalhotkey.h"
+#include "../../src/regionselector.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -21,6 +22,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <algorithm>
 #include <memory>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -161,14 +163,25 @@ public:
         // Backend owns a member TrimSession; parent it for the bridge's
         // descendant check, then expose only a borrowed handle to Jolt.
         m_backend->trim()->setParent(m_backend);
-        // Backend removes its temporary capture file immediately after emitting
-        // captured. Copy it into this session's document on the native stack;
-        // Jolt's queued signal delivery is intentionally too late for the file.
+        m_backend->setExternalCaptureRouting(true);
+        // Backend removes its temporary file when the signal returns. Retain
+        // pixels here until Jolt accepts or discards this session's result.
         connect(m_backend, &Backend::captured, this, [this](const QUrl &url) {
-            if (m_canvas) m_canvas->load(url);
+            QImageReader reader(url.toLocalFile());
+            reader.setAutoTransform(true);
+            m_captureImage = reader.read();
+            m_captureRegions.clear();
+            m_captureKind = m_captureImage.isNull() ? None : Image;
+            if (m_captureKind == None)
+                emit captureDataError(QStringLiteral("Could not open this image: ") + reader.errorString());
+            else
+                emit captureReady();
         });
         connect(m_backend, &Backend::regionsCaptured, this, [this](const QVariantList &images) {
-            if (m_canvas) m_canvas->loadExternalRegions(images);
+            m_captureImage = QImage();
+            m_captureRegions = images;
+            m_captureKind = Regions;
+            emit captureReady();
         });
     }
 
@@ -188,6 +201,102 @@ public:
         if (!editor || m_canvas) return false;
         m_canvas = editor;
         connect(editor, &QObject::destroyed, this, [this] { m_canvas = nullptr; });
+        return true;
+    }
+
+    Q_INVOKABLE bool consumeCapture() {
+        if (!m_canvas) return false;
+        const CaptureKind kind = m_captureKind;
+        m_captureKind = None;
+        bool loaded = false;
+        if (kind == Image) loaded = m_canvas->loadCapturedImage(m_captureImage);
+        if (kind == Regions) loaded = m_canvas->loadExternalRegions(m_captureRegions);
+        m_captureImage = QImage();
+        m_captureRegions.clear();
+        return loaded;
+    }
+
+    Q_INVOKABLE void discardCapture() {
+        m_captureKind = None;
+        m_captureImage = QImage();
+        m_captureRegions.clear();
+    }
+
+    Q_INVOKABLE bool queueCaptureFileForTest(const QString &path) {
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")) return false;
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        m_captureImage = reader.read();
+        if (m_captureImage.isNull()) return false;
+        m_captureRegions.clear();
+        m_captureKind = Image;
+        emit captureReady();
+        return true;
+    }
+
+    Q_INVOKABLE bool queueCaptureRegionsForTest(const QStringList &paths) {
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1") || paths.isEmpty()) return false;
+        QVariantList images;
+        for (const QString &path : paths) {
+            QImageReader reader(path);
+            const QImage image = reader.read();
+            if (image.isNull()) return false;
+            images.append(image);
+        }
+        m_captureImage = QImage();
+        m_captureRegions = images;
+        m_captureKind = Regions;
+        emit captureReady();
+        return true;
+    }
+
+    Q_INVOKABLE void finishCaptureForTest(bool captured) {
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") == QStringLiteral("1"))
+            emit m_backend->captureFinished(captured);
+    }
+
+    Q_INVOKABLE void failCaptureForTest(const QString &message) {
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") == QStringLiteral("1")) {
+            emit m_backend->error(message);
+            emit m_backend->captureFinished(false);
+        }
+    }
+
+    Q_INVOKABLE QVariantList captureDisplaysForTest() const {
+        QVariantList result;
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")) return result;
+        for (QScreen *screen : QGuiApplication::screens()) {
+            result.append(QVariantMap{{QStringLiteral("geometry"), screen->geometry()},
+                                      {QStringLiteral("scale"), screen->devicePixelRatio()}});
+        }
+        return result;
+    }
+
+    Q_INVOKABLE int captureSelectorCountForTest() const {
+        return captureSelectorsForTest().size();
+    }
+
+    Q_INVOKABLE bool selectCaptureRegionForTest(int monitor) {
+        const auto selectors = captureSelectorsForTest();
+        if (monitor < 0 || monitor >= selectors.size()) return false;
+        auto *selector = selectors[monitor];
+        const QImage image = selector->crop(testRegion(selector));
+        if (image.isNull()) return false;
+        emit selector->selected(image);
+        return true;
+    }
+
+    Q_INVOKABLE bool addCaptureRegionForTest(int monitor) {
+        const auto selectors = captureSelectorsForTest();
+        if (monitor < 0 || monitor >= selectors.size()) return false;
+        emit selectors[monitor]->regionAdded(testRegion(selectors[monitor]));
+        return true;
+    }
+
+    Q_INVOKABLE bool acceptCaptureRegionsForTest() {
+        const auto selectors = captureSelectorsForTest();
+        if (selectors.isEmpty()) return false;
+        emit selectors.first()->accepted();
         return true;
     }
 
@@ -239,7 +348,30 @@ public:
     }
 signals:
     void globalCaptureActivated();
+    void captureReady();
+    void captureDataError(const QString &message);
 private:
+    static QRectF testRegion(const RegionSelector *selector) {
+        return QRectF(qMax(0, selector->width() / 2 - 50),
+                      qMax(0, selector->height() / 2 - 50), 100, 100);
+    }
+    QList<RegionSelector *> captureSelectorsForTest() const {
+        QList<RegionSelector *> selectors;
+        if (qEnvironmentVariable("SNITT_JOLT_FAKE_CAPTURE") != QStringLiteral("1")) return selectors;
+        for (QWidget *window : QApplication::topLevelWidgets())
+            if (auto *selector = qobject_cast<RegionSelector *>(window); selector && selector->isVisible())
+                selectors.append(selector);
+        std::sort(selectors.begin(), selectors.end(), [](RegionSelector *left, RegionSelector *right) {
+            return left->geometry().topLeft().x() < right->geometry().topLeft().x()
+                || (left->geometry().topLeft().x() == right->geometry().topLeft().x()
+                    && left->geometry().topLeft().y() < right->geometry().topLeft().y());
+        });
+        return selectors;
+    }
+    enum CaptureKind { None, Image, Regions };
+    CaptureKind m_captureKind = None;
+    QImage m_captureImage;
+    QVariantList m_captureRegions;
     AppSettings *m_settings = nullptr;
     Backend *m_backend = nullptr;
     QPointer<EditorCanvas> m_canvas;

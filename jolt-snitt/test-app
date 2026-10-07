@@ -14,13 +14,17 @@ export SNITT_JOLT_FAKE_HOTKEY=1
 SNITT_JOLT_IMAGE="$SNITT_JOLT_DATA_DIR/source.png"
 SNITT_JOLT_SAVED_PATH="$SNITT_JOLT_DATA_DIR/saved-path.txt"
 SNITT_JOLT_COPIED_PATH="$SNITT_JOLT_DATA_DIR/copied.png"
-export SNITT_JOLT_IMAGE SNITT_JOLT_SAVED_PATH SNITT_JOLT_COPIED_PATH
+SNITT_JOLT_CAPTURE_FILE="$SNITT_JOLT_DATA_DIR/capture.png"
+export SNITT_JOLT_IMAGE SNITT_JOLT_SAVED_PATH SNITT_JOLT_COPIED_PATH SNITT_JOLT_CAPTURE_FILE
+export SNITT_JOLT_FAKE_CAPTURE=1
 trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
 python3 "$ROOT/test/image_pixels.py" generate "$SNITT_JOLT_IMAGE"
+cp "$SNITT_JOLT_IMAGE" "$SNITT_JOLT_CAPTURE_FILE"
 cd "$ROOT"
 "${JOLT:-jolt}" -M:commands
 "${JOLT:-jolt}" -M:lifecycle
 "${JOLT:-jolt}" -M:test
+"${JOLT:-jolt}" -M:capture
 SNITT_JOLT_CAPTURE_DIR="$ROOT/../build/jolt-snitt" QT_SCALE_FACTOR=2 "${JOLT:-jolt}" -M:annotation
 python3 "$ROOT/test/image_pixels.py" verify "$(cat "$SNITT_JOLT_SAVED_PATH")"
 python3 "$ROOT/test/image_pixels.py" verify "$SNITT_JOLT_COPIED_PATH"

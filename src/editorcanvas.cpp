@@ -188,6 +188,11 @@ bool EditorCanvas::load(const QUrl &url) {
         emit error(QStringLiteral("Could not open this image: ") + reader.errorString());
         return false;
     }
+    return loadCapturedImage(image);
+}
+
+bool EditorCanvas::loadCapturedImage(const QImage &image) {
+    if (image.isNull()) return false;
     m_document.reset(image);
     clearRegions();
     changed();

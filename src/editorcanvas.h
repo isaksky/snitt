@@ -75,6 +75,7 @@ public:
     Q_INVOKABLE bool applyExternalArrangement(const QString &order, int columns,
                                              int selected, bool arranging);
     Q_INVOKABLE bool load(const QUrl &url);
+    bool loadCapturedImage(const QImage &image);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
     Q_INVOKABLE QString save();

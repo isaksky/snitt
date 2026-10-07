@@ -4,11 +4,13 @@
   (:require [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
+            [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]))
 
 (defn manager [create & {:keys [start-capture]}]
   {:state (atom {:next-id 0 :order [] :sessions {} :last-active nil
-                 :capture nil :hidden [] :restore-focus nil})
+                 :capture nil :capture-loaded false :capture-finished false
+                 :hidden [] :restore-focus nil})
    :create create :start-capture start-capture})
 
 (defn snapshot [manager] @(:state manager))
@@ -30,6 +32,37 @@
 
 (declare close! complete-capture!)
 
+(defn- report-error! [manager id message]
+  (let [{:keys [capture restore-focus last-active order]} (snapshot manager)
+        target-id (if (= capture id)
+                    (or restore-focus last-active
+                        (last (remove #{id} order)) id)
+                    id)]
+    (when-let [report (:on-error (session manager target-id))]
+      (report target-id message))))
+
+(defn- capture-result! [manager id]
+  (when (= id (:capture (snapshot manager)))
+    (let [{:keys [window services]} (session manager id)]
+      (if (object/invoke! (:root services) "consumeCapture()" [])
+        (do
+          (swap! (:state manager) assoc :capture-loaded true)
+          (object/invoke! (:backend services) "positionEditorForCapture(QObject*)"
+                          [(value/object window)])
+          (when (:capture-finished (snapshot manager))
+            (complete-capture! manager id true)))
+        (do
+          (report-error! manager id "Could not open the captured image.")
+          (complete-capture! manager id false))))))
+
+(defn- capture-finished! [manager id captured]
+  (when (= id (:capture (snapshot manager)))
+    (if captured
+      (do (swap! (:state manager) assoc :capture-finished true)
+          (when (:capture-loaded (snapshot manager))
+            (complete-capture! manager id true)))
+      (complete-capture! manager id false))))
+
 (defn- watch-session! [manager id]
   (let [{:keys [window services on-recording-saved on-recording-changed]} (session manager id)
         backend (:backend services)
@@ -43,7 +76,20 @@
                (fn [captured]
                  (when-not (or (q/read-property backend "recording")
                                (seq (q/read-property trim "path")))
-                   (complete-capture! manager id captured))))
+                   (capture-finished! manager id captured))))
+    (subscribe (:root services) backend "captureScreenReady(int,int)"
+               (fn [completed total]
+                 (when (= id (:capture (snapshot manager)))
+                   (if (and (<= 0 completed total) (q/read-property backend "capturing"))
+                     (object/invoke! backend "advanceCapture(int)" [completed])
+                     (complete-capture! manager id false)))))
+    (subscribe (:root services) (:root services) "captureReady()"
+               #(capture-result! manager id))
+    (subscribe (:root services) (:root services) "captureDataError(QString)"
+               (fn [message]
+                 (when (= id (:capture (snapshot manager)))
+                   (report-error! manager id message)
+                   (complete-capture! manager id false))))
     (subscribe (:root services) backend "recordingSaved(QString)"
                (fn [path]
                  (when on-recording-saved (on-recording-saved manager id path))
@@ -54,13 +100,7 @@
                #(when on-recording-changed (on-recording-changed manager id)))
     (subscribe (:root services) backend "error(QString)"
                (fn [message]
-                 (let [{:keys [capture restore-focus last-active order]} (snapshot manager)
-                       target-id (if (= capture id)
-                                   (or restore-focus last-active
-                                       (last (remove #{id} order)) id)
-                                   id)]
-                   (when-let [report (:on-error (session manager target-id))]
-                     (report target-id message)))
+                 (report-error! manager id message)
                  (when (and (not (q/read-property backend "capturing"))
                             (not (q/read-property backend "recording")))
                    (complete-capture! manager id false))))
@@ -118,7 +158,8 @@
 (defn complete-capture! [manager id captured]
   (when (= id (:capture (snapshot manager)))
     (let [{:keys [hidden restore-focus]} (snapshot manager)]
-      (swap! (:state manager) assoc :capture nil :hidden [] :restore-focus nil)
+      (swap! (:state manager) assoc :capture nil :capture-loaded false
+             :capture-finished false :hidden [] :restore-focus nil)
       (restore-hidden! manager hidden nil)
       (if (and captured (current? manager id))
         (activate! manager id)
@@ -143,7 +184,8 @@
               focus (first (filter (fn [other]
                                      (q/read-property (:window (session manager other)) "active"))
                                    existing))]
-          (swap! (:state manager) assoc :capture id :hidden hidden :restore-focus focus)
+          (swap! (:state manager) assoc :capture id :capture-loaded false
+                 :capture-finished false :hidden hidden :restore-focus focus)
           (doseq [[other _] hidden] (qt/hide! (:window (session manager other))))
           (try
             (if-let [start (:start-capture manager)]
@@ -183,9 +225,12 @@
                          (update :last-active #(when (not= id %) %))
                          (update :restore-focus #(when (not= id %) %))
                          (cond-> capturing?
-                           (assoc :capture nil :hidden [] :restore-focus nil)))))
+                           (assoc :capture nil :capture-loaded false
+                                  :capture-finished false :hidden [] :restore-focus nil)))))
       (object/disconnect-owner! window)
       (object/disconnect-owner! (:root services))
+      (when (q/alive? (:root services))
+        (object/invoke! (:root services) "discardCapture()" []))
       (when (live-window? review-window) (qt/close-window! review-window))
       (when (live-window? controls-window) (qt/close-window! controls-window))
       (when (live-window? window) (qt/close-window! window))

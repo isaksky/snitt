@@ -12,4 +12,6 @@
            :desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.desktop-test"]}
            :annotation {:extra-paths ["test"] :main-opts ["-m" "snitt.annotation-test"]}
            :arrangement {:extra-paths ["test"] :main-opts ["-m" "snitt.arrangement-test"]}
-           :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}}}
+           :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}
+           :capture {:extra-paths ["test"] :main-opts ["-m" "snitt.capture-test"]}
+           :capture-desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.capture-desktop-test"]}}}

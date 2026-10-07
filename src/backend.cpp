@@ -52,7 +52,10 @@ Backend::Backend(AppSettings *settings, QObject *parent) : QObject(parent), m_se
             return;
         }
         ++m_screenIndex;
-        captureNextScreen();
+        if (m_externalCaptureRouting)
+            emit captureScreenReady(m_screenIndex, m_screens.size());
+        else
+            captureNextScreen();
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
@@ -205,19 +208,32 @@ void Backend::capture(bool multiple, bool video) {
 #ifdef Q_OS_MACOS
         // The non-interactive system tool snapshots each display; Snitt owns
         // selection so M can switch to multiple regions on that frozen desktop.
-        captureNextScreen();
+        if (m_externalCaptureRouting)
+            emit captureScreenReady(0, m_screens.size());
+        else
+            captureNextScreen();
 #else
         DwmFlush();
         const auto screens = QGuiApplication::screens();
         for (int i = 0; i < screens.size(); ++i)
             m_screens[i].image = screens[i]->grabWindow(0).toImage();
-        showSelectors();
+        if (m_externalCaptureRouting) {
+            m_screenIndex = m_screens.size();
+            emit captureScreenReady(m_screens.size(), m_screens.size());
+        } else
+            showSelectors();
 #endif
     });
 #else
     emit error(QStringLiteral("Screen capture supports macOS and Windows. Open or paste an image to edit it here."));
     finish();
 #endif
+}
+
+void Backend::advanceCapture(int nextScreen) {
+    if (m_capturing && m_externalCaptureRouting && nextScreen == m_screenIndex
+        && m_process.state() == QProcess::NotRunning)
+        captureNextScreen();
 }
 
 void Backend::captureNextScreen() {

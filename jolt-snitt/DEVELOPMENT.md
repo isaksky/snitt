@@ -46,7 +46,10 @@ temporary settings.
 
 On an unlocked macOS desktop, `./jolt-snitt/test-desktop` checks the actual
 menu-bar tray, its Show and Quit callbacks, and survival after closing the last
-editor. It uses a disposable settings directory and a fake global hotkey.
+editor. `./jolt-snitt/test-capture-desktop` uses real screenshot acquisition and
+region selectors, with test-controlled selection, to check capture routing on
+every connected display and the captured pixel scale. Both use disposable
+settings directories and fake global hotkeys.
 
 `snitt.native/install!` registers `snitt-jolt.canvas` and
 `snitt-jolt.services` with the generic Glimmer factory seam on the Qt thread.
@@ -57,10 +60,11 @@ reactive state. `snitt.sessions` owns session identity, active-window selection,
 capture admission, visibility snapshots, and teardown. Each session has its own
 retained native services root and canvas. `snitt.native/create-services!` returns
 that owned root plus borrowed settings, backend, and trim handles; disposing the
-root invalidates all borrowed handles. The native adapter loads temporary capture
-files into the session's canvas before the backend removes them, while Jolt owns
-the decision to show or close that editor. Canvas mount/unmount owns its native
-document. Application namespaces call
+root invalidates all borrowed handles. The native adapter retains captured pixels
+before the backend removes its temporary file. Jolt advances each display capture,
+then consumes or discards the retained result, positions the new editor, and
+restores prior editor visibility on completion or failure. Canvas mount/unmount
+owns its native document. Application namespaces call
 `snitt.native` methods and `glimmer-qt.object` with explicit Qt signatures;
 image pixels and undo history stay in `EditorCanvas`, never in reactive state.
 

@@ -52,6 +52,8 @@ public:
     static QRect editorGeometry(const QRect &available, const QSize &size);
     Q_INVOKABLE void positionEditorForCapture(QObject *editor);
     Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
+    Q_INVOKABLE void setExternalCaptureRouting(bool enabled) { m_externalCaptureRouting = enabled; }
+    Q_INVOKABLE void advanceCapture(int nextScreen);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();
@@ -63,6 +65,7 @@ signals:
     void captured(const QUrl &file);
     void regionsCaptured(const QVariantList &images);
     void captureFinished(bool captured);
+    void captureScreenReady(int completed, int total);
     void recordingChanged();
     void recordingProcessStarted();
     void recordingReady();
@@ -103,6 +106,7 @@ private:
     QTemporaryDir m_temp;
     QProcess m_process;
     bool m_capturing = false;
+    bool m_externalCaptureRouting = false;
     QString m_output;
     QList<QPointer<RegionSelector>> m_selectors;
 };
