@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/glimmer-qt">
+        <file alias="dialog.qml">../qml/dialog.qml</file>
+        <file alias="file-chooser.qml">../qml/file-chooser.qml</file>
         <file alias="shortcut.qml">../qml/shortcut.qml</file>
         <file alias="window.qml">../qml/window.qml</file>
         <file alias="vbox.qml">../qml/vbox.qml</file>

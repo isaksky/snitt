@@ -59,6 +59,9 @@ public:
     EventHandler handler = nullptr;
     QHash<Handle, bool> pointerReplies;
     Q_INVOKABLE bool pointer(QObject *widget, const QString &event, QVariantMap payload);
+    Q_INVOKABLE QString encodedLocalUrl(const QUrl &url) {
+        return url.isLocalFile() ? url.toString(QUrl::FullyEncoded) : QString();
+    }
     int callbackDepth = 0;
     QHash<Handle, QPointer<QObject>> objects;
     QHash<QObject *, Handle> identities;
@@ -777,6 +780,14 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
 #include "../test/native/pointer_fixture.h"
 #include "../test/native/value_fixture.h"
 #include "../test/native/object_fixture.h"
+extern "C" Q_DECL_EXPORT int gqt_test_file_result(Handle id, const char *path) {
+    auto *object = objectFor(id);
+    auto *chooser = object ? object->findChild<QObject *>("glimmerFileDialog") : nullptr;
+    if (!chooser) return fail("Missing file dialog");
+    if (*path && !QQmlProperty::write(chooser, "selectedFile", QUrl::fromLocalFile(QString::fromUtf8(path))))
+        return fail("Could not select test file");
+    return QMetaObject::invokeMethod(chooser, *path ? "accepted" : "rejected", Qt::DirectConnection);
+}
 extern "C" Q_DECL_EXPORT int gqt_register_object_fixture() {
     return gqt_register_factory("test.object", []() -> QObject * { return new ObjectFixture; }, nullptr);
 }

@@ -172,6 +172,20 @@
            :auto-repeat ["repeatKeys" :bool false]}
    :events {:on-activate :none :on-ambiguous :none}})
 
+(register! :dialog
+  {:source "qrc:/glimmer-qt/dialog.qml" :relay "relay" :children "content"
+   :props {:id ["objectName" :string ""] :title ["title" :string ""]
+           :modal ["modal" :bool true] :dialog-width ["dialogWidth" :number 400]}
+   :events {:on-accepted :none :on-rejected :none :on-visible-change :none}})
+
+(register! :file-chooser
+  {:source "qrc:/glimmer-qt/file-chooser.qml" :relay "relay"
+   :props {:id ["objectName" :string ""] :title ["title" :string "Open image"]
+           :filters ["nameFilters" :value ["Images (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)"]]
+           :folder ["currentFolder" :value (value/url "file:///")]
+           :selected-url ["selectedFile" :value (value/url "file:///")]}
+   :events {:on-accepted :string :on-rejected :none :on-visible-change :none}})
+
 (defn- registration [tag]
   (or (get @registry tag) (throw (ex-info "Unsupported glimmer-qt tag." {:tag tag}))))
 (defn- spec-for [tag]
@@ -188,11 +202,36 @@
       (throw (ex-info "Qt widget tag mismatch." {:tag tag :actual (:tag data)})))
     data))
 
+(defn- dialog! [widget]
+  (when-not (#{:dialog :file-chooser} (:tag (live-widget widget)))
+    (throw (ex-info "Expected a dialog or file chooser." {})))
+  widget)
+
+(defn open-dialog! "Open an attached dialog without blocking the GUI loop." [widget]
+  (q/invoke! (dialog! widget) "open()" []) nil)
+(defn close-dialog! "Reject once; closing an already closed dialog is harmless." [widget]
+  (q/invoke! (dialog! widget) "close()" []) nil)
+(defn accept-dialog! "Accept an application dialog once." [widget]
+  (tagged-widget :dialog widget)
+  (q/invoke! widget "accept()" []) nil)
+(defn reject-dialog! [widget]
+  (q/invoke! (dialog! widget) "reject()" []) nil)
+(defn dialog-visible? [widget]
+  (q/read-property (dialog! widget) "dialogVisible"))
+
 (defn- prop-value [props key default]
   (get props key (if (#{:margin-left :margin-right :margin-top :margin-bottom} key)
                    (get props :margin 0) default)))
 
 (defn- validate-props! [tag props]
+  (when (= tag :dialog)
+    (when-not (and (number? (get props :dialog-width 400))
+                   (pos? (get props :dialog-width 400)))
+      (throw (ex-info "Dialog width must be positive." {}))))
+  (when (= tag :file-chooser)
+    (when-not (and (vector? (get props :filters []))
+                   (every? string? (get props :filters [])))
+      (throw (ex-info "File filters must be a vector of strings." {}))))
   (when (= tag :shortcut)
     (when-not (#{"window" "application"} (get props :scope "window"))
       (throw (ex-info "Shortcut scope must be window or application." {})))
