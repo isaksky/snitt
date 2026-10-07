@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" 'CONFIG+=property_tests' >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+BREW_LIB="$(brew --prefix)/lib"
+export DYLD_FRAMEWORK_PATH="$("$QMAKE" -query QT_INSTALL_LIBS):$BREW_LIB${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_PLUGIN_PATH="$ROOT/../build/tools/mac-multimedia-runtime/stage/Contents/PlugIns"
+test -f "$QT_PLUGIN_PATH/multimedia/libffmpegmediaplugin.dylib"
+export QT_MEDIA_BACKEND=ffmpeg QT_QPA_PLATFORM=cocoa JOLT_AOT_CACHE=0
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt-review.XXXXXX")"
+trap 'rm -rf "$TEST_DIR"' EXIT HUP INT TERM
+export SNITT_JOLT_DATA_DIR="$TEST_DIR/data"
+mkdir -p "$SNITT_JOLT_DATA_DIR"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x180:rate=30:duration=1.2 \
+  -c:v libx264 -pix_fmt yuv420p "$TEST_DIR/regular.mp4"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x180:rate=30:duration=0.24 \
+  -c:v libx264 -pix_fmt yuv420p "$TEST_DIR/short.mp4"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=red:s=160x90:r=1 \
+  -t 3 -c:v libx264 -pix_fmt yuv420p "$TEST_DIR/static.mp4"
+cp "$TEST_DIR/regular.mp4" "$TEST_DIR/export.mp4"
+cp "$TEST_DIR/regular.mp4" "$TEST_DIR/cancel-active.mp4"
+ORIGINAL_HASH="$(shasum -a 256 "$TEST_DIR/cancel-active.mp4" | cut -d ' ' -f 1)"
+cd "$ROOT"
+run_review() {
+  if ! "${JOLT:-jolt}" -M:review "$TEST_DIR/$1.mp4" "$TEST_DIR/missing.mp4" \
+       >"$TEST_DIR/$1.log" 2>&1; then
+    tail -n 45 "$TEST_DIR/$1.log" >&2
+    exit 1
+  fi
+  rg '^PASS:' "$TEST_DIR/$1.log"
+}
+run_review regular
+run_review short
+run_review static
+SNITT_REVIEW_EXPORT=1 run_review export
+SNITT_REVIEW_CANCEL_BUSY=1 run_review cancel-active
+python3 - "$TEST_DIR/export.mp4" <<'PY'
+import subprocess, sys
+duration = float(subprocess.check_output([
+    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', sys.argv[1]], text=True))
+if not 0.30 <= duration <= 0.50:
+    raise SystemExit(f'Unexpected trimmed duration: {duration}')
+PY
+test "$ORIGINAL_HASH" = "$(shasum -a 256 "$TEST_DIR/cancel-active.mp4" | cut -d ' ' -f 1)"
+test -z "$(find "$TEST_DIR" -name '.snitt-trim-*.mp4' -print -quit)"
+printf '%s\n' 'PASS: trimmed file verified; canceled export left original unchanged'

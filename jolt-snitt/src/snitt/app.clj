@@ -12,6 +12,7 @@
             [snitt.commands :as commands]
             [snitt.lifecycle :as lifecycle]
             [snitt.native :as native]
+            [snitt.review :as review]
             [snitt.sessions :as sessions]
             [snitt.settings :as settings]))
 
@@ -185,8 +186,9 @@
      :review? (and session (:review-window session)
                    (qt/window-alive? (:review-window session))
                    (q/read-property (:review-window session) "visible"))
-     :review-can-edit? (and trim (:review-command context)
-                            (not (q/read-property trim "busy")))
+     :review-can-edit? (and trim @(:review context)
+                            (review/editable? @(:state @(:review context))
+                                              (q/read-property trim "busy")))
      :session-manager? (boolean manager)
      :has-image? (document "hasImage" false)
      :can-undo? (document "canUndo" false)
@@ -256,10 +258,8 @@
                   (sessions/close! manager (:id context))))
       :dismiss (when-not (native/cancel! handle)
                  (sessions/close! manager (:id context)))
-      :review (if (= :cancel (first args))
-                (object/invoke! (:trim @(:services context)) "keepOriginal()" [])
-                (when-let [handler (:review-command context)]
-                  (apply handler args))))))
+      :review (when-let [owner @(:review context)]
+                (apply review/command! owner args)))))
 
 (defn dispatch!
   "Invoke a command from any UI or external source. A fresh native/session
@@ -523,21 +523,23 @@
                    :enabled (enabled? action)
                    :on-activate #(dispatch! context action)}])]))
 
-(defn- review! [manager id path]
+(defn- review! [manager id _path]
   (when-let [{:keys [context]} (sessions/session manager id)]
-    (let [window (qt/open-window!
-                   (fn [] [:vbox {:padding 14 :spacing 10}
-                           [:label {:label (str "Recording saved: " path)}]
-                           [:button {:label "Keep original"
-                                     :on-click #(dispatch! context "reviewCancel")}]])
-                   :title "Snitt — Review recording" :width 600 :height 130
-                   :on-close (fn [_] (dispatch! context "reviewCancel") false))]
-      (sessions/set-review-window! manager id window)
+    (let [owner (review/open! (:root @(:services context))
+                              (:trim @(:services context))
+                              #(when-let [current @(:review context)]
+                                 (review/dispose! current)
+                                 (reset! (:review context) nil)
+                                 (sessions/set-review-window! manager id nil)
+                                 (refresh-context! context)))]
+      (reset! (:review context) owner)
+      (sessions/set-review-window! manager id @(:window owner))
       (refresh-context! context))))
 
 (defn- create-editor! [id label on-close]
   (let [services (native/create-services!)
         context {:id id :window (atom nil) :services (atom services)
+                 :review (atom nil)
                  :pointer-down (atom false) :resize (atom nil)
                  :state (if (= id 1) state (r/atom (initial-state)))}]
     (try
@@ -566,6 +568,9 @@
         {:window window :services services :context context
          :load-url #(open-url! context %)
          :on-error (fn [_ message] (report! context message true))
+         :on-close-review #(when-let [owner @(:review context)]
+                             (review/dispose! owner)
+                             (reset! (:review context) nil))
          :on-recording-saved review!})
       (catch Throwable e
         (when-let [window @(:window context)] (qt/close-window! window))

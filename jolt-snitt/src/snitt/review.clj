@@ -1,0 +1,320 @@
+(ns snitt.review
+  "Jolt-owned recording review, using Qt Multimedia and the retained TrimSession."
+  (:require [glimmer.ratom :as r]
+            [glimmer-qt.core :as qt]
+            [glimmer-qt.ffi :as q]
+            [glimmer-qt.media :as media]
+            [glimmer-qt.object :as object]
+            [glimmer-qt.value :as value]))
+
+(defn clamp [low high n] (max low (min high n)))
+(defn minimum-range [duration] (min 0.1 duration))
+(defn initial [duration]
+  {:duration (/ (double (max 0 duration)) 1000.0) :start 0.0
+   :end (/ (double (max 0 duration)) 1000.0) :playhead 0.0
+   :interacting false :resume false :priming false :primed false
+   :preparing false :dismiss-after-cancel false :playing false
+   :media (value/enum "NoMedia") :error "" :busy false
+   :problem "" :progress 0.0 :thumbnails []})
+(defn editable? [s busy?]
+  (and (pos? (:duration s)) (not busy?) (not (:preparing s))))
+(defn trimmed? [{:keys [start end duration]}]
+  (or (> start 0.001) (< end (- duration 0.001))))
+(defn set-duration [s ms]
+  (let [duration (/ (double (max 0 ms)) 1000.0)]
+    (if (or (zero? duration) (= duration (:duration s))) s
+      (assoc s :duration duration :end (if (pos? (:end s))
+                                          (min (:end s) duration) duration)
+               :start (min (:start s) duration)
+               :playhead (min (:playhead s) duration)))))
+(defn set-handle [s handle seconds]
+  (let [t (clamp 0.0 (:duration s) (double seconds))
+        gap (minimum-range (:duration s))]
+    (case handle
+      :start (let [start (min t (- (:end s) gap))]
+               (assoc s :start start :playhead start))
+      :end (let [end (max t (+ (:start s) gap))]
+             (assoc s :end end :playhead end))
+      s)))
+(defn seek [s seconds]
+  (assoc s :playhead (clamp (:start s) (:end s) (double seconds))))
+(defn clock-step [s seconds rate]
+  (if (or (not (:playing s)) (:priming s) (:interacting s)
+          (contains? #{(value/enum "NoMedia") (value/enum "LoadingMedia")
+                       (value/enum "StalledMedia") (value/enum "InvalidMedia")}
+                     (:media s)))
+    s
+    (let [playhead (min (:end s) (+ (:playhead s) (* seconds rate)))]
+      (assoc s :playhead playhead :playing (< playhead (:end s))))))
+(defn fmt [seconds]
+  (let [tenths (long (Math/round (* 10 (max 0 seconds))))]
+    (str (quot tenths 600) ":" (format "%02d.%01d" (mod (quot tenths 10) 60) (mod tenths 10)))))
+
+(defn- surface [owner]
+  (when-let [window @(:window owner)]
+    (when (qt/window-alive? window)
+      (let [handle (qt/find-by-id window "review-video")]
+        (when (and handle (q/alive? handle)) handle)))))
+(defn- busy? [owner] (q/read-property (:trim owner) "busy"))
+(defn- invoke-trim! [owner signature args]
+  (when-not @(:closed owner) (object/invoke! (:trim owner) signature args)))
+(defn- position! [owner seconds]
+  (when-let [video (surface owner)]
+    (media/position! video (long (Math/round (* 1000 seconds))))))
+(defn- finish-priming! [owner]
+  (when (:priming @(:state owner))
+    (when-let [token @(:prime-timer owner)] (qt/cancel! token))
+    (reset! (:prime-timer owner) nil)
+    (when-let [video (surface owner)]
+      (media/pause! video)
+      (position! owner (:start @(:state owner)))
+      (media/mute! video false))
+    (swap! (:state owner) assoc :priming false :playing false
+           :playhead (:start @(:state owner)))))
+(defn- prime! [owner]
+  (when (and (not @(:closed owner)) (not (:primed @(:state owner)))
+             (not (:preparing @(:state owner))) (surface owner))
+    (swap! (:state owner) assoc :primed true :priming true)
+    (let [video (surface owner)]
+      (media/mute! video true)
+      (position! owner (:start @(:state owner)))
+      (media/play! video)
+      (reset! (:prime-timer owner)
+              (qt/later! video 500 #(finish-priming! owner))))))
+(defn- pause-at-playhead! [owner]
+  (when-let [video (surface owner)]
+    (let [seconds (:playhead @(:state owner))]
+      (media/pause! video)
+      (position! owner seconds)
+      (swap! (:state owner) assoc :playing false :playhead seconds))))
+(defn seek! [owner seconds]
+  (when (and (not @(:closed owner)) (editable? @(:state owner) (busy? owner)))
+    (finish-priming! owner)
+    (swap! (:state owner) seek seconds)
+    (position! owner (:playhead @(:state owner)))))
+(defn handle! [owner handle seconds]
+  (when (and (not @(:closed owner)) (editable? @(:state owner) (busy? owner)))
+    (finish-priming! owner)
+    (swap! (:state owner) set-handle handle seconds)
+    (position! owner (:playhead @(:state owner)))))
+(defn interacting! [owner active?]
+  (when (and (not @(:closed owner)) (editable? @(:state owner) (busy? owner)))
+    (if active?
+      (let [resume (and (not (:priming @(:state owner))) (:playing @(:state owner)))]
+        (finish-priming! owner)
+        (pause-at-playhead! owner)
+        (swap! (:state owner) assoc :interacting true :resume resume))
+      (let [resume (:resume @(:state owner))]
+        (swap! (:state owner) assoc :interacting false :resume false)
+        (when (and resume (< (:playhead @(:state owner)) (:end @(:state owner))))
+          (when-let [video (surface owner)] (media/play! video))
+          (swap! (:state owner) assoc :playing true))))))
+(defn command! [owner action & args]
+  (when (and owner (not @(:closed owner)))
+    (let [s @(:state owner)]
+      (case action
+        :play-pause (when (editable? s (busy? owner))
+                      (finish-priming! owner)
+                      (if (:playing @(:state owner)) (pause-at-playhead! owner)
+                        (let [s @(:state owner)
+                              target (if (or (< (:playhead s) (:start s))
+                                             (>= (:playhead s) (- (:end s) 0.01)))
+                                       (:start s) (:playhead s))]
+                          (seek! owner target)
+                          (when-let [video (surface owner)] (media/play! video))
+                          (swap! (:state owner) assoc :playing true))))
+        :seek (seek! owner (+ (:playhead s) (first args)))
+        :mark-start (handle! owner :start (:playhead s))
+        :mark-end (handle! owner :end (:playhead s))
+        :cancel (if (or (busy? owner) (:preparing s))
+                  (do (when-let [token @(:export-timer owner)] (qt/cancel! token))
+                      (reset! (:export-timer owner) nil)
+                      (swap! (:state owner) assoc :preparing false)
+                      (when (busy? owner) (invoke-trim! owner "cancelExport()" []))
+                      (when (and (not (busy? owner))
+                                 (seq (q/read-property (:trim owner) "path")))
+                        (when-let [video (surface owner)]
+                          (media/source! video (q/read-property (:trim owner) "source")))))
+                  (invoke-trim! owner "keepOriginal()" []))
+        :close (if (busy? owner)
+                 (do (swap! (:state owner) assoc :dismiss-after-cancel true)
+                     (invoke-trim! owner "cancelExport()" []))
+                 (do (when-let [token @(:export-timer owner)] (qt/cancel! token))
+                     (reset! (:export-timer owner) nil)
+                     (swap! (:state owner) assoc :preparing false)
+                     (invoke-trim! owner "keepOriginal()" [])))
+        :keep (when-not (or (busy? owner) (:preparing s))
+                (invoke-trim! owner "keepOriginal()" []))
+        :export (when (and (editable? s (busy? owner)) (trimmed? s))
+                  (swap! (:state owner) assoc :preparing true :playing false)
+                  (when-let [video (surface owner)] (media/clear! video))
+                  (reset! (:export-timer owner)
+                          (qt/later! (surface owner) 180
+                            #(when (and (not @(:closed owner))
+                                        (:preparing @(:state owner)))
+                               (reset! (:export-timer owner) nil)
+                               (swap! (:state owner) assoc :preparing false)
+                               (let [{:keys [start end]} @(:state owner)]
+                                 (invoke-trim! owner "exportRange(qlonglong,qlonglong)"
+                                               [(long (Math/round (* 1000 start)))
+                                                (long (Math/round (* 1000 end)))]))))))
+        nil))))
+
+(defn- thumbnail [source i]
+  [:image {:key i :id (str "review-thumb-" i)
+           :source (value/url (or source "")) :hexpand true
+           :preferred-height 58 :fill-mode "crop" :cache false}])
+(defn view [owner]
+  (let [{:keys [duration start end playhead playing priming preparing error
+                busy problem progress thumbnails]} @(:state owner)
+        editable (editable? @(:state owner) busy)
+        thumbs thumbnails]
+    [:vbox {:id "review-root" :hexpand true :vexpand true :padding 24 :spacing 12}
+     [:label {:label "Review recording" :font-size 24 :font-weight 600}]
+     [:label {:label "Drag the white handle to seek, or the blue handles to trim."
+              :color "#aab3c0"}]
+     [:video-player {:id "review-video" :hexpand true :vexpand true
+                     :on-first-frame #(finish-priming! owner)}]
+     [:label {:id "review-time" :label (str (fmt playhead) " / " (fmt duration))
+              :hexpand true :text-alignment (value/enum "AlignHCenter")}]
+     [:hbox {:hexpand true}
+      [:spacer {:hexpand true}]
+      [:button {:id "review-play" :label (if priming "Loading…" (if playing "Pause" "Play"))
+                :sensitive editable :on-click #(command! owner :play-pause)}]
+      [:spacer {:hexpand true}]]
+     [:hbox {:id "review-filmstrip" :hexpand true :preferred-height 58 :spacing 0}
+      (for [i (range 12)] (thumbnail (nth thumbs i nil) i))]
+     [:label {:label "Playback position" :color "#dfe5ed"}]
+     [:slider {:id "review-seek" :hexpand true :from start :to (max end (+ start 0.001))
+               :value playhead :accessible-name "Playback position" :sensitive editable
+               :on-change #(seek! owner %)
+               :on-interacting-change #(interacting! owner %)}]
+     [:hbox {:hexpand true :spacing 10}
+      [:label {:label (str "From " (fmt start)) :color "#91bff0"}]
+      [:slider {:id "review-start" :hexpand true :from 0 :to (max 0.001 (- end (minimum-range duration)))
+                :value start :accessible-name "Trim start" :sensitive editable
+                :handle-color "#91bff0" :on-change #(handle! owner :start %)
+                :on-interacting-change #(interacting! owner %)}]
+      [:slider {:id "review-end" :hexpand true :from (min duration (+ start (minimum-range duration)))
+                :to (max duration 0.001) :value end :accessible-name "Trim end"
+                :handle-color "#91bff0" :sensitive editable
+                :on-change #(handle! owner :end %)
+                :on-interacting-change #(interacting! owner %)}]
+      [:label {:label (str "To " (fmt end)) :color "#91bff0"}]]
+     (when (or (seq problem) (seq error) busy)
+       [:label {:label (if (seq problem) problem
+                          (if (seq error) error
+                            (str "Exporting trimmed recording… "
+                                 (long (Math/round (* 100 (max 0 progress)))) "%")))
+                :color (if (or (seq problem) (seq error)) "#f0b5b5" "#aab3c0")}])
+     [:hbox {:hexpand true :spacing 10}
+      (when (trimmed? @(:state owner))
+        [:button {:id "review-keep" :label "Keep original"
+                  :sensitive (not (or busy preparing))
+                  :on-click #(command! owner :keep)}])
+      [:spacer {:hexpand true}]
+      (when (or busy preparing)
+        [:button {:id "review-cancel-export" :label "Cancel export"
+                  :on-click #(command! owner :cancel)}])
+      [:button {:id "review-save" :label (if (trimmed? @(:state owner)) "Save trim" "Keep original")
+                :sensitive (if (trimmed? @(:state owner)) editable (not (or busy preparing)))
+                :on-click #(command! owner (if (trimmed? @(:state owner)) :export :keep))}]]
+     (for [[id keys action args] [["review-space" ["Space"] :play-pause []]
+                                   ["review-left" ["Left"] :seek [-1]]
+                                   ["review-right" ["Right"] :seek [1]]
+                                   ["review-shift-left" ["Shift+Left"] :seek [-5]]
+                                   ["review-shift-right" ["Shift+Right"] :seek [5]]
+                                   ["review-mark-start" ["I"] :mark-start []]
+                                   ["review-mark-end" ["O"] :mark-end []]
+                                   ["review-escape" ["Escape"] :cancel []]]]
+       [:shortcut {:key id :id id :sequences keys
+                   :enabled (if (= action :cancel) true editable)
+                   :on-activate #(apply command! owner action args)}])]))
+
+(defn- refresh-trim! [owner]
+  (when-not @(:closed owner)
+    (let [trim (:trim owner)
+          path (q/read-property trim "path")
+          duration (q/read-property trim "duration")
+          busy (q/read-property trim "busy")
+          problem (q/read-property trim "problem")
+          progress (q/read-property trim "progress")
+          thumbnails (vec (q/read-property trim "thumbnails"))]
+      (swap! (:state owner)
+             #(cond-> (assoc % :busy busy :problem problem :progress progress
+                             :thumbnails thumbnails)
+                (pos? duration) (set-duration duration)))
+      (cond
+        (empty? path) ((:on-finished owner))
+        (and (:dismiss-after-cancel @(:state owner)) (not busy))
+        (do (swap! (:state owner) assoc :dismiss-after-cancel false)
+            (invoke-trim! owner "keepOriginal()" []))
+        (and (not busy) (not (:preparing @(:state owner))))
+        (when-let [video (surface owner)]
+          (when (= (value/url "") (:source (media/state video)))
+            (media/source! video (q/read-property trim "source"))))))))
+(defn open! [root trim on-finished]
+  (let [owner {:root root :trim trim :window (atom nil) :closed (atom false)
+               :state (r/atom (initial (q/read-property trim "duration")))
+               :prime-timer (atom nil) :export-timer (atom nil) :clock (atom nil)
+               :on-finished on-finished}]
+    (try
+      (let [window (qt/open-window! #(view owner) :title "Snitt — Review recording"
+                                    :width 960 :height 690
+                                    :on-close (fn [_] (command! owner :close) false))]
+        (reset! (:window owner) window)
+        (let [video (surface owner)]
+          (media/source! video (q/read-property trim "source"))
+          (doseq [[property handler]
+                  [[:source #(do (when (= % (value/url ""))
+                                  (swap! (:state owner) assoc :primed false :priming false
+                                         :playing false :error ""))
+                                (when (and (not= % (value/url ""))
+                                           (:primed @(:state owner)))
+                                  (swap! (:state owner) assoc :primed false :priming false)))]
+                   [:duration #(do (invoke-trim! owner "setDuration(qlonglong)" [%])
+                                   (swap! (:state owner) set-duration %))]
+                   [:media #(do (swap! (:state owner) assoc :media %)
+                                (when (contains? #{(value/enum "LoadedMedia")
+                                                   (value/enum "BufferedMedia")} %)
+                                  (prime! owner)))]
+                   [:position #(when (and (not (:playing @(:state owner)))
+                                          (not (:priming @(:state owner)))
+                                          (not (:interacting @(:state owner))))
+                                 (swap! (:state owner) seek (/ (double %) 1000.0)))]
+                   [:playback #(when-not (:priming @(:state owner))
+                                 (swap! (:state owner) assoc :playing
+                                        (= % (value/enum "PlayingState"))))]
+                   [:error #(when (and (not= % (value/enum "NoError")) (not (busy? owner)))
+                              (swap! (:state owner) assoc :playing false :error
+                                     (str "Playback unavailable: "
+                                          (:error-string (media/state video)))))]]]
+            (media/observe! video video property
+              #(when-not @(:closed owner) (handler %))))
+          (object/subscribe! video trim "changed()" #(refresh-trim! owner))
+          (reset! (:clock owner)
+                  (qt/every! video 40
+                    (fn [{:keys [delta-seconds]}]
+                      (when-not @(:closed owner)
+                        (let [before @(:state owner)
+                              after (clock-step before delta-seconds
+                                                (:rate (media/state video)))]
+                          (when (not= before after)
+                            (reset! (:state owner) after)
+                            (when (and (:playing before) (not (:playing after)))
+                              (pause-at-playhead! owner))))))))
+          (refresh-trim! owner))
+        owner)
+      (catch Throwable error
+        (when-let [window @(:window owner)] (qt/close-window! window))
+        (throw error)))))
+(defn dispose! [owner]
+  (when (and owner (not @(:closed owner)))
+    (reset! (:closed owner) true)
+    (doseq [token [@(:prime-timer owner) @(:export-timer owner) @(:clock owner)]]
+      (when token (qt/cancel! token)))
+    (when-let [video (surface owner)]
+      (object/disconnect-owner! video)
+      (media/clear! video))
+    (when-let [window @(:window owner)]
+      (when (qt/window-alive? window) (qt/close-window! window)))))
