@@ -4,6 +4,7 @@
 #include "../../src/editorcanvas.h"
 #include "../../src/globalhotkey.h"
 #include "media_jobs.h"
+#include "document_bridge.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -469,7 +470,7 @@ private:
     bool m_hotkeyConnected = false;
 };
 
-QObject *canvasFactory() { return new EditorCanvas; }
+QObject *canvasFactory() { return new DocumentCanvas; }
 QObject *servicesFactory() { return new Services; }
 QObject *lifecycleFactory() { return new Lifecycle; }
 }

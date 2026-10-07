@@ -250,7 +250,7 @@
     (swap! (:state manager) assoc-in [:sessions id :review-window] window)))
 
 (defn close! [manager id]
-  (when-let [{:keys [window review-window recording services on-close-review]} (session manager id)]
+  (when-let [{:keys [window review-window recording services on-close-review on-close-document]} (session manager id)]
     (let [capturing? (= id (:capture (snapshot manager)))
           {:keys [hidden restore-focus]} (snapshot manager)]
       (when capturing? (region/close! (:picker (snapshot manager))))
@@ -268,6 +268,7 @@
                                   :picker nil :capture-mode nil)))))
       (recording/dispose! recording)
       (when on-close-review (on-close-review))
+      (when on-close-document (on-close-document))
       (object/disconnect-owner! window)
       (object/disconnect-owner! (:root services))
       (when (q/alive? (:root services))

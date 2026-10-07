@@ -64,9 +64,19 @@ disposing the root invalidates its handles and terminates its media jobs. The na
 before the backend removes its temporary file. Jolt advances each display capture,
 then consumes or discards the retained result, positions the new editor, and
 restores prior editor visibility on completion or failure. Canvas mount/unmount
-owns its native document. Application namespaces call
+owns its native image storage. Application namespaces call
 `snitt.native` methods and `glimmer-qt.object` with explicit Qt signatures;
-image pixels and undo history stay in `EditorCanvas`, never in reactive state.
+`snitt.document` owns immutable commands, the current position, and the bounded
+undo/redo sequence (50 frames or 256 MiB, retaining at least the current frame).
+Native storage holds image handles and immutable prepared privacy samples; every
+render projection receives an explicit operation batch. Branches, expired frames,
+source replacement, and session teardown release their handles. `ImageRenderer`
+contains no history; `ImageDocument` supplies history only for the retained C++
+launcher and is disabled in the Jolt canvas. No full frame enters reactive state.
+
+Run `./jolt-snitt/test-document` for exact RGBA comparisons of mixed edits,
+fractional export/preview scales, privacy independence, branch replacement,
+rejected/failed edits, resource release, and history bounds.
 
 `snitt.commands` decides which editor commands are available from a live session
 snapshot and returns effect requests. Toolbar controls, Qt shortcuts, and callers

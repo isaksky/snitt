@@ -7,6 +7,7 @@
             [snitt.app :as app]
             [snitt.arrangement :as arrangement]
             [snitt.native :as native]
+            [snitt.document :as document]
             [snitt.settings :as settings]))
 
 (ffi/defcfn click-native "gqt_test_click" [:uint64] :int :blocking)
@@ -66,9 +67,9 @@
         (click! "arrange"))
       (fn []
         (check! (= :annotate (:phase (layout))) "Jolt enters annotation phase")
-        (object/invoke! canvas "addText(double,double,double,double,QString,int)"
-                        [24.0 24.0 90.0 40.0 "Edit" 20])
-        (check! (q/read-property canvas "canUndo") "Annotation creates native history")
+        (document/edit! canvas {:kind :text :start [24 24] :end [114 64]
+                                :text "Edit" :font-size 20})
+        (check! (q/read-property canvas "canUndo") "Annotation enters Jolt history")
         (click! "return-arrange"))
       (fn []
         (check! (widget/dialog-visible? (id "rearrange-dialog")) "Edits require confirmation")

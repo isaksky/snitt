@@ -45,6 +45,7 @@ QImage samplePixelGrid(const QImage &source, const QRect &area, int blockSize) {
     const int columns = selected.right() / blockSize - firstX + 1;
     const int rows = selected.bottom() / blockSize - firstY + 1;
     QImage grid(columns, rows, QImage::Format_ARGB32);
+    if (grid.isNull()) return {};
     for (int row = 0; row < rows; ++row)
         for (int column = 0; column < columns; ++column)
             grid.setPixel(column, row, averageBlock(source,
@@ -68,14 +69,11 @@ void paintPixelGrid(QPainter &painter, const QRect &area, int blockSize, const Q
 }
 }
 
-const QImage &ImageDocument::image() const {
-    static const QImage empty;
-    return m_index < 0 ? empty : m_history[m_index];
-}
+const QImage &ImageRenderer::image() const { return m_image; }
 
-bool ImageDocument::hasAnnotations() const {
-    if (m_index < 0) return false;
-    const auto &ops = m_operationHistory[m_index];
+bool ImageRenderer::hasAnnotations() const {
+    if (image().isNull()) return false;
+    const auto &ops = m_operations;
     int lastAnnotation = -1;
     int lastDestructiveEdit = -1;
     for (int i = 0; i < ops.size(); ++i) {
@@ -128,7 +126,7 @@ bool ImageDocument::hasAnnotations() const {
     return false;
 }
 
-qreal ImageDocument::exportScale() const {
+qreal ImageRenderer::exportScale() const {
     if (!hasAnnotations()) return 1;
     const QSize size = image().size();
     const int shorter = qMin(size.width(), size.height());
@@ -141,7 +139,7 @@ qreal ImageDocument::exportScale() const {
     return qMax(1.0, scale);
 }
 
-void ImageDocument::drawText(QPainter &p, const Operation &op) {
+void ImageRenderer::drawText(QPainter &p, const Operation &op) {
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
     p.setFont(annotationfont::make(op.fontSize));
@@ -149,13 +147,13 @@ void ImageDocument::drawText(QPainter &p, const Operation &op) {
     p.drawText(op.area, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, op.text);
 }
 
-QImage ImageDocument::render(qreal scale) const {
-    return renderThrough(scale, m_index < 0 ? 0 : m_operationHistory[m_index].size());
+QImage ImageRenderer::render(qreal scale) const {
+    return renderThrough(scale, m_operations.size());
 }
 
-void ImageDocument::paint(QPainter &p, qreal scale) const {
+void ImageRenderer::paint(QPainter &p, qreal scale) const {
     if (image().isNull()) return;
-    const auto &ops = m_operationHistory[m_index];
+    const auto &ops = m_operations;
     int firstTrailing = ops.size();
     while (firstTrailing > 0 && (ops[firstTrailing - 1].kind == Operation::Annotation
                                  || ops[firstTrailing - 1].kind == Operation::Text))
@@ -177,13 +175,13 @@ void ImageDocument::paint(QPainter &p, qreal scale) const {
     }
 }
 
-QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
+QImage ImageRenderer::renderThrough(qreal scale, int operationCount) const {
     if (image().isNull() || !std::isfinite(scale) || scale <= 0) return {};
-    if (operationCount == m_operationHistory[m_index].size() && qFuzzyCompare(scale, 1.0)) return image();
+    if (operationCount == m_operations.size() && qFuzzyCompare(scale, 1.0)) return image();
     const auto scaledSize = [&](QSize size) {
         return QSize(qMax(1, qRound(size.width() * scale)), qMax(1, qRound(size.height() * scale)));
     };
-    const auto &ops = m_operationHistory[m_index];
+    const auto &ops = m_operations;
     int lastRasterEdit = -1;
     bool hasPrivacyEdit = false;
     QSize outputSize = m_source.size();
@@ -219,7 +217,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
         // visible region in document coordinates. Repeated cuts then change its
         // integral translation, not a rounded high-resolution bitmap offset.
         // This keeps later masks aligned at every fractional replay scale.
-        ImageDocument raster;
+        ImageRenderer raster;
         raster.reset(m_source);
         struct Fragment {
             const Operation *annotation;
@@ -239,6 +237,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                 const QRect pixels = selectedPixels(op.area, raster.image().size());
                 if (op.kind == Operation::Blur) {
                     QImage frame = raster.image().copy();
+                    if (frame.isNull()) return {};
                     QPainter p(&frame);
                     paintPixelGrid(p, pixels, op.blockSize, op.pixelGrid);
                     p.end();
@@ -246,6 +245,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                 }
                 else {
                     QImage frame = raster.image().copy();
+                    if (frame.isNull()) return {};
                     fillWithSample(frame, pixels, op.sampledPixel);
                     raster.commit(std::move(frame), &op);
                 }
@@ -279,7 +279,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                     }
                 }
                 fragments = std::move(next);
-                raster.cut(op.vertical, op.start, op.end);
+                if (!raster.cut(op.vertical, op.start, op.end)) return {};
                 break;
             }
             }
@@ -310,25 +310,19 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     QImage base = m_source;
     if (lastRasterEdit >= 0) {
         const int prefixCount = lastRasterEdit + 1;
-        bool found = false;
-        for (int j = m_index; j >= 0; --j) {
-            if (m_operationHistory[j].size() == prefixCount) {
-                base = m_history[j];
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            // Undo history can discard old frames while keeping the operation
-            // list. Reconstruct the rare missing prefix at native resolution.
-            ImageDocument replay;
+        {
+            // Explicit batches replay without consulting undo history.
+            ImageRenderer replay;
             replay.reset(m_source);
             for (int i = 0; i < prefixCount; ++i) {
                 const auto &op = ops[i];
                 switch (op.kind) {
-                case Operation::Cut: replay.cut(op.vertical, op.start, op.end); break;
+                case Operation::Cut:
+                    if (!replay.cut(op.vertical, op.start, op.end)) return {};
+                    break;
                 case Operation::Blur: {
                     QImage frame = replay.image().copy();
+                    if (frame.isNull()) return {};
                     QPainter p(&frame);
                     paintPixelGrid(p, selectedPixels(op.area, frame.size()), op.blockSize, op.pixelGrid);
                     p.end();
@@ -337,6 +331,7 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
                 }
                 case Operation::Erase: {
                     QImage frame = replay.image().copy();
+                    if (frame.isNull()) return {};
                     fillWithSample(frame, selectedPixels(op.area, frame.size()), op.sampledPixel);
                     replay.commit(std::move(frame), &op);
                     break;
@@ -362,42 +357,66 @@ QImage ImageDocument::renderThrough(qreal scale, int operationCount) const {
     return result;
 }
 
+void ImageRenderer::reset(QImage image) {
+    image.setDevicePixelRatio(1);
+    m_source = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    m_image = m_source;
+    m_operations.clear();
+}
+
+void ImageRenderer::commit(QImage image, const Operation *operation) {
+    if (operation) m_operations.append(*operation);
+    m_image = std::move(image);
+}
+
 void ImageDocument::reset(QImage image) {
-    m_history.clear();
-    m_operationHistory.clear();
-    m_index = -1;
-    if (!image.isNull()) {
-        image.setDevicePixelRatio(1);
-        m_source = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        commit(m_source);
-    } else {
-        m_source = {};
+    ImageRenderer::reset(std::move(image));
+    m_history.clear(); m_index = -1; m_undo = m_redo = false;
+    ++m_resetSerial;
+    if (!m_external && !this->image().isNull()) {
+        m_history.append(*this); m_index = 0;
     }
+}
+
+void ImageDocument::external() {
+    m_external = m_readOnly = true;
+    m_history.clear(); m_index = -1;
+}
+
+void ImageDocument::projectExternal(const ImageRenderer &projection, bool undo, bool redo) {
+    if (!m_external) return;
+    project(projection.source(), projection.image(), projection.operations());
+    m_undo = undo; m_redo = redo;
 }
 
 void ImageDocument::commit(QImage image, const Operation *operation) {
+    ImageRenderer::commit(std::move(image), operation);
     m_history.resize(m_index + 1);
-    m_operationHistory.resize(m_index + 1);
-    QVector<Operation> operations = m_index < 0 ? QVector<Operation>() : m_operationHistory[m_index];
-    if (operation) operations.append(*operation);
-    m_history.append(std::move(image));
-    m_operationHistory.append(std::move(operations));
+    m_history.append(*this);
     ++m_index;
     qint64 bytes = 0;
-    for (const auto &frame : m_history) bytes += frame.sizeInBytes();
+    for (const auto &frame : m_history) bytes += frame.image().sizeInBytes();
     while (m_history.size() > 1 && (bytes > 256LL * 1024 * 1024 || m_history.size() > 50)) {
-        bytes -= m_history.front().sizeInBytes();
-        m_history.removeFirst();
-        m_operationHistory.removeFirst();
-        --m_index;
+        bytes -= m_history.front().image().sizeInBytes();
+        m_history.removeFirst(); --m_index;
     }
 }
 
-void ImageDocument::undo() { if (canUndo()) --m_index; }
-void ImageDocument::redo() { if (canRedo()) ++m_index; }
+void ImageDocument::undo() {
+    if (!m_external && canUndo()) {
+        const auto &frame = m_history[--m_index];
+        project(frame.source(), frame.image(), frame.operations());
+    }
+}
+void ImageDocument::redo() {
+    if (!m_external && canRedo()) {
+        const auto &frame = m_history[++m_index];
+        project(frame.source(), frame.image(), frame.operations());
+    }
+}
 
-bool ImageDocument::cut(bool vertical, int start, int end) {
-    if (image().isNull()) return false;
+bool ImageRenderer::cut(bool vertical, int start, int end) {
+    if (m_readOnly || image().isNull()) return false;
     const int length = vertical ? image().width() : image().height();
     if (start > end) std::swap(start, end);
     start = qBound(0, start, length);
@@ -406,6 +425,7 @@ bool ImageDocument::cut(bool vertical, int start, int end) {
     if (removed <= 0 || removed >= length) return false;
     QImage result(image().width() - (vertical ? removed : 0),
                   image().height() - (vertical ? 0 : removed), image().format());
+    if (result.isNull()) return false;
     result.fill(Qt::transparent);
     QPainter p(&result);
     if (vertical) {
@@ -421,7 +441,7 @@ bool ImageDocument::cut(bool vertical, int start, int end) {
     return true;
 }
 
-void ImageDocument::drawPixelation(QPainter &painter, const QImage &source,
+void ImageRenderer::drawPixelation(QPainter &painter, const QImage &source,
                                   const QRect &area, int blockSize) {
     if (source.isNull()) return;
     const QRect selected = area.intersected(source.rect());
@@ -432,13 +452,15 @@ void ImageDocument::drawPixelation(QPainter &painter, const QImage &source,
     paintPixelGrid(painter, selected, blockSize, samplePixelGrid(source, selected, blockSize));
 }
 
-bool ImageDocument::blur(QRectF area, int blockSize) {
-    if (image().isNull()) return false;
+bool ImageRenderer::blur(QRectF area, int blockSize) {
+    if (m_readOnly || image().isNull()) return false;
     const QRect pixels = selectedPixels(area, image().size());
     if (pixels.isEmpty()) return false;
     blockSize = qBound(4, blockSize, 64);
     const QImage grid = samplePixelGrid(image(), pixels, blockSize);
+    if (grid.isNull()) return false;
     QImage result = image().copy();
+    if (result.isNull()) return false;
     QPainter painter(&result);
     paintPixelGrid(painter, pixels, blockSize, grid);
     painter.end();
@@ -448,8 +470,8 @@ bool ImageDocument::blur(QRectF area, int blockSize) {
     return true;
 }
 
-bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
-    if (image().isNull() || !std::isfinite(samplePosition.x())
+bool ImageRenderer::erase(QRectF area, QPointF samplePosition) {
+    if (m_readOnly || image().isNull() || !std::isfinite(samplePosition.x())
         || !std::isfinite(samplePosition.y())) return false;
     const QRect pixels = selectedPixels(area, image().size());
     if (pixels.isEmpty()) return false;
@@ -457,6 +479,7 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
     const int sampleY = int(qBound(0.0, std::floor(samplePosition.y()), double(image().height() - 1)));
     const QRgb sampledPixel = image().pixel(sampleX, sampleY);
     QImage result = image().copy();
+    if (result.isNull()) return false;
     // Copy the stored pixel exactly, including its alpha and premultiplication.
     fillWithSample(result, pixels, sampledPixel);
     Operation op; op.kind = Operation::Erase; op.area = pixels;
@@ -465,7 +488,7 @@ bool ImageDocument::erase(QRectF area, QPointF samplePosition) {
     return true;
 }
 
-void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
+void ImageRenderer::drawAnnotation(QPainter &p, const QString &tool,
                                    QPointF start, QPointF end, QColor color, qreal strokeWidth, bool goodMode) {
     p.setRenderHint(QPainter::Antialiasing);
     if (tool == "highlight") {
@@ -494,15 +517,19 @@ void ImageDocument::drawAnnotation(QPainter &p, const QString &tool,
     }
 }
 
-bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth,
+bool ImageRenderer::annotate(const QString &tool, QPointF start, QPointF end, QColor color, qreal strokeWidth,
                              bool goodMode) {
-    if (image().isNull() || (tool != "rect" && tool != "arrow" && tool != "highlight")
+    if (!std::isfinite(start.x()) || !std::isfinite(start.y())
+        || !std::isfinite(end.x()) || !std::isfinite(end.y())
+        || !std::isfinite(strokeWidth) || strokeWidth <= 0 || !color.isValid()) return false;
+    if (m_readOnly || image().isNull() || (tool != "rect" && tool != "arrow" && tool != "highlight")
         || QLineF(start, end).length() < 3)
         return false;
     if ((tool == "rect" || tool == "highlight")
         && (qAbs(start.x() - end.x()) < 2 || qAbs(start.y() - end.y()) < 2))
         return false;
     QImage result = image().copy();
+    if (result.isNull()) return false;
     QPainter p(&result);
     drawAnnotation(p, tool, start, end, color, strokeWidth, goodMode);
     p.end();
@@ -512,10 +539,14 @@ bool ImageDocument::annotate(const QString &tool, QPointF start, QPointF end, QC
     return true;
 }
 
-bool ImageDocument::text(QRectF box, const QString &text, QColor color, int fontSize) {
-    if (image().isNull() || text.trimmed().isEmpty() || box.width() < 1 || box.height() < 1)
+bool ImageRenderer::text(QRectF box, const QString &text, QColor color, int fontSize) {
+    if (!std::isfinite(box.x()) || !std::isfinite(box.y())
+        || !std::isfinite(box.width()) || !std::isfinite(box.height())
+        || !color.isValid() || fontSize <= 0) return false;
+    if (m_readOnly || image().isNull() || text.trimmed().isEmpty() || box.width() < 1 || box.height() < 1)
         return false;
     QImage result = image().copy();
+    if (result.isNull()) return false;
     QPainter p(&result);
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);

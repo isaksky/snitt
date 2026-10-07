@@ -114,9 +114,9 @@
           (pointer! 1 x2 y2)
           (pointer! 2 x2 y2)))
       (fn []
-        (check! (q/read-property canvas "canUndo") "Pointer drag enters native history")
+        (check! (q/read-property canvas "canUndo") "Pointer drag enters Jolt history")
         (check! (enabled? "undo") "History notification enables Undo")
-        (check! (= canvas (app/canvas)) "History rerender keeps native document")
+        (check! (= canvas (app/canvas)) "History rerender keeps canvas projection")
         (key! window 90 67108864))
       (fn []
         (check! (not (q/read-property canvas "canUndo")) "Keyboard Undo removes annotation")
@@ -182,7 +182,7 @@
               second (sessions/session manager second-id)
               second-canvas (app/canvas (:context second))]
           (check! (= 2 (count (sessions/sessions manager))) "Two Jolt editor sessions coexist")
-          (check! (not= canvas second-canvas) "Each editor owns a distinct native document")
+          (check! (not= canvas second-canvas) "Each editor owns a distinct canvas projection")
           (check! (not= backend (get-in second [:services :backend]))
                   "Each editor owns a distinct native backend")
           (check! (q/read-property second-canvas "hasImage") "Second image opens independently")
@@ -198,9 +198,8 @@
                     "Second editor receives live color")
             (check! (= ["F6"] (get-in @settings/published [:shortcuts "toolRectangle"]))
                     "Jolt publishes new shortcut"))
-          (native/begin! second-canvas 200 200)
-          (native/move! second-canvas 400 400)
-          (native/end! second-canvas 400 400)
+          (native/draw! second-canvas {:kind :annotation :tool "rect"
+                                        :start [200 200] :end [400 400] :stroke-width 4})
           (check! (q/read-property second-canvas "canUndo") "Second image records its own edit")
           (check! (q/read-property canvas "canUndo") "First image retains its own history")
           (check! (app/dispatch! (:context second) "toolArrow")

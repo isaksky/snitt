@@ -1,5 +1,5 @@
 (ns snitt.app
-  "Jolt-owned editor sessions; native canvases retain pixels and annotation history."
+  "Jolt-owned editor sessions and documents; native canvases render projections."
   (:require [snitt.trim :as trim]
             [glimmer.ratom :as r]
             [clojure.string :as str]
@@ -11,6 +11,7 @@
             [glimmer-qt.widget :as widget]
             [snitt.arrangement :as arrangement]
             [snitt.commands :as commands]
+            [snitt.document :as document]
             [snitt.geometry :as geometry]
             [snitt.lifecycle :as lifecycle]
             [snitt.native :as native]
@@ -138,10 +139,9 @@
 (defn- commit-text! [context]
   (when-let [{:keys [x y width text]} (:draft @(:state context))]
     (let [handle (canvas context)]
-      (object/invoke! handle "addText(double,double,double,double,QString,int)"
-                      [(double x) (double y) (double width)
-                       (double (- (q/read-property handle "imageHeight") y))
-                       text (q/read-property handle "textSize")]))
+      (document/edit! handle {:kind :text :start [x y]
+                              :end [(+ x width) (q/read-property handle "imageHeight")]
+                              :text text :font-size (q/read-property handle "textSize")}))
     (cancel-text! context)
     true))
 
@@ -232,6 +232,7 @@
         session (when manager (sessions/session manager (:id context)))
         document (fn [property fallback]
                    (if handle (q/read-property handle property) fallback))
+        history (or (document/snapshot handle) (document/empty-state))
         layout (:arrangement @(:state context))]
     {:text-draft? (boolean (:draft @(:state context)))
      :modal? (or (:modal? @(:state context))
@@ -248,8 +249,8 @@
                                               (trim/property trim "busy")))
      :session-manager? (boolean manager)
      :has-image? (document "hasImage" false)
-     :can-undo? (document "canUndo" false)
-     :can-redo? (document "canRedo" false)
+     :can-undo? (document/can-undo? history)
+     :can-redo? (document/can-redo? history)
      :arranging? (= :arrange (:phase layout))
      :columns (:columns layout 1)
      :region-count (count (:order layout))
@@ -622,6 +623,7 @@
                                     :on-close (fn [_] (on-close) false))]
         (reset! (:window context) window)
         (let [canvas (canvas context)]
+          (document/create! canvas)
           (when-not (object/invoke! (:root services) "bindCanvas(QObject*)"
                                     [(value/object canvas)])
             (throw (ex-info "Could not bind editor document to session" {:id id})))
@@ -639,12 +641,14 @@
           (refresh! context))
         {:window window :services services :context context
          :load-url #(open-url! context %)
+         :on-close-document #(document/dispose! (canvas context))
          :on-error (fn [_ message] (report! context message true))
          :on-close-review #(when-let [owner @(:review context)]
                              (review/dispose! owner)
                              (reset! (:review context) nil))
          :on-recording-saved review!})
       (catch Throwable e
+        (when-let [handle (canvas context)] (document/dispose! handle))
         (when-let [window @(:window context)] (qt/close-window! window))
         (widget/dispose! (:root services))
         (throw e)))))
@@ -722,6 +726,15 @@
                                    (q/alive? (canvas))
                                    (q/alive? (get-in @runtime [:services :backend])))
                       (throw (ex-info "Snitt Jolt smoke failed" {})))
+                    (when-let [path (System/getenv "SNITT_JOLT_IMAGE")]
+                      (let [handle (canvas)]
+                        (when-not (and (native/load-image! handle path)
+                                       (document/edit! handle {:kind :annotation :tool "rect"
+                                                               :start [10 10] :end [40 40]
+                                                               :stroke-width 4})
+                                       (document/undo! handle) (document/redo! handle)
+                                       (native/copy! handle) (seq (native/save! handle)))
+                          (throw (ex-info "Snitt Jolt document smoke failed" {})))))
                     (qt/quit!))))
             (let [endpoint (widget/create! :snitt/lifecycle {})
                   arguments (lifecycle/absolute-arguments endpoint args)

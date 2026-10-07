@@ -1,6 +1,7 @@
 (ns snitt.native
   "Application-owned Snitt objects exposed through glimmer-qt's factory seam."
   (:require [snitt.trim :as trim]
+            [snitt.document :as document]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.value :as value]
@@ -75,19 +76,23 @@
                   [(double (first point)) (double (second point))]))
 (defn set-drop-region! [canvas index]
   (object/invoke! canvas "setExternalDropRegion(int)" [index]))
-(defn draw! [canvas {:keys [kind vertical? from to start end block-size tool stroke-width]}]
-  (case kind
-    :cut (object/invoke! canvas "drawExternalCut(bool,int,int)" [vertical? from to])
-    :blur (object/invoke! canvas "drawExternalBlur(double,double,double,double,int)"
-                          [(double (first start)) (double (second start))
-                           (double (first end)) (double (second end)) block-size])
-    :erase (object/invoke! canvas "drawExternalErase(double,double,double,double)"
-                           [(double (first start)) (double (second start))
-                            (double (first end)) (double (second end))])
-    :annotation (object/invoke! canvas "drawExternalAnnotation(QString,double,double,double,double,int)"
-                                [tool (double (first start)) (double (second start))
-                                 (double (first end)) (double (second end)) stroke-width])))
-(defn undo! [canvas] (object/invoke! canvas "undo()" []))
-(defn redo! [canvas] (object/invoke! canvas "redo()" []))
+(defn draw! [canvas {:keys [kind vertical? from to start end block-size tool stroke-width] :as command}]
+  (if (document/owned? canvas)
+    (document/edit! canvas command)
+    (case kind
+      :cut (object/invoke! canvas "drawExternalCut(bool,int,int)" [vertical? from to])
+      :blur (object/invoke! canvas "drawExternalBlur(double,double,double,double,int)"
+                            [(double (first start)) (double (second start))
+                             (double (first end)) (double (second end)) block-size])
+      :erase (object/invoke! canvas "drawExternalErase(double,double,double,double)"
+                             [(double (first start)) (double (second start))
+                              (double (first end)) (double (second end))])
+      :annotation (object/invoke! canvas "drawExternalAnnotation(QString,double,double,double,double,int)"
+                                  [tool (double (first start)) (double (second start))
+                                   (double (first end)) (double (second end)) stroke-width]))))
+(defn undo! [canvas]
+  (if (document/owned? canvas) (document/undo! canvas) (object/invoke! canvas "undo()" [])))
+(defn redo! [canvas]
+  (if (document/owned? canvas) (document/redo! canvas) (object/invoke! canvas "redo()" [])))
 (defn copy! [canvas] (object/invoke! canvas "copy()" []))
 (defn save! [canvas] (object/invoke! canvas "save()" []))

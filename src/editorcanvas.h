@@ -81,6 +81,11 @@ public:
     Q_INVOKABLE QString save();
     QString saveTo(const QString &picturesDirectory);
     Q_INVOKABLE void clear();
+    void useExternalDocument() { m_document.external(); }
+    const ImageDocument &documentProjection() const { return m_document; }
+    void projectDocument(const ImageRenderer &projection, bool undo, bool redo) {
+        m_document.projectExternal(projection, undo, redo); changed();
+    }
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
     Q_INVOKABLE void begin(qreal x, qreal y);
