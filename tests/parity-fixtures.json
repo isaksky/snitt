@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "images": {
+    "grid.png": [80, 60],
+    "second.png": [48, 36]
+  },
+  "commands": [
+    {"id": "a", "op": "new", "expect": {"width": 0, "height": 0, "undo": false}},
+    {"id": "a", "op": "bad-load", "expect": {"result": false, "width": 0, "height": 0}},
+    {"id": "a", "op": "save", "expect": {"result": false, "saved": false}},
+    {"id": "a", "op": "copy", "expect": {"result": false}},
+    {"id": "a", "op": "paste", "expect": {"result": false, "width": 0}},
+    {"id": "a", "op": "load", "args": ["grid.png"], "expect": {"width": 80, "height": 60, "undo": false}},
+    {"id": "a", "op": "tool", "args": ["cut"], "expect": {"tool": "cut"}},
+    {"id": "a", "op": "drag", "args": [66, 66, 116, 66], "expect": {"width": 70, "height": 60, "undo": true}},
+    {"id": "a", "op": "drag", "args": [66, 66, 66, 66], "expect": {"width": 70, "height": 60}},
+    {"id": "a", "op": "undo", "expect": {"width": 80, "height": 60, "redo": true}},
+    {"id": "a", "op": "redo", "expect": {"width": 70, "height": 60}},
+    {"id": "a", "op": "save", "expect": {"saved": true, "pixels": "285e39c892830cd8a49de9097370b149f6f6e8a13e3269bb159cfe429a89f05a"}},
+    {"id": "a", "op": "tool", "args": ["rect"], "expect": {"tool": "rect"}},
+    {"id": "a", "op": "drag", "args": [90, 90, 170, 140], "expect": {"undo": true}},
+    {"id": "a", "op": "tool", "args": ["blur"], "expect": {"tool": "blur"}},
+    {"id": "a", "op": "drag", "args": [110, 110, 200, 180]},
+    {"id": "a", "op": "text", "args": [5, 5, 50, 20, "Parity"], "expect": {"undo": true}},
+    {"id": "a", "op": "undo", "expect": {"redo": true}},
+    {"id": "a", "op": "tool", "args": ["erase"], "expect": {"tool": "erase"}},
+    {"id": "a", "op": "drag", "args": [130, 130, 180, 180]},
+    {"id": "a", "op": "save", "expect": {"saved": true, "pixels": "781b260c6cf155a727dc44edb35cc2cff17b6d095c7e69ff8f5eadc0f8077635"}},
+    {"id": "a", "op": "undo", "expect": {"redo": true}},
+    {"id": "a", "op": "redo", "expect": {"undo": true}},
+    {"id": "a", "op": "bad-load", "expect": {"result": false, "width": 70, "height": 60}},
+    {"id": "a", "op": "tool", "args": ["cut"], "expect": {"tool": "cut"}},
+    {"id": "a", "op": "cancel-drag", "args": [66, 66, 116, 66], "expect": {"result": true, "width": 70}},
+    {"id": "a", "op": "copy", "expect": {"result": true}},
+    {"id": "b", "op": "new", "expect": {"width": 0, "height": 0}},
+    {"id": "b", "op": "load", "args": ["second.png"], "expect": {"width": 48, "height": 36}},
+    {"id": "b", "op": "tool", "args": ["rect"], "expect": {"tool": "rect"}},
+    {"id": "b", "op": "drag", "args": [90, 90, 170, 140], "expect": {"undo": true}},
+    {"id": "b", "op": "save", "expect": {"saved": true, "pixels": "18ed666150fac5dd840f5978002e00383aacff9fce80030f956d2361c6812846"}},
+    {"id": "a", "op": "save", "expect": {"width": 70, "height": 60, "saved": true, "pixels": "781b260c6cf155a727dc44edb35cc2cff17b6d095c7e69ff8f5eadc0f8077635"}},
+    {"id": "b", "op": "clear", "expect": {"width": 0, "height": 0, "undo": false}},
+    {"id": "b", "op": "paste", "expect": {"result": true, "width": 210, "height": 180, "undo": false}},
+    {"id": "b", "op": "bad-load", "expect": {"result": false, "width": 210, "height": 180}},
+    {"id": "b", "op": "save", "expect": {"saved": true, "pixels": "781b260c6cf155a727dc44edb35cc2cff17b6d095c7e69ff8f5eadc0f8077635"}}
+  ],
+  "retained_recording_tests": [
+    "configuredRecordingRootAndFailureAreIsolated",
+    "trimCancellationPreservesOriginal",
+    "trimReplacementFailurePreservesOriginal"
+  ],
+  "mac_recording_tests": [
+    "cancellationTimeoutDiscards"
+  ]
+}

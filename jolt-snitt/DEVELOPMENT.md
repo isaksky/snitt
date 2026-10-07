@@ -32,3 +32,14 @@ image pixels and undo history stay in `EditorCanvas`, never in reactive state.
 
 Only local macOS validation is in scope for this development launcher. Windows
 build and execution remain deferred.
+
+Run `python3 tests/parity.py` from the repository root to rebuild the local
+test binaries and compare the shared editor fixture through C++ and the Jolt
+bridge. `tests/parity-fixtures.json` records commands and expected state; the
+runner generates images in separate temporary roots, compares every state and
+saved image pixel buffer, and prints the differing command and field on failure.
+It also runs the retained recording cancellation and failed replacement tests
+against generated clips. Recording has not migrated to Jolt yet, so those media
+checks remain a C++ regression gate. The text edit in the fixture is undone
+before pixel comparison; font rendering is not treated as bit-identical across
+platforms. Use `--skip-build` for a quick rerun after the binaries are current.

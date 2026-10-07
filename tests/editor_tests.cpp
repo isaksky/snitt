@@ -54,6 +54,7 @@
 #include "appservice.h"
 #include "clipboard.h"
 #include <functional>
+#include <map>
 #ifdef Q_OS_WIN
 #include <QSemaphore>
 #include <QThread>
@@ -109,6 +110,7 @@ private slots:
     void windowsRecordingOverlayExclusionFailure();
 #endif
     void makePreviewFixture();
+    void parityFixture();
 };
 
 static QImage pattern() {
@@ -412,6 +414,63 @@ void EditorTests::failedLoadPreservesImage() {
     QVERIFY(!canvas.load(QUrl::fromLocalFile("/does/not/exist.png")));
     QCOMPARE(errors.size(), 1);
     QCOMPARE(canvas.imageWidth(), 80);
+}
+
+void EditorTests::parityFixture() {
+    const QString commandsPath = qEnvironmentVariable("SNITT_PARITY_COMMANDS");
+    const QString tracePath = qEnvironmentVariable("SNITT_PARITY_TRACE");
+    const QString root = qEnvironmentVariable("SNITT_PARITY_ROOT");
+    if (commandsPath.isEmpty() || tracePath.isEmpty() || root.isEmpty())
+        QSKIP("Run this slot through tests/parity.py");
+    QFile commands(commandsPath);
+    QVERIFY(commands.open(QIODevice::ReadOnly | QIODevice::Text));
+    QFile trace(tracePath);
+    QVERIFY(trace.open(QIODevice::WriteOnly | QIODevice::Text));
+    std::map<QString, std::unique_ptr<EditorCanvas>> canvases;
+    QGuiApplication::clipboard()->clear();
+    int step = 0;
+    while (!commands.atEnd()) {
+        const QStringList fields = QString::fromUtf8(commands.readLine()).trimmed().split(u'\t');
+        if (fields.size() < 2) continue;
+        const QString id = fields.at(0), operation = fields.at(1);
+        QString result = "ok", saved;
+        if (operation == "new") {
+            auto canvas = std::make_unique<EditorCanvas>();
+            canvas->setWidth(432);
+            canvas->setHeight(332);
+            canvas->setSaveRoot(QDir(root).filePath("saved-" + id));
+            canvases[id] = std::move(canvas);
+        } else {
+            QVERIFY2(canvases.find(id) != canvases.end(), qPrintable("Missing canvas: " + id));
+            EditorCanvas &canvas = *canvases[id];
+            if (operation == "load") result = canvas.load(QUrl::fromLocalFile(QDir(root).filePath(fields.at(2)))) ? "true" : "false";
+            else if (operation == "bad-load") result = canvas.load(QUrl::fromLocalFile(QDir(root).filePath("missing.png"))) ? "true" : "false";
+            else if (operation == "tool") canvas.setTool(fields.at(2));
+            else if (operation == "drag" || operation == "cancel-drag") {
+                canvas.begin(fields.at(2).toDouble(), fields.at(3).toDouble());
+                canvas.move(fields.at(4).toDouble(), fields.at(5).toDouble());
+                if (operation == "cancel-drag") result = canvas.cancel() ? "true" : "false";
+                canvas.end(fields.at(4).toDouble(), fields.at(5).toDouble());
+            } else if (operation == "text") canvas.addText(fields.at(2).toDouble(), fields.at(3).toDouble(),
+                    fields.at(4).toDouble(), fields.at(5).toDouble(), fields.at(6));
+            else if (operation == "undo") canvas.undo();
+            else if (operation == "redo") canvas.redo();
+            else if (operation == "clear") canvas.clear();
+            else if (operation == "copy") result = canvas.copy() ? "true" : "false";
+            else if (operation == "paste") result = canvas.paste() ? "true" : "false";
+            else if (operation == "save") { saved = canvas.save(); result = saved.isEmpty() ? "false" : "true"; }
+            else QFAIL(qPrintable("Unknown parity operation: " + operation));
+        }
+        EditorCanvas &canvas = *canvases[id];
+        const QStringList row{id, QString::number(step++), operation, result,
+                              canvas.hasImage() ? "true" : "false", QString::number(canvas.imageWidth()),
+                              QString::number(canvas.imageHeight()), canvas.canUndo() ? "true" : "false",
+                              canvas.canRedo() ? "true" : "false", canvas.tool(),
+                              QString::number(canvas.selectedRegion()),
+                              canvas.arranging() ? "true" : "false", saved};
+        trace.write(row.join(u'\t').toUtf8() + '\n');
+    }
+    QVERIFY(trace.flush());
 }
 
 void EditorTests::makePreviewFixture() {
