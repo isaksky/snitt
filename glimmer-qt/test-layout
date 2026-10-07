@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+# Bound native event-loop stalls as well as the managed test timeout.
+exec python3 - "${JOLT:-jolt}" <<'PY'
+import subprocess, sys
+try:
+    result = subprocess.run([sys.argv[1], '-M:layout-test'], timeout=60, capture_output=True, text=True)
+    print(result.stdout, end='')
+    print(result.stderr, end='', file=sys.stderr)
+    if 'binding loop' in result.stderr.lower() or 'recursive rearrange' in result.stderr.lower():
+        sys.exit('Qt reported a geometry binding/layout loop')
+    sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit('Qt layout tests exceeded 60 seconds')
+PY

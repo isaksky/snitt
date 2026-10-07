@@ -1,5 +1,5 @@
 (ns glimmer-qt.widget
-  "Registered Qt widgets, including :vbox, :hbox, :label, :entry, :button.
+  "Qt controls, padded boxes/flow, and item/overlay/rectangle/spacer primitives.
   Event signatures match glimmer-gtk: :on-change receives text; :on-click and
   :on-activate take no arguments. Handlers are refreshed on every render."
   (:require [glimmer-qt.ffi :as q]
@@ -16,8 +16,41 @@
    :hexpand ["Layout.fillWidth" :bool false]
    :vexpand ["Layout.fillHeight" :bool false]
    :margin ["Layout.margins" :number 0]
+   :margin-left ["Layout.leftMargin" :number 0]
+   :margin-right ["Layout.rightMargin" :number 0]
+   :margin-top ["Layout.topMargin" :number 0]
+   :margin-bottom ["Layout.bottomMargin" :number 0]
+   :min-width ["Layout.minimumWidth" :number 0]
+   :min-height ["Layout.minimumHeight" :number 0]
+   :preferred-width ["Layout.preferredWidth" :number -1]
+   :preferred-height ["Layout.preferredHeight" :number -1]
+   :max-width ["Layout.maximumWidth" :number 16777215]
+   :max-height ["Layout.maximumHeight" :number 16777215]
+   :alignment ["Layout.alignment" :value (value/flags "AlignVCenter")]
+   :clip ["clip" :bool false]
+   :opacity ["opacity" :number 1]
+   :z ["z" :number 0]
    :sensitive ["enabled" :bool true]
    :visible ["visible" :bool true]})
+
+(def ^:private padding
+  {:padding ["padding" :number 0]
+   :padding-left ["leftPadding" :number -1]
+   :padding-right ["rightPadding" :number -1]
+   :padding-top ["topPadding" :number -1]
+   :padding-bottom ["bottomPadding" :number -1]})
+
+;; Position against the owned parent, never a global ID or an unstable pointer.
+;; Keep these bindings on primitives; controls compose inside an :item/:overlay.
+(def ^:private geometry
+  {:x ["offsetX" :number 0] :y ["offsetY" :number 0]
+   :width ["explicitWidth" :number -1] :height ["explicitHeight" :number -1]
+   :relative-x ["relativeX" :number 0] :relative-y ["relativeY" :number 0]
+   :relative-width ["relativeWidth" :number -1]
+   :relative-height ["relativeHeight" :number -1]
+   :anchor ["anchorMode" :string "none"]
+   :implicit-width ["implicitWidth" :number 0]
+   :implicit-height ["implicitHeight" :number 0]})
 
 (defonce ^:private registry (atom {}))
 
@@ -57,8 +90,16 @@
   tag)
 
 (doseq [[tag props events children relay]
-        [[:vbox (assoc common :spacing ["spacing" :number 0]) {} :self ""]
-         [:hbox (assoc common :spacing ["spacing" :number 0]) {} :self ""]
+        [[:vbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
+         [:hbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
+         [:flow (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
+         [:item (merge common geometry) {} :self ""]
+         [:overlay (merge common geometry) {} :self ""]
+         [:spacer (merge common geometry) {} :none ""]
+         [:rectangle (merge common geometry {:color ["color" :color "transparent"]
+                                            :radius ["radius" :number 0]
+                                            :border-width ["border.width" :number 0]
+                                            :border-color ["border.color" :color "transparent"]}) {} :self ""]
          [:label (merge common {:label ["text" :string ""] :color ["color" :color "#ffffff"]
                                 :font-size ["font.pixelSize" :number 14]
                                 :font-weight ["font.weight" :number 400]}) {} :none ""]
@@ -85,8 +126,31 @@
       (throw (ex-info "Qt widget tag mismatch." {:tag tag :actual (:tag data)})))
     data))
 
+(defn- prop-value [props key default]
+  (get props key (if (#{:margin-left :margin-right :margin-top :margin-bottom} key)
+                   (get props :margin 0) default)))
+
 (defn- validate-props! [tag props]
   (object/validate-subscriptions! (:qt/subscriptions props))
+  (when (and (contains? props :anchor) (not (#{"none" "fill" "center"} (:anchor props))))
+    (throw (ex-info "Unsupported anchor; use none, fill or center relative to parent." {})))
+  (doseq [[a b] [[:width :relative-width] [:height :relative-height]]]
+    (when (and (contains? props a) (contains? props b))
+      (throw (ex-info "Explicit and relative dimensions conflict." {:properties [a b]}))))
+  (when (and (= "fill" (:anchor props))
+             (some #(contains? props %) [:x :y :width :height :relative-x :relative-y :relative-width :relative-height]))
+    (throw (ex-info "Fill anchor owns position and dimensions." {})))
+  (doseq [[lo hi] [[:min-width :max-width] [:min-height :max-height]]]
+    (when (and (number? (get props lo)) (number? (get props hi)) (> (get props lo) (get props hi)))
+      (throw (ex-info "Minimum dimension exceeds maximum." {}))))
+  (doseq [key [:width :height :relative-width :relative-height :implicit-width :implicit-height
+               :min-width :min-height :preferred-width :preferred-height :max-width :max-height
+               :padding :padding-left :padding-right :padding-top :padding-bottom :spacing
+               :radius :border-width]
+          :let [v (get props key)] :when (and (number? v) (neg? v))]
+    (throw (ex-info "Geometry dimensions and spacing must be nonnegative; omit to use defaults." {:property key})))
+  (when (and (number? (:opacity props)) (not (<= 0 (:opacity props) 1)))
+    (throw (ex-info "Opacity must be between zero and one." {})))
   (let [spec (spec-for tag)]
     (doseq [key (:required (registration tag))]
       (when-not (contains? props key)
@@ -101,16 +165,28 @@
         (when (and value (not (ifn? value)))
           (throw (ex-info "Qt event handler must be callable." {:property key})))))))
 
+(defn- validate-placement! [parent-tag props]
+  (when (and (#{:window :hbox :vbox :flow} parent-tag)
+             (or (some #(contains? props %) [:x :y :relative-x :relative-y :relative-width :relative-height :anchor])
+                 (and (not= :flow parent-tag) (some #(contains? props %) [:width :height]))))
+    (throw (ex-info "Layout owns child geometry; use preferred dimensions and an overlay container." {})))
+  (when (and (#{:flow :item :overlay :rectangle} parent-tag)
+             (some #(contains? props %) [:hexpand :vexpand :min-width :min-height :max-width :max-height
+                                         :preferred-width :preferred-height :alignment :margin :margin-left
+                                         :margin-right :margin-top :margin-bottom]))
+    (throw (ex-info "This parent does not support Layout hints; use intrinsic sizes or a nested box." {}))))
+
 (defn apply-props! [tag widget props]
   (let [spec (spec-for tag)
         previous (:props (tagged-widget tag widget))]
     ;; Validate all keys and managed shapes first; each native write also checks
     ;; Qt metadata and ranges before mutating that property.
     (validate-props! tag props)
+    (validate-placement! (:tag (get @widgets (:parent (get @widgets widget)))) props)
     (doseq [[key entry] spec :when entry]
       (let [[property type default] entry
-            value (get props key default)]
-        (when (or (nil? previous) (= key :text) (not= value (get previous key default)))
+            value (prop-value props key default)]
+        (when (or (nil? previous) (= key :text) (not= value (prop-value previous key default)))
           (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
     (swap! widgets assoc-in [widget :props] props)
     (object/reconcile! widget (:qt/subscriptions props)))
@@ -144,7 +220,7 @@
   (when-not @session (throw (ex-info "No running Qt session." {})))
   (let [{:keys [source relay children] schema :props} (registration tag)
         initial (into {} (map (fn [[key [property type default]]]
-                              (let [v (get props key default)]
+                              (let [v (prop-value props key default)]
                                 [property (if (= type :color) (value/color v) v)])) schema))
         widget (q/create-registered @session source (value/encode initial) relay)]
     (swap! widgets assoc widget {:tag tag :children [] :parent nil :props props})
@@ -175,12 +251,19 @@
   (when-not (= parent (:parent (live-widget child)))
     (throw (ex-info "Qt widget is not a child of this parent." {:child child :parent parent}))))
 
+(defn- placement! [tag child]
+  (validate-placement! tag (:props (live-widget child)))
+  (when (#{:item :overlay :rectangle :spacer} (:tag (live-widget child)))
+    (q/set-property! child "positionManaged" (boolean (#{:window :hbox :vbox :flow} tag)))
+    (q/set-property! child "sizeManaged" (boolean (#{:window :hbox :vbox} tag)))))
+
 (defn append-child! [tag parent child]
   (check-container! tag parent)
   (when (:parent (live-widget child))
     (throw (ex-info "Qt child already has a parent." {:child child})))
   (when (and (= tag :window) (seq (:children (live-widget parent))))
     (throw (ex-info "A Qt window accepts one root component." {})))
+  (placement! tag child)
   (q/append (:target (live-widget parent)) child)
   (swap! widgets assoc-in [child :parent] parent)
   (swap! widgets update-in [parent :children] conj child)
@@ -214,6 +297,7 @@
         sibling (last before)]
     ;; Native append validates cycles before the old tree is removed. Temporarily
     ;; having two roots is internal; no event loop or managed handler runs here.
+    (placement! tag new-child)
     (q/append (:target (live-widget parent)) new-child)
     (swap! widgets assoc-in [new-child :parent] parent)
     (swap! widgets update-in [parent :children] conj new-child)

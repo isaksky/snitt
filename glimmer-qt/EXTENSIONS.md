@@ -201,3 +201,64 @@ an external deadline for worker/GC failures. The demo
 rotates the spinner using an owner-scoped repeating job. Offscreen signal and
 lifetime checks do not establish physical keyboard/mouse behavior. Validation
 for this change is local macOS only; Windows execution is deferred.
+
+## Layout and visual primitives
+
+`:vbox` and `:hbox` own their children's geometry through Qt layouts. `:flow`
+wraps controls at the available width, with an implicit height that follows its
+rows. All three accept `:spacing`, `:padding`, and per-edge `:padding-left`,
+`:padding-right`, `:padding-top`, `:padding-bottom`. Omitted edges inherit padding.
+Their internal child target is owned by the container; child coordinates are
+relative to that padded target. Flow children use intrinsic sizes (or explicit
+sizes on primitives); Layout hints on them are rejected. Give the toolbar enough
+width for its widest individual control; Flow does not shrink or split controls.
+
+Layout children accept `:hexpand`, `:vexpand`, `:min-width`, `:min-height`,
+`:preferred-width`, `:preferred-height`, `:max-width`, `:max-height`, `:margin` and
+per-edge margins. Omitted margin edges inherit `:margin`. `:alignment` takes
+`(glimmer-qt.value/flags "AlignRight" "AlignBottom")`, for example. Omit size hints
+to restore intrinsic sizing; default maxima are 16777215. Dimensions and spacing
+must be nonnegative; fractional values are preserved.
+
+`:item` and `:overlay` are transparent, non-layout containers; `:rectangle` adds
+`:color`, `:radius`, `:border-width`, and `:border-color`. `:spacer` is a leaf with
+implicit dimensions, useful with `:hexpand`/`:vexpand` in boxes. These primitives
+accept `:implicit-width` and `:implicit-height` (default zero). Non-layout
+containers deliberately do not derive their size from children, avoiding cycles
+between parent sizing and child anchors.
+
+Inside a non-layout container, primitives accept fractional pixel `:x`, `:y`,
+`:width`, `:height`, and parent-relative `:relative-x`, `:relative-y`,
+`:relative-width`, `:relative-height` (1.0 means the parent's full dimension).
+Offsets add to relative positions. `:anchor "fill"` fills the parent;
+`:anchor "center"` centers the child's dimensions with optional offsets;
+omitting the anchor restores normal positioning. The stable local reference is
+the owned visual parent, so references cannot outlive it, cross windows, or form
+sibling cycles. Nest an item to establish another local coordinate system.
+Absolute and relative dimensions on the same axis are rejected, as are fill
+anchors with explicit geometry. Layout parents reject explicit positions,
+anchors and sizes; their primitive children's positioning bindings are disabled.
+Non-layout parents reject Layout hints rather than silently ignoring them.
+
+```clojure
+[:vbox {:hexpand true :vexpand true :padding 8}
+ [:flow {:hexpand true :spacing 4}
+  [:button {:label "Arrow"}]
+  [:button {:label "Text"}]]
+ [:overlay {:hexpand true :vexpand true :clip true}
+  [:rectangle {:anchor "fill" :color "#223344"}]
+  [:item {:relative-x 0.25 :relative-y 0.25
+          :relative-width 0.5 :relative-height 0.5 :z 2}
+   [:label {:label "Annotation"}]]]]
+```
+
+All built-ins accept `:clip`, `:opacity` (0–1), and `:z`. Equal-z children follow
+reconciled visual order. Controls retain their intrinsic sizes; compose them
+inside positioned items when an overlay needs controls. Geometry notifications
+use `:qt/subscriptions` with `:property "width"`, `"height"`, `"x"`, `"y"`,
+`"implicitWidth"`, or `"implicitHeight"`, and inherit the existing queued delivery
+and disposal semantics. Do not write layout-owned geometry from observers.
+
+Run `./glimmer-qt/test-layout` for offscreen geometry/reconciliation checks, or
+`QT_QPA_PLATFORM=cocoa ./glimmer-qt/test-layout` for the macOS desktop backend.
+Select the repository Qt SDK with `SNITT_QMAKE` as in `docs/development.md`.

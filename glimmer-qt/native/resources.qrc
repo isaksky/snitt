@@ -6,5 +6,11 @@
         <file alias="label.qml">../qml/label.qml</file>
         <file alias="entry.qml">../qml/entry.qml</file>
         <file alias="button.qml">../qml/button.qml</file>
+        <file alias="Geometry.qml">../qml/Geometry.qml</file>
+        <file alias="item.qml">../qml/item.qml</file>
+        <file alias="overlay.qml">../qml/overlay.qml</file>
+        <file alias="rectangle.qml">../qml/rectangle.qml</file>
+        <file alias="spacer.qml">../qml/spacer.qml</file>
+        <file alias="flow.qml">../qml/flow.qml</file>
     </qresource>
 </RCC>
