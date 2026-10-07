@@ -8,6 +8,7 @@
            :keyboard-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.keyboard-test"]}
            :pointer-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.pointer-test"]}
            :actions-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.actions-test"]}
+           :tray-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.tray-test"]}
            :layout-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.layout-test"]}
            :windows-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.windows-test"]}
            :objects-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.objects-test"]}

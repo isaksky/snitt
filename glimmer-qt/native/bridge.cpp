@@ -25,6 +25,11 @@
 #include <QThread>
 #include <QTimer>
 #include <QWidget>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QAction>
+#include <QIcon>
+#include <QCursor>
 #include <QDebug>
 #include <cstdint>
 #include <cmath>
@@ -164,6 +169,8 @@ struct Session {
     // standalone services explicitly, never parent them to the QML engine.
     // Declared before engine so services outlive its windows during teardown.
     WidgetServices widgetServices;
+    QHash<Handle, QPointer<QSystemTrayIcon>> trays;
+    QHash<Handle, QPointer<QMenu>> trayMenus;
     QQmlEngine engine;
     QPointer<QQuickWindow> window;
     Handle container = 0;
@@ -173,6 +180,16 @@ struct Session {
     bool exitRequested = false;
     bool executing = false;
     int exitCode = 0;
+
+    ~Session() {
+        // The public runner normally disposes trays first. Keep raw C ABI
+        // session closure safe too: menus must outlive neither icon nor app.
+        for (const auto &entry : trays) {
+            if (auto *tray = entry.data()) {
+                tray->hide(); tray->setContextMenu(nullptr); delete tray;
+            }
+        }
+    }
 
     QObject *create(const QString &tag) {
         QQmlComponent component(&engine, QUrl("qrc:/glimmer-qt/" + tag + ".qml"));
@@ -464,6 +481,125 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
     auto *s = sessionFor(id);
     if (!s) return 0;
     s->relay.handler = handler;
+    return 1;
+}
+// Tray menus are independent QWidget services. They stay alive when all editor
+// windows are hidden and are explicitly deleted before the owning tray icon.
+extern "C" Q_DECL_EXPORT int gqt_tray_available() {
+    return guiThread() && QSystemTrayIcon::isSystemTrayAvailable() ? 1 : 0;
+}
+static QSystemTrayIcon *trayFor(Handle id) {
+    if (!objectFor(id)) return nullptr;
+    auto *tray = active->trays.value(id).data();
+    if (!tray) fail("Invalid or disposed Qt tray handle");
+    return tray;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_tray_create(Handle session, const char *iconPath, const char *tooltip) {
+    auto *s = sessionFor(session);
+    if (!s) return 0;
+    if (!s->accepting) { fail("Qt application is shutting down"); return 0; }
+    QIcon icon(QString::fromUtf8(iconPath));
+    if (icon.isNull()) { fail("Qt tray icon could not be loaded"); return 0; }
+    auto *tray = new QSystemTrayIcon(&s->relay);
+    auto *menu = new QMenu;
+    s->widgetServices.append(menu);
+    const Handle id = s->relay.track(tray);
+    s->relay.track(menu, false);
+    s->trays.insert(id, tray);
+    s->trayMenus.insert(id, menu);
+    tray->setIcon(icon);
+    tray->setToolTip(QString::fromUtf8(tooltip));
+    tray->setContextMenu(menu);
+    QObject::connect(tray, &QSystemTrayIcon::activated, &s->relay,
+                     [s, id](QSystemTrayIcon::ActivationReason reason) {
+        const auto value = QByteArray::number(int(reason));
+        s->relay.notify(id, "tray-activated", value.constData());
+    });
+    QObject::connect(tray, &QSystemTrayIcon::messageClicked, &s->relay,
+                     [s, id] { s->relay.notify(id, "tray-message-clicked"); });
+    return id;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_show(Handle id, int visible) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    if (visible != 0 && visible != 1) return fail("Invalid Qt tray visibility");
+    if (visible && !QSystemTrayIcon::isSystemTrayAvailable())
+        return fail("System tray is unavailable on this desktop");
+    tray->setVisible(visible != 0);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_set_icon(Handle id, const char *path) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    QIcon icon(QString::fromUtf8(path));
+    if (icon.isNull()) return fail("Qt tray icon could not be loaded");
+    tray->setIcon(icon);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_set_tooltip(Handle id, const char *tooltip) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    tray->setToolTip(QString::fromUtf8(tooltip));
+    return 1;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_tray_add_action(Handle id, const char *label,
+        const char *hint, int enabled, int checkable, int checked, int separator) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    auto *menu = active->trayMenus.value(id).data();
+    if (!menu) { fail("Qt tray menu is disposed"); return 0; }
+    if ((enabled & ~1) || (checkable & ~1) || (checked & ~1) || (separator & ~1)) {
+        fail("Invalid Qt tray action state"); return 0;
+    }
+    auto *action = separator ? menu->addSeparator() : menu->addAction(QString());
+    if (!separator) {
+        const QString title = QString::fromUtf8(label);
+        const QString suffix = QString::fromUtf8(hint);
+        action->setText(suffix.isEmpty() ? title : title + "\t" + suffix);
+        action->setEnabled(enabled);
+        action->setCheckable(checkable);
+        action->setChecked(checked);
+    }
+    const Handle actionId = active->relay.track(action, false);
+    if (!separator) QObject::connect(action, &QAction::triggered, &active->relay,
+                                    [s = active, actionId](bool) { s->relay.notify(actionId, "tray-triggered"); });
+    return actionId;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_update_action(Handle id, const char *label,
+        const char *hint, int enabled, int checkable, int checked) {
+    auto *action = qobject_cast<QAction *>(objectFor(id));
+    if (!action || !action->parent() || !qobject_cast<QMenu *>(action->parent()) || action->isSeparator())
+        return fail("Invalid or disposed Qt tray action handle");
+    if ((enabled & ~1) || (checkable & ~1) || (checked & ~1)) return fail("Invalid Qt tray action state");
+    const QString title = QString::fromUtf8(label);
+    const QString suffix = QString::fromUtf8(hint);
+    action->setText(suffix.isEmpty() ? title : title + "\t" + suffix);
+    action->setEnabled(enabled);
+    action->setCheckable(checkable);
+    action->setChecked(checked);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_notify(Handle id, const char *title,
+                                               const char *body, int kind, int timeout) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    if (kind < 0 || kind > 3 || timeout < 0) return fail("Invalid Qt tray notification");
+    if (!tray->isVisible() || !QSystemTrayIcon::isSystemTrayAvailable())
+        return fail("System tray is unavailable on this desktop");
+    if (!QSystemTrayIcon::supportsMessages()) return fail("System tray notifications are unavailable");
+    tray->showMessage(QString::fromUtf8(title), QString::fromUtf8(body),
+                      QSystemTrayIcon::MessageIcon(kind), timeout);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_tray_destroy(Handle id) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    tray->hide();
+    tray->setContextMenu(nullptr);
+    auto *menu = active->trayMenus.take(id).data();
+    active->trays.remove(id);
+    delete menu; // Deletes and invalidates every action before the icon.
+    delete tray;
     return 1;
 }
 #include "values.h"
@@ -914,6 +1050,26 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
 #include "../test/native/pointer_fixture.h"
 #include "../test/native/value_fixture.h"
 #include "../test/native/object_fixture.h"
+extern "C" Q_DECL_EXPORT int gqt_test_tray_desktop(Handle id, int actions) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    auto *menu = active->trayMenus.value(id).data();
+    if (!QSystemTrayIcon::isSystemTrayAvailable() || !tray->isVisible() ||
+        tray->icon().isNull() || !menu || tray->contextMenu() != menu ||
+        menu->actions().size() != actions) return fail("Native desktop tray/menu state is incomplete");
+    menu->popup(QCursor::pos());
+    QTest::qWait(40);
+    const bool opened = menu->isVisible();
+    menu->hide();
+    return opened ? 1 : fail("Native desktop tray menu did not open");
+}
+extern "C" Q_DECL_EXPORT int gqt_test_tray_events(Handle id) {
+    auto *tray = trayFor(id);
+    if (!tray) return 0;
+    tray->activated(QSystemTrayIcon::DoubleClick);
+    tray->messageClicked();
+    return 1;
+}
 extern "C" Q_DECL_EXPORT int gqt_test_file_result(Handle id, const char *path) {
     auto *object = objectFor(id);
     auto *chooser = object ? object->findChild<QObject *>("glimmerFileDialog") : nullptr;

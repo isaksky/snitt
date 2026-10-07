@@ -7,6 +7,7 @@
             [glimmer-qt.ffi :as q]
             [glimmer-qt.widget :as w]
             [glimmer-qt.object :as object]
+            [glimmer-qt.tray :as tray]
             [jolt.ffi :as ffi]
             [jolt.host :as host]))
 
@@ -300,6 +301,7 @@
                         (when (or (nil? on-close) (true? (on-close widget)))
                           (close-window! widget))))
     ("signal" "signal-error" "subscription-ended") (object/dispatch! widget event value)
+    ("tray-triggered" "tray-activated" "tray-message-clicked") (tray/dispatch! widget event value)
     "shutdown" (locking jobs (reset! jobs {:session nil :work {}}))
     "work-canceled" (locking jobs (swap! jobs update :work dissoc widget))
     "work" (let [[generation elapsed] (str/split value #",")
@@ -353,6 +355,7 @@
         (locking jobs (reset! jobs {:session nil :work {}}))
         (q/set-handler session ffi/null)
         (let [cleanup-error (atom nil)]
+          (try (tray/clear!) (catch Throwable e (reset! cleanup-error e)))
           (doseq [window (keys @windows)]
             (try (dispose-window! window) (catch Throwable e (reset! cleanup-error e))))
           (try
