@@ -2,6 +2,9 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+if [ "$(uname -s)" = Darwin ]; then
+    exec "$ROOT/bin/stage-macos"
+fi
 JOBS="$("$ROOT/bin/build-jobs")"
 export SNITT_BUILD_JOBS="$JOBS"
 

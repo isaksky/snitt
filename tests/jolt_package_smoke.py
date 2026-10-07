@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Check a relocated Jolt Snitt bundle and compare startup with the C++ launcher."""
+"""Check the relocated production bundle and measure startup resources."""
 
+import argparse
 import os
 from pathlib import Path
 import statistics
@@ -11,8 +12,7 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = ROOT / "build/Snitt.app"
-ARCHIVE = ROOT / "build/release-jolt/snitt_0.2.0_macos_arm64.zip"
+ARCHIVE = ROOT / "build/release/snitt_0.2.0_macos_arm64.zip"
 
 
 def environment(home, jolt=False):
@@ -80,15 +80,20 @@ def exercise(bundle, home, jolt=False):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--archive", type=Path, default=ARCHIVE)
+    parser.add_argument("--legacy-bundle", type=Path,
+                        help="Optional pre-cutover C++ bundle for a local comparison")
+    args = parser.parse_args()
     if sys.platform != "darwin":
         raise RuntimeError("macOS is required")
-    if not ARCHIVE.is_file() or not LEGACY.is_dir():
-        raise RuntimeError("Package Jolt and build the legacy comparison bundle first")
+    if not args.archive.is_file():
+        raise RuntimeError(f"Package the app first: {args.archive}")
     with tempfile.TemporaryDirectory(prefix="snitt-package-smoke-") as directory:
         root = Path(directory)
         relocated = root / "relocated/Snitt.app"
         relocated.parent.mkdir()
-        subprocess.run(["ditto", "-x", "-k", str(ARCHIVE), str(relocated.parent)], check=True)
+        subprocess.run(["ditto", "-x", "-k", str(args.archive), str(relocated.parent)], check=True)
         image = root / "source.png"
         subprocess.run([sys.executable, str(ROOT / "jolt-snitt/test/image_pixels.py"),
                         "generate", str(image)], check=True)
@@ -99,15 +104,20 @@ def main():
         smoke_env["SNITT_JOLT_IMAGE"] = str(image)
         subprocess.run([str(relocated / "Contents/MacOS/snitt"), "--smoke-test"],
                        cwd=smoke_home, env=smoke_env, check=True, timeout=30)
-        measurements = {}
-        for label, bundle, jolt in (("legacy", LEGACY, False),
-                                    ("jolt", relocated, True)):
+        saved = list((smoke_home / "pictures").rglob("*.png"))
+        if len(saved) != 1 or saved[0].stat().st_size == 0:
+            raise RuntimeError("Packaged Jolt app did not save its image in the Pictures root")
+        candidates = [("jolt", relocated, True)]
+        if args.legacy_bundle:
+            candidates.insert(0, ("legacy", args.legacy_bundle.resolve(), False))
+        for label, bundle, jolt in candidates:
+            if not bundle.is_dir():
+                raise RuntimeError(f"Bundle is missing: {bundle}")
             runs = []
             for index in range(2):
                 home = root / f"{label}-{index}"
                 home.mkdir()
                 runs.append(exercise(bundle, home, jolt))
-            measurements[label] = runs
             print(f"{label}: ready median {statistics.median(t for t, _ in runs):.3f}s; "
                   f"RSS median {statistics.median(r for _, r in runs) / 1024:.1f} MiB")
         print("PASS: relocated Jolt smoke, forwarding, show, quit and repeated teardown")

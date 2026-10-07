@@ -8,6 +8,9 @@ DEST="$HOME/Applications/Snitt.app"
 AGENT="$HOME/Library/LaunchAgents/local.snitt.plist"
 DOMAIN="gui/$(id -u)"
 if [ -f "$AGENT" ]; then launchctl bootout "$DOMAIN" "$AGENT" 2>/dev/null || true; fi
+if [ -x "$DEST/Contents/MacOS/snitt" ]; then
+    "$DEST/Contents/MacOS/snitt" --quit
+fi
 "$ROOT/build/Snitt.app/Contents/MacOS/snitt" --quit
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 if [ -d "$DEST" ]; then

@@ -13,5 +13,5 @@ if [ "$MODE" = --dev ] || [ "$MODE" = --all ]; then
     "${JOLT:-jolt}" build -m snitt.app --dev -o ../build/jolt-snitt/snitt-jolt-dev
 fi
 if [ "$MODE" = --release ] || [ "$MODE" = --all ]; then
-    "${JOLT:-jolt}" build -m snitt.app --signable --closed-world -o ../build/jolt-snitt/snitt-jolt
+    "${JOLT:-jolt}" build -m snitt.app --opt --signable --closed-world -o ../build/jolt-snitt/snitt-jolt
 fi

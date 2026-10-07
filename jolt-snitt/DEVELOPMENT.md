@@ -8,7 +8,8 @@ default release build. `./jolt-snitt/build-app --dev`, `--release`, or `--all`
 builds the corresponding standalone executables under `build/jolt-snitt/`.
 Launch those from `jolt-snitt/` with the matching Qt SDK's `QT_PLUGIN_PATH` and
 `QML_IMPORT_PATH` (as the scripts set them). The hello-world experiment remains
-at `./experiment/run`; the C++ application remains at `./bin/run`.
+at `./experiment/run`. Production macOS entry points are `./bin/build`,
+`./bin/run`, `./bin/stage-macos`, and `./bin/test`.
 
 This development process uses Qt application ID `snitt-jolt-development` and
 its own user-scoped IPC identity. It never contacts `AppService::serverName()`
@@ -17,12 +18,13 @@ arguments to the running instance. The first invocation captures by default,
 opens a path, shows the editor, or stays in the tray according to its arguments.
 The app stays alive after its last editor closes; the tray and application hotkey
 can create another editor. Its settings and default picture/video output live
-below Qt's application-local data directory for that ID.
+below Qt's application-local data directory for that ID. The packaged app uses
+the production `snitt` application ID and existing settings/media paths.
 Set `SNITT_JOLT_DATA_DIR` to an absolute disposable directory for tests or an
 isolated workspace. Set `SNITT_JOLT_IPC_ID` to a unique value when testing
 multiple processes. Automated tests set `SNITT_JOLT_FAKE_HOTKEY=1` to exercise
-hotkey dispatch without registering a system shortcut. The C++ production entry
-point and its IPC identity are unchanged.
+hotkey dispatch without registering a system shortcut. Development and
+production Jolt processes have separate IPC identities.
 
 `snitt.settings` parses and validates the INI, owns the published settings
 snapshot, and applies accepted values to every editor session. The native
@@ -32,8 +34,7 @@ shortcut spelling, and a projection for retained native consumers. The native
 global hotkey adapter registers a candidate before Jolt publishes it, so failed
 registration keeps the previous settings and shortcut active. Editor shortcut
 labels, key bindings, colors, save roots, and tray hints follow the same Jolt
-snapshot. The original C++ entry point continues using its existing settings
-loader until the application cutover.
+snapshot. The retained C++ reference uses its existing settings loader.
 
 Run `./jolt-snitt/test-settings` for isolated macOS settings cases, including
 ordinary saves, atomic replacement, deletion/recreation, validation errors,
@@ -89,38 +90,40 @@ and its label. Run `jolt -M:commands` from `jolt-snitt/` for the pure context te
 Only local macOS validation is in scope for this development launcher. Windows
 build and execution remain deferred.
 
-## Local macOS package candidate
+## Production macOS package
 
 Install Jolt v0.8.16 and the matching Qt 6.11 SDK, plus Chez Scheme's build
 headers (`brew install chezscheme`) for Jolt's signable release executable.
-`bin/package-jolt-macos --version 0.2.0` stages the retained C++ app as a
-comparison base, builds the closed-world Jolt executable and Snitt native
-bridge, deploys their Qt dependencies, signs the candidate with the existing
-Snitt local identity, and writes an isolated archive under `build/release-jolt/`.
-The staged candidate is `build/package/jolt-macos/Snitt.app`; the C++ reference
-remains `build/package/macos/Snitt.app` and `bin/run` remains its launcher.
-Run `bin/stage-jolt-macos --reuse-legacy-stage` only when the existing C++ stage
-has already passed signature and runtime checks. The candidate is local only;
-neither command installs it or changes login registration.
+`bin/stage-macos` builds the optimized, closed-world Jolt executable and Snitt native
+bridge, deploys Qt and the private media runtime, and signs the production
+bundle with the existing Snitt local identity. It writes
+`build/package/macos/Snitt.app` and `build/Snitt.app` without building the C++
+application. `bin/package-macos --version 0.2.0` creates the archive in
+`build/release/`. `bin/package-jolt-macos` remains a compatibility command for
+an archive under `build/release-jolt/`. Staging and packaging do not install the
+app or change login registration.
 
-The candidate keeps bundle ID `local.snitt` and the existing signing identity.
+The package keeps bundle ID `local.snitt` and the existing signing identity.
 Its launcher selects Qt plugins and the private software playback backend
 inside the bundle. It sets application name `snitt`, so the native settings
 adapter uses the C++ launcher's standard config, Pictures, and Movies paths.
-Its IPC name remains separate from the running C++ app until cutover; repeated
-candidate invocations forward to the candidate owner. Disposable desktop tests
-set `SNITT_JOLT_DATA_DIR` and `SNITT_JOLT_IPC_ID` so they never read normal user
-settings or contact a normal owner.
+Repeated packaged invocations forward to the production Jolt owner. Disposable
+desktop tests set `SNITT_JOLT_DATA_DIR` and `SNITT_JOLT_IPC_ID` so they never
+read normal user settings or contact a normal owner.
 
-After packaging, run `python3 tests/jolt_package_smoke.py`. It extracts the Jolt
+After packaging, run `python3 tests/jolt_package_smoke.py`. It extracts the
 archive out of the checkout and runs document smoke, command forwarding, show,
-quit, and two owner lifetimes. It compares settings-ready latency and editor RSS
-against a test-isolated C++ launcher. On the local arm64 macOS 15.7.3 machine
-with Qt 6.11.1 and Jolt 0.8.16, the closed-world build measured 0.230 seconds
-and 298 MiB RSS, versus 0.113 seconds and 137 MiB for C++. The retained Jolt
-runtime accounts for a higher memory floor; closed-world compilation reduced
-the candidate by about 25 MiB from the initial release build. These figures
-are two-run local medians, not portable performance limits.
+quit, and two owner lifetimes. Pass `--legacy-bundle PATH` for an optional
+comparison against a retained pre-cutover C++ bundle. On the local arm64 macOS
+15.7.3 machine with Qt 6.11.1 and Jolt 0.8.16, the optimized cutover package
+measured 0.206 seconds to settings readiness and 256 MiB editor RSS, versus
+0.121 seconds and 137 MiB for the C++ reference. The 119 MiB increase is a
+real runtime cost, while launch remains subsecond. Compared with the unoptimized
+closed-world package, `--opt` saved about 41 MiB without a material startup
+change. It omits some backtrace detail in the release binary; the development
+build retains that detail. Both owner lifetimes, relocated document smoke, and
+live capture/recording passed. These figures are two-run local medians, not
+portable performance limits.
 
 Run `python3 tests/parity.py` from the repository root to rebuild the local
 test binaries and compare the shared editor fixture through C++ and the Jolt

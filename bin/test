@@ -36,3 +36,10 @@ for SUITE in editor_tests imagetool_tests recording_tests; do
         cat placement-results.txt
     fi
 done
+if [ "$(uname -s)" = Darwin ]; then
+    "$ROOT/jolt-snitt/test-app"
+    for suite in settings region arrangement gesture document export trim; do
+        "$ROOT/jolt-snitt/test-$suite"
+    done
+    python3 "$ROOT/tests/parity.py" --skip-build
+fi

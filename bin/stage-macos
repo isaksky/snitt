@@ -1,57 +1,99 @@
-#!/usr/bin/env sh
-set -eu
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-[ "$(uname -s)" = Darwin ] || { echo 'Use the Windows package Install.cmd on Windows.' >&2; exit 1; }
-"$ROOT/bin/build"
-QMAKE="$(cat "$ROOT/build/.snitt-qmake")"
-QT_BINS="$("$QMAKE" -query QT_INSTALL_BINS)"
-QT_LIBS="$("$QMAKE" -query QT_INSTALL_LIBS)"
-DEPLOY="$QT_BINS/macdeployqt"
-[ -x "$DEPLOY" ] || { echo "Matching Qt macdeployqt is required: $DEPLOY" >&2; exit 1; }
-PACKAGE="$ROOT/build/package/macos"
-mkdir -p "$PACKAGE"
-# Only the generated staging bundle is replaced here.
-rm -rf "$PACKAGE/Snitt.app"
-ditto "$ROOT/build/Snitt.app" "$PACKAGE/Snitt.app"
-# Homebrew places Qt Quick Timeline in a separate keg. macdeployqt searches
-# one explicit libpath, so expose those frameworks in our existing build rpath.
-mkdir -p "$ROOT/build/lib"
-for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
-    if [ -d "$QT_LIBS/$framework.framework" ]; then
-        source="$QT_LIBS/$framework.framework"
-    elif command -v brew >/dev/null 2>&1 && [ -d "$(brew --prefix qtquicktimeline)/lib/$framework.framework" ]; then
-        source="$(brew --prefix qtquicktimeline)/lib/$framework.framework"
-    else
-        echo "Selected Qt SDK lacks $framework.framework" >&2
-        exit 1
-    fi
-    ln -sfn "$source" "$ROOT/build/lib/$framework.framework"
-done
-"$DEPLOY" "$PACKAGE/Snitt.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
-# The Quick Timeline blend-trees plugin can be found only after its parent
-# Timeline framework has been copied on the first pass.
-if [ ! -f "$PACKAGE/Snitt.app/Contents/Frameworks/QtQuickTimelineBlendTrees.framework/Versions/A/QtQuickTimelineBlendTrees" ]; then
-    "$DEPLOY" "$PACKAGE/Snitt.app" "-qmldir=$ROOT/src" "-libpath=$ROOT/build/lib" -always-overwrite
-fi
-# Official Qt SDKs can deploy every optional SQL driver, including drivers
-# linked to database clients that are absent on the target Mac. Snitt uses no
-# Qt SQL API; omit that unused plugin family from the standalone bundle.
-rm -rf "$PACKAGE/Snitt.app/Contents/PlugIns/sqldrivers"
-for framework in QtQuickTimeline QtQuickTimelineBlendTrees; do
-    [ -f "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework/Versions/A/$framework" ] || {
-        echo "Qt deployment did not bundle $framework" >&2
-        exit 1
-    }
-    # Depending on which pass copied BlendTrees, macdeployqt can retain its
-    # upstream signature after changing the framework resource directory.
-    # Repair only that invalid nested signature before signing the app.
-    if ! codesign --verify "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework" >/dev/null 2>&1; then
-        codesign --force --sign - "$PACKAGE/Snitt.app/Contents/Frameworks/$framework.framework"
-    fi
-done
-# macdeployqt deploys the selected SDK's Darwin multimedia plugin. Add the
-# private software playback backend after deployment so its FFmpeg libraries
-# and pinned source material remain exactly as built and signed.
-ditto "$ROOT/build/tools/mac-multimedia-runtime/stage/Contents" "$PACKAGE/Snitt.app/Contents"
-"$ROOT/bin/sign-macos" "$PACKAGE/Snitt.app"
-echo "Staged $PACKAGE/Snitt.app"
+#!/usr/bin/env python3
+"""Build and stage the production Jolt Snitt bundle for macOS."""
+
+import os
+from pathlib import Path
+import plistlib
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parent.parent
+COMMON = runpy.run_path(str(ROOT / "bin/package-glimmer-macos"))
+RELEASE = runpy.run_path(str(ROOT / "bin/package-macos"))
+
+
+def run(*command, **kwargs):
+    subprocess.run([str(arg) for arg in command], check=True, **kwargs)
+
+
+def main():
+    if sys.platform != "darwin":
+        raise RuntimeError("macOS is required")
+    saved_qmake = ROOT / "glimmer-qt/build/qmake-path"
+    selected = (os.environ.get("SNITT_QMAKE") or shutil.which("qmake6") or
+                shutil.which("qmake") or
+                (saved_qmake.read_text().strip() if saved_qmake.is_file() else None))
+    if not selected:
+        raise RuntimeError("Qt 6 qmake is required; set SNITT_QMAKE to the supported SDK")
+    qmake = Path(selected).resolve()
+    COMMON["require"](qmake, "select a supported Qt SDK")
+    env = dict(os.environ, SNITT_QMAKE=str(qmake))
+    run(ROOT / "bin/build-mac-multimedia-runtime", "--qmake", qmake, "--check-sdk", env=env)
+    run(ROOT / "jolt-snitt/build-app", "--release", env=env)
+    if (ROOT / "build/jolt-snitt/qmake-path").read_text().strip() != str(qmake):
+        raise RuntimeError("Snitt native bridge was built with a different Qt SDK")
+    (ROOT / "build/.snitt-qmake").write_text(str(qmake) + "\n")
+    run(ROOT / "bin/build-mac-multimedia-runtime", "--qmake", qmake, env=env)
+
+    output = ROOT / "build/package/macos/Snitt.app"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="snitt-stage-", dir=output.parent) as directory:
+        work = Path(directory)
+        bundle = work / "Snitt.app"
+        contents = bundle / "Contents"
+        for name in ("MacOS", "Frameworks", "Resources"):
+            (contents / name).mkdir(parents=True)
+        COMMON["copy"](ROOT / "platform/macos/Info.plist", contents / "Info.plist")
+        run("cc", "-arch", "arm64", "-mmacosx-version-min=15.0", "-O2",
+            ROOT / "jolt-snitt/native/package_launcher.c", "-o", contents / "MacOS/snitt")
+        COMMON["copy"](ROOT / "build/jolt-snitt/snitt-jolt", contents / "MacOS/snitt-jolt")
+        for name, source in (("libglimmer_qt.dylib", ROOT / "glimmer-qt/build/libglimmer_qt.dylib"),
+                             ("libsnitt_jolt.dylib", ROOT / "build/jolt-snitt/libsnitt_jolt.dylib")):
+            COMMON["copy"](source, contents / "Frameworks" / name)
+        # Build the private helper directly into this bundle; no C++ app is built.
+        run(ROOT / "bin/build-thumbnail-helper-macos",
+            env=dict(env, SNITT_HELPER_DEST=str(contents / "MacOS/ffmpeg-media")))
+
+        scan = work / "qml-scan"
+        scan.mkdir()
+        for filename in COMMON["QML_FILES"]:
+            COMMON["copy"](ROOT / "glimmer-qt/qml" / filename, scan / filename)
+        deploy = Path(COMMON["capture"](qmake, "-query", "QT_INSTALL_BINS")) / "macdeployqt"
+        COMMON["require"](deploy, "install the matching Qt deployment tool")
+        qt_lib = Path(COMMON["capture"](qmake, "-query", "QT_INSTALL_LIBS"))
+        libpath = work / "lib"
+        libpath.mkdir()
+        sources = {source.name: source for source in qt_lib.glob("Qt*.framework")}
+        if qt_lib.resolve() == Path("/opt/homebrew/lib"):
+            timeline = Path(COMMON["capture"]("brew", "--prefix", "qtquicktimeline")) / "lib"
+            sources.update({source.name: source for source in timeline.glob("Qt*.framework")})
+        for source in sources.values():
+            (libpath / source.name).symlink_to(source, target_is_directory=True)
+        for library in ("libglimmer_qt.dylib", "libsnitt_jolt.dylib"):
+            run(deploy, bundle, f"-executable={contents / 'Frameworks' / library}",
+                f"-qmldir={scan}", f"-libpath={libpath}", "-always-overwrite")
+        # Restore the pinned LGPL playback plugin after Qt deployment.
+        run("ditto", ROOT / "build/tools/mac-multimedia-runtime/stage/Contents", contents)
+        RELEASE["private_runtime_manifest"](bundle)
+        COMMON["repair_signatures"](bundle, COMMON["PRIVATE_FILES"])
+        run(ROOT / "bin/sign-macos", bundle)
+        RELEASE["verify_bundle"](bundle)
+        info = plistlib.loads((contents / "Info.plist").read_bytes())
+        if info.get("CFBundleIdentifier") != "local.snitt" or info.get("CFBundleExecutable") != "snitt":
+            raise RuntimeError("Staging lost the production bundle identity")
+        for target in (ROOT / "build/Snitt.app", output):
+            if target.exists():
+                shutil.rmtree(target)
+            run("ditto", bundle, target)
+    print(f"Staged {output}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+        sys.exit(f"Snitt macOS staging failed: {error}")

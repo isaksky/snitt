@@ -134,6 +134,9 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           brew list --versions ffmpeg >/dev/null || brew install ffmpeg
+          brew list --versions chezscheme >/dev/null || brew install chezscheme
+          brew list --versions jolt-lang/jolt/jolt >/dev/null || brew install jolt-lang/jolt/jolt
+          test "$(jolt --version)" = 'jolt v0.8.16'
           bin/setup-macos-qt
           qt="$GITHUB_WORKSPACE/build/tools/qt-sdk/6.11.2/macos/bin"
           echo "SNITT_QMAKE=$qt/qmake6" >> "$GITHUB_ENV"

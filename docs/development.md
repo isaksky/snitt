@@ -1,6 +1,8 @@
 # Development
 
-Snitt is built with C++17, Qt 6 Quick/QML, and Material controls.
+Snitt's macOS application uses Jolt and Glimmer for UI and application behavior,
+with Qt 6 and C++/Objective-C++ for rendering, capture, hotkeys, and media
+adapters.
 The product is Snitt; the executable and repository are named `snitt`.
 macOS ships `Snitt.app`, containing the `snitt` executable.
 
@@ -9,7 +11,7 @@ macOS ships `Snitt.app`, containing the `snitt` executable.
 Build and install from this checkout:
 
 ```sh
-brew install cmake pkgconf python  # build tools; Xcode command-line tools are also required
+brew install cmake pkgconf python chezscheme jolt-lang/jolt/jolt
 ./bin/setup-macos-qt             # private, pinned Qt 6.11.2 SDK in build/tools
 SNITT_QMAKE="$PWD/build/tools/qt-sdk/6.11.2/macos/bin/qmake6" ./bin/install
 ```
@@ -20,6 +22,9 @@ for `./bin/build` or `./bin/stage-macos` when testing without installing.
 The build checks that the selected Qt frameworks and the private playback plugin
 match before compiling. Qt 6.11.1 is also supported when an existing SDK is
 selected explicitly; a newer unpinned Qt release is rejected with setup guidance.
+`./bin/build` builds and stages the production Jolt bundle at `build/Snitt.app`.
+`./bin/stage-macos` also places the signed bundle at
+`build/package/macos/Snitt.app`.
 
 The install command builds and bundles Qt into `~/Applications/Snitt.app`, installs a per-user
 LaunchAgent at `~/Library/LaunchAgents/local.snitt.plist`, and starts Snitt in the
@@ -53,7 +58,7 @@ Run and test:
 ./bin/run /path/to/image.png # edit an existing image
 ./bin/run --quit             # quit the running instance
 ./bin/restart                # quit, rebuild with 8 jobs, and show the updated app
-./bin/test
+./bin/test                   # retained native suites, Jolt app, and command parity
 ```
 
 The macOS build steps and `./bin/test` use the available CPU count for parallel
@@ -113,11 +118,17 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make \
 Tests cover exact pixel joins, undo/redo, annotations, privacy-mask independence,
 erase sampling, source-resolution clipboard output, keyboard commands, grid
 arrangement, recording lifecycle, scaled region selection, and Windows hotkey
-registration. Offscreen tests use a private Qt clipboard and cannot prove physical
-keyboard input or capture from a real unlocked desktop. Interactive capture and
-recording tests run separately on an unlocked desktop. The recording tests and
-startup comparison benchmark use FFmpeg and FFprobe to decode or compare clips;
-those developer tools are not macOS application runtime dependencies.
+registration. The Jolt suite also checks the built release executable, IPC,
+settings, and editor behavior. Offscreen tests use a private Qt clipboard and
+cannot prove physical keyboard input or capture from a real unlocked desktop.
+Interactive capture and recording tests run separately on an unlocked desktop.
+The recording tests and optional pre-cutover startup comparison use FFmpeg and
+FFprobe to decode or compare clips; those developer tools are not macOS
+application runtime dependencies.
+
+The Windows build scripts and CI configuration still compile the retained Qt
+application while Jolt validation on Windows is deferred. Do not use that target
+as evidence for the macOS Jolt app.
 
 See the [code map](code-map.md), [release guide](releasing.md), and
 [Windows multimedia runtime guide](windows-multimedia-runtime.md).
