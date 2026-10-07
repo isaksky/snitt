@@ -2,7 +2,8 @@
  ;; Explicit lifecycle extension of upstream 09b8ab08705fa1e6f20145c2e99eaaba9ea812cc.
  ;; See LIFECYCLE.md; do not substitute the unextended upstream dependency.
  :deps {jolt-lang/glimmer {:local/root "vendor/glimmer"}}
- :aliases {:scheduling-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.scheduling-test"]}
+ :aliases {:values-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.values-test"]}
+           :scheduling-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.scheduling-test"]}
            :test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.lifecycle-test"]}}
  :jolt/native [{:name "glimmer-qt"
                 :darwin ["build/libglimmer_qt.dylib"]

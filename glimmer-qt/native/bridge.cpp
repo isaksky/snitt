@@ -47,6 +47,9 @@ public:
     int callbackDepth = 0;
     QHash<Handle, QPointer<QObject>> objects;
     QHash<QObject *, Handle> identities;
+    // Preserve identities of references written through the managed boundary,
+    // even if a raw QObject* in a QVariant survives deletion/address reuse.
+    QHash<Handle, QHash<QString, QHash<QObject *, Handle>>> valueReferences;
 
     void notify(Handle id, const char *event, const char *value = "") {
         if (handler) {
@@ -66,6 +69,7 @@ public:
             cancelOwner(id);
             if (objects.remove(id)) {
                 identities.remove(object);
+                valueReferences.remove(id);
                 notify(id, "destroyed");
             }
         });
@@ -82,6 +86,7 @@ public:
         for (Handle id : removed) {
             cancelOwner(id);
             identities.remove(objects.take(id));
+            valueReferences.remove(id);
         }
         for (Handle id : removed) notify(id, "destroyed");
     }
@@ -284,23 +289,7 @@ extern "C" Q_DECL_EXPORT Handle gqt_create(Handle id, const char *tag) {
     auto *object = s->create(type);
     return object ? s->relay.track(object) : 0;
 }
-static int setProperty(Handle id, const char *property, const QVariant &value) {
-    auto *object = objectFor(id);
-    if (!object) return 0;
-    QQmlProperty prop(object, QString::fromUtf8(property), qmlContext(object));
-    // Equal writes preserve cursor/selection and QML bindings.
-    if (!prop.isValid() || !(prop.read() == value || prop.write(value))) return fail("Qt rejected a property");
-    return 1;
-}
-extern "C" Q_DECL_EXPORT int gqt_set_string(Handle id, const char *prop, const char *value) {
-    return setProperty(id, prop, QString::fromUtf8(value));
-}
-extern "C" Q_DECL_EXPORT int gqt_set_number(Handle id, const char *prop, double value) {
-    return setProperty(id, prop, value);
-}
-extern "C" Q_DECL_EXPORT int gqt_set_bool(Handle id, const char *prop, int value) {
-    return setProperty(id, prop, bool(value));
-}
+#include "values.h"
 extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
     auto *parent = itemFor(parentId);
     auto *child = itemFor(childId);
@@ -434,15 +423,6 @@ extern "C" Q_DECL_EXPORT int gqt_live_count() {
 extern "C" Q_DECL_EXPORT int gqt_owned_count() {
     return guiThread() ? ownedObjects : -1;
 }
-extern "C" Q_DECL_EXPORT const char *gqt_read(Handle id, const char *prop) {
-    auto *object = objectFor(id);
-    if (!object) return nullptr;
-    QQmlProperty property(object, QString::fromUtf8(prop), qmlContext(object));
-    if (!property.isValid()) { fail("Invalid Qt property"); return nullptr; }
-    static thread_local QByteArray result;
-    result = property.read().toString().toUtf8();
-    return result.constData();
-}
 extern "C" Q_DECL_EXPORT int gqt_emit(Handle id, const char *signal) {
     auto *object = objectFor(id);
     if (!object) return 0;
@@ -464,3 +444,17 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
     return 1;
 }
 #include "bridge.moc"
+#ifdef GQT_PROPERTY_TESTS
+#include "../test/native/value_fixture.h"
+extern "C" Q_DECL_EXPORT Handle gqt_value_fixture(Handle id) {
+    auto *s = sessionFor(id);
+    return s ? s->relay.track(new ValueFixture(&s->engine)) : 0;
+}
+// Deterministic address reuse exercises raw QVariant QObject* lifetime fencing.
+extern "C" Q_DECL_EXPORT Handle gqt_reuse_test_object(Handle id) {
+    auto *object = objectFor(id);
+    if (!object || object->metaObject() != &QObject::staticMetaObject) return 0;
+    object->~QObject();
+    return active->relay.track(new (object) QObject(&active->engine));
+}
+#endif

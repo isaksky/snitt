@@ -2,7 +2,9 @@
   "Checked C ABI. Handles are opaque, non-recycled uint64 IDs, never addresses.
   Scheduling operations are worker-safe; widget operations require the main thread. Invalid/disposed handles
   throw managed errors; alive? is the explicit non-throwing lifetime probe."
-  (:require [jolt.ffi :as ffi]))
+  (:require [jolt.ffi :as ffi]
+            [glimmer-qt.value :as value]
+            [clojure.string :as str]))
 
 (ffi/defcfn native-error "gqt_error" [] :string)
 
@@ -22,9 +24,32 @@
 (defchecked container "gqt_container" [:uint64] :uint64)
 (defchecked set-handler "gqt_set_handler" [:uint64 :pointer] :int)
 (defchecked create "gqt_create" [:uint64 :string] :uint64)
-(defchecked set-string "gqt_set_string" [:uint64 :string :string] :int)
-(defchecked set-number "gqt_set_number" [:uint64 :string :double] :int)
-(defchecked set-bool "gqt_set_bool" [:uint64 :string :int] :int)
+(defchecked write-value "gqt_write_value" [:uint64 :string :string] :int)
+(defchecked read-value "gqt_read_value" [:uint64 :string] :string)
+(defchecked reset-native "gqt_reset_property" [:uint64 :string] :int)
+(defchecked local-path-native "gqt_local_path" [:string] :string)
+(defn- property-args! [handle property]
+  (when-not (and (integer? handle) (<= 1 handle 18446744073709551615N))
+    (throw (ex-info "Invalid Qt object handle." {:handle handle})))
+  (when-not (and (string? property) (not (empty? property))
+                 (not (str/includes? property "\u0000")))
+    (throw (ex-info "Invalid Qt property name." {:property property}))))
+(defn set-property! [handle property v]
+  (property-args! handle property)
+  (write-value handle property (value/encode v)))
+(defn read-property [handle property]
+  (property-args! handle property)
+  (value/decode (read-value handle property)))
+(defn reset-property!
+  "With no default, invokes Qt RESET or throws if unsupported. With a default,
+  performs a checked write. Does not reconstruct arbitrary removed QML bindings."
+  ([handle property] (property-args! handle property) (reset-native handle property))
+  ([handle property default] (set-property! handle property default)))
+(defn local-file-path [url] (value/decode (local-path-native (value/encode url))))
+;; Compatibility setters use the same checked, lossless marshaller.
+(defn set-string [handle property v] (set-property! handle property v))
+(defn set-number [handle property v] (set-property! handle property v))
+(defn set-bool [handle property v] (set-property! handle property (not (zero? v))))
 (defchecked append "gqt_append" [:uint64 :uint64] :int)
 (defchecked reorder "gqt_reorder" [:uint64 :uint64 :uint64] :int)
 (defchecked remove-widget "gqt_remove" [:uint64] :int)
@@ -45,7 +70,6 @@
 (defn alive? [handle] (and (integer? handle) (pos? handle) (= 1 (alive handle))))
 (ffi/defcfn live-count "gqt_live_count" [] :int)
 (ffi/defcfn owned-count "gqt_owned_count" [] :int)
-(defchecked read-property "gqt_read" [:uint64 :string] :string)
 (defchecked emit-signal "gqt_emit" [:uint64 :string] :int)
 (defchecked save-window "gqt_save_window" [:uint64 :string] :int)
 (defchecked request-close "gqt_request_close" [:uint64] :int)

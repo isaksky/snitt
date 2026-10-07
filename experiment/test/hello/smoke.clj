@@ -50,7 +50,7 @@
         label (widget "greeting")
         row-b (widget "b")]
     (check! (= "Hello, world!" (property "greeting" "text")) "Initial greeting")
-    (check! (pos? (parse-double (property "name" "width"))) "Entry has a layout width")
+    (check! (pos? (property "name" "width")) "Entry has a layout width")
     ;; Each step lets the queued reactive render run before the next inspection.
     (steps!
       [#(edit! "  Jolt 🌍  ")
@@ -72,9 +72,9 @@
        (fn []
          (check! (= row-b (widget "b")) "Keyed child must be reused")
          (check! (nil? (w/find-by-id "a")) "Removed keyed child must be disposed")
-         (check! (< (parse-double (property "c" "x"))
-                    (parse-double (property "b" "x"))
-                    (parse-double (property "d" "x"))) "Keyed visual order")
+         (check! (< (property "c" "x")
+                    (property "b" "x")
+                    (property "d" "x")) "Keyed visual order")
          (signal! "changing-leaf" "clicked")
          (reset! show-fixture? false)
          ;; Updating a ratom on a worker must post to Qt's main loop.

@@ -2,7 +2,8 @@
   "The intentionally small widget vocabulary: :vbox, :hbox, :label, :entry, :button.
   Event signatures match glimmer-gtk: :on-change receives text; :on-click and
   :on-activate take no arguments. Handlers are refreshed on every render."
-  (:require [glimmer-qt.ffi :as q]))
+  (:require [glimmer-qt.ffi :as q]
+            [glimmer-qt.value :as value]))
 
 (defonce session (atom nil))
 (defonce ^:private widgets (atom {}))
@@ -21,7 +22,7 @@
   {:vbox {:spacing ["spacing" :number 0]}
    :hbox {:spacing ["spacing" :number 0]}
    :label {:label ["text" :string ""]
-           :color ["color" :string "#ffffff"]
+           :color ["color" :color "#ffffff"]
            :font-size ["font.pixelSize" :number 14]
            :font-weight ["font.weight" :number 400]}
    :entry {:text ["text" :string ""]
@@ -52,7 +53,7 @@
       (when-not (contains? spec key)
         (throw (ex-info "Unsupported glimmer-qt property." {:tag tag :property key})))
       (if-let [[_ type] (get spec key)]
-        (when-not (case type :string (string? value) :number (number? value) :bool (boolean? value))
+        (when-not (case type :string (string? value) :color (string? value) :number (number? value) :bool (boolean? value))
           (throw (ex-info "Invalid Qt property value." {:property key :value value})))
         (when (and value (not (ifn? value)))
           (throw (ex-info "Qt event handler must be callable." {:property key})))))))
@@ -60,7 +61,8 @@
 (defn apply-props! [tag widget props]
   (let [spec (spec-for tag)
         previous (:props (tagged-widget tag widget))]
-    ;; Validate the complete input before performing any writes or changing handlers.
+    ;; Validate all keys and managed shapes first; each native write also checks
+    ;; Qt metadata and ranges before mutating that property.
     (validate-props! tag props)
     (doseq [[key entry] spec :when entry]
       (let [[property type default] entry
@@ -68,7 +70,8 @@
         (when (or (nil? previous) (= key :text) (not= value (get previous key default)))
           (case type
             :string (q/set-string widget property value)
-            :number (q/set-number widget property (double value))
+            :number (q/set-number widget property value)
+            :color (q/set-property! widget property (value/color value))
             :bool (q/set-bool widget property (if value 1 0))))))
     (swap! widgets assoc-in [widget :props] props))
   nil)
