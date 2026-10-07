@@ -18,5 +18,6 @@
         <file alias="rectangle.qml">../qml/rectangle.qml</file>
         <file alias="spacer.qml">../qml/spacer.qml</file>
         <file alias="flow.qml">../qml/flow.qml</file>
+        <file alias="image.qml">../qml/image.qml</file>
     </qresource>
 </RCC>

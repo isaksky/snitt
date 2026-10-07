@@ -44,6 +44,44 @@ connections should use the control as their QObject context so deletion
 disconnects them. Late events for invalidated handles are ignored. Managed
 exceptions are caught by the session callback and stop the session safely.
 
+## Images and application resources
+
+The built-in `:image` displays a `glimmer-qt.value/url` such as
+`(value/url "qrc:/icons/check.svg")` or a `value/local-file` from an unescaped
+filesystem path. Use `value/local-file` for paths with spaces, `#`, or Unicode;
+passing a raw path or a manually assembled `file:` URL loses Qt's path encoding.
+Compile application SVGs and other resources into the application's own qrc
+library. Keep that library loaded and register its resources before rendering.
+No Snitt icons are linked into `glimmer_qt`.
+
+`:source-width` and `:source-height` bound image decoding in physical pixels;
+omit them to retain Qt's intrinsic size and `@2x` logical sizing. Both must be
+positive integers at most 32768. `:fill-mode` is `"fit"` (default), `"crop"`,
+`"stretch"`, or `"pad"`. `:asynchronous` and `:cache` default to true; thumbnail
+filmstrips should pass bounded source dimensions, `:asynchronous true`, and
+`:cache false`. The image is hidden while loading or after a failure, so a changed
+source cannot show the old thumbnail. Standard layout hints and item geometry
+apply to `:image`.
+
+`"loadState"` reads as `"null"`, `"loading"`, `"ready"`, or `"error"` through
+`glimmer-qt.ffi/read-property`. `"loadError"` includes the failing source URL.
+`:on-status` receives each status string, `:on-loaded` receives no arguments,
+and `:on-error` receives the error string. An owned zero-delay timer reports
+initial synchronous completion after the handle is published. Unmounting drops
+the timer, events, image object, and native handle.
+
+Native extensions can register an `image://` provider with
+`gqt_register_image_provider` in `native/extensions.h` on the GUI thread during
+an active session. Registration is per session and must happen before a URL uses
+the provider. The callback may run on a Qt loader thread for asynchronous images;
+it must be thread-safe, avoid GUI objects and Jolt, and return a `QImage` that
+owns or retains its pixel storage. For an external buffer, use `QImage`'s cleanup
+callback rather than returning a view of temporary memory. Qt retains implicit
+image copies through rendering; the provider's release callback runs when the
+session engine is destroyed. Keep the extension library loaded through that
+point. The application fixture in `experiment/native/extensions.cpp` demonstrates
+the ownership pattern; `./experiment/test-images` verifies its release.
+
 ## Native factories and ownership
 
 Application native libraries link against the same `glimmer_qt` shared library

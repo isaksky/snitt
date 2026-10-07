@@ -14,6 +14,7 @@
 #include <QQmlEngine>
 #include <QQmlProperty>
 #include <QQuickItem>
+#include <QQuickImageProvider>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QThread>
@@ -500,6 +501,35 @@ extern "C" Q_DECL_EXPORT const char *gqt_measure_text(Handle id, const char *tex
 }
 
 #include "objects.h"
+class ExtensionImageProvider final : public QQuickImageProvider {
+public:
+    ExtensionImageProvider(GqtImageRequest request, void *data, GqtImageRelease release)
+        : QQuickImageProvider(QQuickImageProvider::Image), request(request), data(data), release(release) {}
+    ~ExtensionImageProvider() override {
+        try { if (release) release(data); } catch (...) { qWarning("Qt image provider release threw"); }
+    }
+    QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override {
+        try { return request(data, id, size, requestedSize); }
+        catch (...) { qWarning("Qt image provider request threw"); return {}; }
+    }
+private:
+    GqtImageRequest request;
+    void *data;
+    GqtImageRelease release;
+};
+extern "C" Q_DECL_EXPORT int gqt_register_image_provider(const char *name,
+                                                           GqtImageRequest request, void *data,
+                                                           GqtImageRelease release) {
+    if (!guiThread()) return 0;
+    if (!active || !active->accepting) return fail("Qt image provider requires an active session");
+    try {
+        const QString key = QString::fromUtf8(name);
+        if (key.isEmpty() || key.contains('/') || key.contains(':') || !request ||
+            active->engine.imageProvider(key)) return fail("Invalid or duplicate Qt image provider");
+        active->engine.addImageProvider(key, new ExtensionImageProvider(request, data, release));
+        return 1;
+    } catch (const std::exception &e) { return fail(e.what()); }
+}
 struct Factory { GqtFactory create; GqtComplete complete; };
 static QHash<QString, Factory> factories;
 extern "C" Q_DECL_EXPORT int gqt_register_factory(const char *name, GqtFactory factory, GqtComplete complete) {

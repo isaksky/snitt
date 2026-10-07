@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SNITT_IMAGE_FIXTURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-images.XXXXXX")"
+export SNITT_IMAGE_FIXTURE_DIR
+trap 'rm -rf "$SNITT_IMAGE_FIXTURE_DIR"' EXIT HUP INT TERM
+"$ROOT/test-extensions" --images

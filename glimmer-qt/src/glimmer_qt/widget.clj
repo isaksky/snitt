@@ -137,6 +137,14 @@
                                             :radius ["radius" :number 0]
                                             :border-width ["border.width" :number 0]
                                             :border-color ["border.color" :color "transparent"]}) {} :self ""]
+         [:image (merge common (dissoc geometry :implicit-width :implicit-height)
+                        {:source ["imageSource" :value (value/url "")]
+                         :source-width ["decodeWidth" :number -1]
+                         :source-height ["decodeHeight" :number -1]
+                         :fill-mode ["imageFill" :string "fit"]
+                         :asynchronous ["imageAsync" :bool true]
+                         :cache ["imageCache" :bool true]})
+          {:on-status :string :on-loaded :none :on-error :string} :none "relay"]
          [:label (merge common typography accessible text-layout
                         {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
          [:scroll (merge common
@@ -238,6 +246,15 @@
     (when-not (and (vector? (get props :sequences []))
                    (every? #(and (string? %) (seq %) (not (.contains % "\u0000"))) (get props :sequences [])))
       (throw (ex-info "Shortcut sequences must be a vector of nonempty Qt sequence strings." {}))))
+  (when (= tag :image)
+    (when-not (and (instance? glimmer_qt.value.Value (get props :source (value/url "")))
+                   (#{:url :file} (:type (get props :source (value/url "")))))
+      (throw (ex-info "Image source must be value/url or value/local-file." {})))
+    (when-not (#{"fit" "crop" "stretch" "pad"} (get props :fill-mode "fit"))
+      (throw (ex-info "Image fill mode must be fit, crop, stretch or pad." {})))
+    (doseq [key [:source-width :source-height] :let [n (get props key)] :when (some? n)]
+      (when-not (and (integer? n) (<= 1 n 32768))
+        (throw (ex-info "Image decode size must be an integer from 1 to 32768." {:property key})))))
   (when (and (= tag :button) (contains? props :mode) (not (#{"normal" "good" "bad"} (:mode props))))
     (throw (ex-info "Action mode must be normal, good or bad." {})))
   (when (and (= tag :button) (:icon-only props) (empty? (:accessible-name props)))
@@ -382,7 +399,7 @@
 
 (defn- placement! [tag child]
   (validate-placement! tag (:props (live-widget child)))
-  (when (#{:item :overlay :rectangle :spacer :pointer-area} (:tag (live-widget child)))
+  (when (#{:item :overlay :rectangle :spacer :pointer-area :image} (:tag (live-widget child)))
     (q/set-property! child "positionManaged" (boolean (#{:window :hbox :vbox :flow} tag)))
     (q/set-property! child "sizeManaged" (boolean (#{:window :hbox :vbox} tag)))))
 

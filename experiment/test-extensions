@@ -15,4 +15,8 @@ if [ "${1:-}" = --demo ]; then
     shift
     exec "${JOLT:-jolt}" -M:extensions-demo "$@"
 fi
+if [ "${1:-}" = --images ]; then
+    shift
+    exec "${JOLT:-jolt}" -M:images "$@"
+fi
 exec "${JOLT:-jolt}" -M:extensions "$@"

@@ -5,6 +5,7 @@
                 :linux ["build/extensions/libhello_extensions.so"]}]
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}
  :aliases {:extensions {:extra-paths ["test"] :main-opts ["-m" "hello.extensions-test"]}
+           :images {:extra-paths ["test"] :main-opts ["-m" "hello.images-test"]}
            :extensions-demo {:main-opts ["-m" "hello.extensions"]}
            :run {:main-opts ["-m" "hello.core"]}
            :smoke {:extra-paths ["test"] :main-opts ["-m" "hello.smoke"]}}}

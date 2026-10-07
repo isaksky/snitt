@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/hello">
     <file alias="Spinner.qml">../qml/Spinner.qml</file>
+    <file alias="icons/check.svg">../../src/icons/check.svg</file>
   </qresource>
 </RCC>
