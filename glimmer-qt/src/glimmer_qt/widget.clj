@@ -91,16 +91,18 @@
   :children is :none (default), :self, or an owned QObject property name.
   Every tag accepts :qt/subscriptions; see glimmer-qt.object/reconcile!.
   :relay names an optional QtObject property for relay.dispatch(object,event,text).
+  :init is an optional one-argument native setup hook called with the new handle.
   :dispose is an optional zero-argument notification, run once on disposal.
   Registrations are immutable while a session is running. Duplicate tags fail."
-  [tag {:keys [source props events required children relay dispose]
+  [tag {:keys [source props events required children relay init dispose]
         :or {props {} events {} required #{} children :none relay ""} :as descriptor}]
   (when @session (throw (ex-info "Register Qt tags outside a running session." {})))
   (when-not (and (keyword? tag) (not= tag :window)
                 (string? source) (re-find #"^(qrc:/|file:/|native:)" source)
                 (map? props) (map? events) (set? required)
                 (or (#{:none :self} children) (and (string? children) (seq children)))
-                (string? relay) (or (nil? dispose) (ifn? dispose)))
+                (string? relay) (or (nil? init) (ifn? init))
+                (or (nil? dispose) (ifn? dispose)))
     (throw (ex-info "Invalid Qt registration descriptor." {:tag tag})))
   (doseq [[key entry] props]
     (when-not (and (keyword? key) (not (#{:qt/subscriptions :on-key-press :on-key-release} key)) (vector? entry) (= 3 (count entry))
@@ -414,6 +416,7 @@
       (when (or (:on-key-press props) (:on-key-release props))
         (q/configure-keys widget (if (:on-key-press props) 1 0) (if (:on-key-release props) 1 0)))
       (object/reconcile! widget (:qt/subscriptions props))
+      (when-let [init (:init (registration tag))] (init widget))
       widget
       (catch Throwable error (dispose! widget) (throw error)))))
 

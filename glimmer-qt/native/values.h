@@ -57,6 +57,8 @@ static QVariant decode(const QJsonValue &node, int depth = 0, References *refere
         return color;
     }
     if (tag == "url" || tag == "file") {
+        // Empty QUrl is Qt's explicit "no source" value for media and images.
+        if (tag == "url" && text(p).isEmpty()) return QUrl();
         QUrl url = tag == "file" ? QUrl::fromLocalFile(text(p)) : QUrl(text(p), QUrl::StrictMode);
         if (!url.isValid()) reject("Invalid Qt URL");
         return url;
@@ -124,6 +126,26 @@ static QJsonArray encode(const QVariant &v, int depth = 0, const References &ref
             ((strictReferences || references.contains(object)) && references.value(object) != id))
             reject("Unmanaged or disposed Qt object reference");
         return node("object", QString::number(id));
+    }
+    if (v.metaType().flags().testFlag(QMetaType::IsEnumeration)) {
+        auto *meta = v.metaType().metaObject();
+        const QByteArray typeName(v.metaType().name());
+        const QByteArray shortName = typeName.mid(typeName.lastIndexOf(':') + 1);
+        const int index = meta ? meta->indexOfEnumerator(shortName.constData()) : -1;
+        if (index < 0) reject("Unsupported Qt enum metadata");
+        const auto enumeration = meta->enumerator(index);
+        const QByteArray keys = enumeration.isFlag() ? enumeration.valueToKeys(v.toInt())
+                                                    : QByteArray(enumeration.valueToKey(v.toInt()));
+        bool valid = false;
+        int decoded = enumeration.isFlag() ? enumeration.keysToValue(keys.constData(), &valid)
+                                           : enumeration.keyToValue(keys.constData(), &valid);
+        if (enumeration.isFlag() && keys.isEmpty() && v.toInt() == 0) {
+            valid = true; decoded = 0;
+        }
+        if (!valid || decoded != v.toInt()) reject("Unknown Qt enum value");
+        QJsonArray names;
+        if (!keys.isEmpty()) for (const auto &key : keys.split('|')) names.append(QString::fromUtf8(key));
+        return node(enumeration.isFlag() ? "flags" : "enum", names);
     }
     switch (type) {
     case QMetaType::Bool: return node("bool", v.toBool() ? "1" : "0");

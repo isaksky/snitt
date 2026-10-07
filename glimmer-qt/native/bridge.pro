@@ -1,4 +1,4 @@
-QT += core gui widgets qml quick quickcontrols2
+QT += core gui widgets qml quick quickcontrols2 multimedia
 TEMPLATE = lib
 TARGET = glimmer_qt
 CONFIG += c++17 shared release unversioned_libname unversioned_soname

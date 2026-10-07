@@ -22,5 +22,6 @@
         <file alias="spacer.qml">../qml/spacer.qml</file>
         <file alias="flow.qml">../qml/flow.qml</file>
         <file alias="image.qml">../qml/image.qml</file>
+        <file alias="video-player.qml">../qml/video-player.qml</file>
     </qresource>
 </RCC>

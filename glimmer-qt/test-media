@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+BREW_LIB="$(brew --prefix)/lib"
+export DYLD_FRAMEWORK_PATH="$("$QMAKE" -query QT_INSTALL_LIBS):$BREW_LIB${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+RUNTIME_PLUGINS="$ROOT/../build/tools/mac-multimedia-runtime/stage/Contents/PlugIns"
+[ -d "$RUNTIME_PLUGINS" ] || { echo "Snitt's private macOS playback runtime is missing." >&2; exit 1; }
+export QT_PLUGIN_PATH="$(CDPATH= cd -- "$RUNTIME_PLUGINS" && pwd)"
+PRIVATE_PLUGIN="$QT_PLUGIN_PATH/multimedia/libffmpegmediaplugin.dylib"
+[ -f "$PRIVATE_PLUGIN" ] || { echo "Snitt's private macOS playback plugin is missing." >&2; exit 1; }
+export QT_MEDIA_BACKEND=ffmpeg
+export QT_DEBUG_PLUGINS=1
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+CLIP_DIR="$(mktemp -d)"
+trap 'rm -rf "$CLIP_DIR"' EXIT
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=red:s=160x90:r=1 \
+  -f lavfi -i sine=frequency=440:sample_rate=44100 -t 3 -c:v libx264 \
+  -pix_fmt yuv420p -c:a aac -shortest "$CLIP_DIR/static.mp4"
+cd "$ROOT"
+if ! "${JOLT:-jolt}" -M:media-test "$CLIP_DIR/static.mp4" > "$CLIP_DIR/result.log" 2>&1; then
+  tail -n 40 "$CLIP_DIR/result.log" >&2
+  exit 1
+fi
+python3 - "$CLIP_DIR/result.log" "$PRIVATE_PLUGIN" <<'PY'
+import pathlib, sys
+log = pathlib.Path(sys.argv[1]).read_text()
+if f'"{sys.argv[2]}" loaded library' not in log:
+    sys.exit("Snitt's private FFmpeg playback plugin was not loaded")
+for line in log.splitlines():
+    if line.startswith('PASS:'):
+        print(line)
+        break
+else:
+    sys.exit('Media verification did not report completion')
+PY

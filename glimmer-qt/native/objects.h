@@ -7,6 +7,7 @@
 namespace Objects {
 static bool supported(QMetaType type) {
     if (type.flags().testFlag(QMetaType::PointerToQObject)) return true;
+    if (type.flags().testFlag(QMetaType::IsEnumeration)) return true;
     switch (type.id()) {
     case QMetaType::Void: case QMetaType::Bool: case QMetaType::Int:
     case QMetaType::UInt: case QMetaType::LongLong: case QMetaType::Double:

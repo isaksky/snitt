@@ -30,6 +30,7 @@
 (defchecked set-handler "gqt_set_handler" [:uint64 :pointer] :int)
 (defchecked create-registered "gqt_create_registered" [:uint64 :string :string :string] :uint64)
 (defchecked child-target "gqt_child_target" [:uint64 :string] :uint64)
+(defchecked bind-first-frame "gqt_media_bind_first_frame" [:uint64] :int)
 (defchecked write-value "gqt_write_value" [:uint64 :string :string] :int)
 (defchecked read-value "gqt_read_value" [:uint64 :string] :string)
 (defchecked reset-native "gqt_reset_property" [:uint64 :string] :int)

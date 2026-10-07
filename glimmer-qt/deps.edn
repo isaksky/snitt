@@ -12,6 +12,7 @@
            :windows-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.windows-test"]}
            :objects-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.objects-test"]}
            :values-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.values-test"]}
+           :media-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.media-test"]}
            :scheduling-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.scheduling-test"]}
            :test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.lifecycle-test"]}}
  :jolt/native [{:name "glimmer-qt"

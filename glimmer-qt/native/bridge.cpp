@@ -1,6 +1,9 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QMimeData>
+#include <QMediaPlayer>
+#include <QVideoFrame>
+#include <QVideoSink>
 #include "extensions.h"
 #include <QElapsedTimer>
 #include <QCloseEvent>
@@ -571,7 +574,11 @@ extern "C" Q_DECL_EXPORT Handle gqt_create_registered(Handle id, const char *sou
             if (pair.size() != 2) Values::reject("Malformed initial property entry");
             auto name = Values::text(pair[0]);
             if (props.contains(name)) Values::reject("Duplicate initial property");
-            auto prop = Values::property(object.get(), name.toUtf8().constData());
+            QQmlProperty prop;
+            try { prop = Values::property(object.get(), name.toUtf8().constData()); }
+            catch (const std::exception &e) {
+                throw std::runtime_error((name + ": " + e.what()).toStdString());
+            }
             props.insert(name, Values::checked(prop, Values::array(pair[1]), refs[name]));
         }
         if (*relayProperty) {
@@ -631,6 +638,36 @@ extern "C" Q_DECL_EXPORT Handle gqt_child_target(Handle id, const char *property
     if (!owned) { fail("Child target must be an owned QObject"); return 0; }
     auto handle = active->relay.identities.value(target);
     return handle ? handle : active->relay.track(target, false);
+}
+// A video frame never crosses the managed boundary. The connection is owned by
+// the surface and rearmed for each source; stale handles cannot receive events.
+extern "C" Q_DECL_EXPORT int gqt_media_bind_first_frame(Handle id) {
+    auto *surface = objectFor(id);
+    if (!surface) return 0;
+    auto *player = qobject_cast<QMediaPlayer *>(QQmlProperty::read(surface, "player").value<QObject *>());
+    auto *sink = qobject_cast<QVideoSink *>(QQmlProperty::read(surface, "videoSink").value<QObject *>());
+    if (!player || !sink) return fail("Video player requires an owned MediaPlayer and video sink");
+    auto owned = [surface](QObject *object) {
+        for (QObject *p = object; p; p = p->parent()) if (p == surface) return true;
+        return false;
+    };
+    if (!owned(player) || !owned(sink)) return fail("Media player and sink must belong to the video surface");
+    if (surface->property("_gqtFirstFrameBound").toBool()) return fail("Video surface is already bound");
+    surface->setProperty("_gqtFirstFrameBound", true);
+    auto seen = std::make_shared<bool>(false);
+    QObject::connect(player, &QMediaPlayer::sourceChanged, surface,
+                     [seen](const QUrl &) { *seen = false; });
+    QObject::connect(sink, &QVideoSink::videoFrameChanged, surface,
+                     [id, player, seen](const QVideoFrame &frame) {
+        const auto status = player->mediaStatus();
+        if (!frame.isValid() || *seen || player->source().isEmpty() ||
+            status == QMediaPlayer::NoMedia || status == QMediaPlayer::LoadingMedia ||
+            status == QMediaPlayer::InvalidMedia ||
+            !active || !active->relay.objects.contains(id)) return;
+        *seen = true;
+        active->relay.notify(id, "on-first-frame");
+    });
+    return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_append(Handle parentId, Handle childId) {
     auto *parent = objectFor(parentId);
