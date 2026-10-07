@@ -87,7 +87,7 @@
   "Register a tag before starting a session. :source is an absolute QML URL
   (qrc:/ or file:/) or native:factory-name. :props maps keys to [Qt-name type
   default], with :string/:number/:bool/:color/:value types. :events maps handler keys
-  to :none, :string, or :pointer payloads (the latter uses relay.pointer). :required lists props required on every render.
+  to :none, :string, :number, :bool, or :pointer payloads (the latter uses relay.pointer). :required lists props required on every render.
   :children is :none (default), :self, or an owned QObject property name.
   Every tag accepts :qt/subscriptions; see glimmer-qt.object/reconcile!.
   :relay names an optional QtObject property for relay.dispatch(object,event,text).
@@ -109,7 +109,7 @@
       (throw (ex-info "Invalid Qt property schema." {:property key}))))
   (doseq [[key arity] events]
     (when-not (and (keyword? key) (not (#{:destroyed :shutdown :close-request :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions :on-key-press :on-key-release} key))
-                   (#{:none :string :pointer} arity) (not (contains? props key)))
+                   (#{:none :string :number :bool :pointer} arity) (not (contains? props key)))
       (throw (ex-info "Invalid Qt event schema." {:event key}))))
   (when-not (every? #(contains? props %) required)
     (throw (ex-info "Required Qt properties must have schemas." {})))
@@ -170,6 +170,36 @@
           {:on-click :none} :none "relay"]]]
   (register! tag {:source (str "qrc:/glimmer-qt/" (name tag) ".qml")
                   :props props :events events :children children :relay relay}))
+
+(register! :slider
+  {:source "qrc:/glimmer-qt/slider.qml" :relay "relay"
+   :props (merge common accessible
+                 {:tab-focus ["activeFocusOnTab" :bool true]
+                  :from ["from" :number 0] :to ["to" :number 1]
+                  :value ["value" :number 0] :step ["stepSize" :number 0]
+                  :track-color ["trackColor" :color "#454d59"]
+                  :fill-color ["fillColor" :color "#91bff0"]
+                  :handle-color ["handleColor" :color "#ffffff"]
+                  :pressed-color ["pressedColor" :color "#91bff0"]
+                  :handle-size ["handleSize" :number 18]
+                  :track-height ["trackHeight" :number 3]})
+   :events {:on-change :number :on-interacting-change :bool}})
+
+(register! :progress
+  {:source "qrc:/glimmer-qt/progress.qml"
+   :props (merge common accessible
+                 {:from ["from" :number 0] :to ["to" :number 1]
+                  :value ["value" :number 0]
+                  :indeterminate ["indeterminate" :bool false]
+                  :track-color ["trackColor" :color "#454d59"]
+                  :fill-color ["fillColor" :color "#91bff0"]
+                  :track-height ["trackHeight" :number 4]})})
+
+(register! :busy-indicator
+  {:source "qrc:/glimmer-qt/busy-indicator.qml"
+   :props (merge common accessible
+                 {:running ["running" :bool true]
+                  :accent ["Material.accent" :color "#91bff0"]})})
 
 (register! :shortcut
   {:source "qrc:/glimmer-qt/shortcut.qml" :relay "relay"
@@ -232,6 +262,15 @@
                    (get props :margin 0) default)))
 
 (defn- validate-props! [tag props]
+  (when (#{:slider :progress} tag)
+    (let [from (get props :from 0) to (get props :to 1)
+          step (get props :step 0)]
+      (when-not (and (number? from) (number? to) (<= from to)
+                     (every? #(and (number? %) (< -1.0e300 % 1.0e300))
+                             (keep props [:from :to :value :step :handle-size :track-height]))
+                     (or (not= tag :slider) (and (<= 0 step) (pos? (get props :handle-size 18))))
+                     (pos? (get props :track-height (if (= tag :slider) 3 4))))
+        (throw (ex-info "Invalid slider or progress range, step, or geometry." {:tag tag})))))
   (when (= tag :dialog)
     (when-not (and (number? (get props :dialog-width 400))
                    (pos? (get props :dialog-width 400)))
@@ -322,7 +361,7 @@
     (doseq [[key entry] spec :when entry]
       (let [[property type default] entry
             value (prop-value props key default)]
-        (when (or (nil? previous) (#{:text :checked} key) (not= value (prop-value previous key default)))
+        (when (or (nil? previous) (#{:text :checked :value} key) (not= value (prop-value previous key default)))
           (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
     (when (and (= tag :text-area) (contains? props :cursor-position)
                (or (not= (:text props) (:text previous))
@@ -466,6 +505,8 @@
                        accepted (handler event)]
                    (q/pointer-accept (get payload "token") (if (true? accepted) 1 0)))
         :string (handler value)
+        :number (handler (parse-double value))
+        :bool (handler (= value "true"))
         :none (handler)
         nil))))
 

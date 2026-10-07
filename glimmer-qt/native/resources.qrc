@@ -11,6 +11,9 @@
         <file alias="text-area.qml">../qml/text-area.qml</file>
         <file alias="entry.qml">../qml/entry.qml</file>
         <file alias="button.qml">../qml/button.qml</file>
+        <file alias="slider.qml">../qml/slider.qml</file>
+        <file alias="progress.qml">../qml/progress.qml</file>
+        <file alias="busy-indicator.qml">../qml/busy-indicator.qml</file>
         <file alias="Geometry.qml">../qml/Geometry.qml</file>
         <file alias="pointer-area.qml">../qml/pointer-area.qml</file>
         <file alias="item.qml">../qml/item.qml</file>

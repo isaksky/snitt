@@ -1,4 +1,30 @@
-# Toolbar controls
+# Controls
+
+## Slider and progress
+
+`:slider` accepts numeric `:from`, `:to`, `:value`, and `:step` (default 0 for
+continuous movement). The range may be a single value; reversed ranges,
+negative steps, and nonpositive handle/track dimensions are rejected. Qt clamps
+the displayed value to the range. `:on-change` receives a number from real
+pointer or keyboard movement; controlled prop writes never call it. A zero range
+cannot emit a value change. `:on-interacting-change` receives `true` on press and
+`false` on release or cancellation, and `pressed` remains readable on the live
+control. Playback pause/resume policy belongs to the application.
+
+The slider has a horizontal track and handle. `:track-color`, `:fill-color`,
+`:handle-color`, `:pressed-color`, `:handle-size`, and `:track-height` control its
+appearance. Layout hints such as `:hexpand` and `:preferred-height` can size it
+inside a box. `:sensitive false` disables input.
+
+`:progress` uses the same numeric range and value and accepts `:indeterminate`
+for preparation before a measured total is available. `:track-color`,
+`:fill-color`, and `:track-height` style the bar. `:busy-indicator` is a separate
+spinner controlled by `:running`. These controls accept `:accessible-name`;
+the application supplies user-facing status text and export policy.
+
+`./glimmer-qt/test-controls` exercises controlled writes, real pointer drag,
+keyboard input, disabled and short/zero ranges, and determinate/indeterminate
+progress on the local macOS Qt build. It defaults to offscreen input testing.
 
 `:button` keeps one native click relay and refreshes `:on-click` on each render.
 `:checkable`, `:checked`, `:sensitive` (enabled), and `:highlighted` are booleans.

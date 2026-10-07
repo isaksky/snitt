@@ -3,6 +3,7 @@
  ;; See LIFECYCLE.md; do not substitute the unextended upstream dependency.
  :deps {jolt-lang/glimmer {:local/root "vendor/glimmer"}}
  :aliases {:dialogs-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.dialogs-test"]}
+           :controls-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.controls-test"]}
            :text-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.text-test"]}
            :keyboard-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.keyboard-test"]}
            :pointer-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.pointer-test"]}

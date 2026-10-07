@@ -848,6 +848,21 @@ extern "C" Q_DECL_EXPORT int gqt_test_action_input(Handle id, int action) {
     }
     return 1;
 }
+extern "C" Q_DECL_EXPORT int gqt_test_slider_input(Handle id, int action, double fraction) {
+    auto *item = itemFor(id);
+    if (!item || !item->window() || !std::isfinite(fraction)) return 0;
+    auto *window = item->window();
+    const double handle = item->property("handleSize").toDouble();
+    const auto point = item->mapToScene(QPointF(handle / 2 + fraction * (item->width() - handle),
+                                               item->height() / 2)).toPoint();
+    switch (action) {
+    case 0: QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, point); break;
+    case 1: QTest::mouseMove(window, point); break;
+    case 2: QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, point); break;
+    default: return fail("Unknown slider test input");
+    }
+    return 1;
+}
 extern "C" Q_DECL_EXPORT int gqt_test_key(Handle id, int key, int modifiers) {
     auto *window = qobject_cast<QQuickWindow *>(objectFor(id)); if (!window) return 0;
     // QtTest forwards its delay argument as the synthetic key count.
