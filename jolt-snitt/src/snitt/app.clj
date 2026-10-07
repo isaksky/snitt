@@ -11,6 +11,7 @@
             [glimmer-qt.widget :as widget]
             [snitt.arrangement :as arrangement]
             [snitt.commands :as commands]
+            [snitt.geometry :as geometry]
             [snitt.lifecycle :as lifecycle]
             [snitt.native :as native]
             [snitt.review :as review]
@@ -18,7 +19,7 @@
             [snitt.settings :as settings]))
 
 (defn- initial-state []
-  {:tool "rect" :status "Open or paste an image" :error? false
+  {:status "Open or paste an image" :error? false
    :document-revision 0 :modal? false :draft nil :draft-content-height 0
    :canvas-width 800 :canvas-height 500 :arrangement nil})
 
@@ -46,11 +47,62 @@
 (defn- report! [context message error?]
   (swap! (:state context) assoc :status message :error? error?))
 
-(declare command-state)
+(declare command-state refresh-context! start-text! change-arrangement!)
+
+(defn- current-geometry [context]
+  (let [handle (canvas context)
+        area (item context "snitt-pointer")]
+    (when (and handle area)
+      (geometry/image-geometry
+       {:width (q/read-property area "width")
+        :height (q/read-property area "height")
+        :image-width (q/read-property handle "imageWidth")
+        :image-height (q/read-property handle "imageHeight")}))))
+
+(defn- sync-geometry! [context]
+  (when-let [image (current-geometry context)]
+    (native/set-geometry! (canvas context) image)))
+
+(defn- sync-tool-sizes! [context]
+  (when-let [handle (canvas context)]
+    (native/set-tool-sizes! handle @(:interaction context))))
+
+(defn- transition! [context step]
+  (let [[next effects] (step @(:interaction context))
+        handle (canvas context)]
+    (reset! (:interaction context) next)
+    (doseq [{:keys [op point tool index from to drop] :as effect} effects]
+      (case op
+        :preview (native/set-preview! handle effect)
+        :clear-preview (native/clear-preview! handle)
+        :draw (native/draw! handle effect)
+        :text-request (start-text! context (first point) (second point))
+        :select-region (change-arrangement! context arrangement/select index)
+        :move-region (change-arrangement! context arrangement/move from to)
+        :arrangement-preview (native/set-drop-region! handle drop)
+        :tool (do (q/set-property! handle "tool" tool)
+                  (refresh-context! context))
+        :sizes (do (sync-tool-sizes! context)
+                   (refresh-context! context))))
+    effects))
+
+(defn- cancel-gesture! [context]
+  (boolean (seq (transition! context geometry/cancel))))
+
+(defn- region-at [context image x y]
+  (if image
+    (native/region-at (canvas context) (geometry/image-point image x y))
+    -1))
 
 (defn- refresh! [context]
   (when-let [handle (canvas context)]
     (let [has-image? (q/read-property handle "hasImage")]
+      (reset! (:interaction context)
+              (geometry/image-changed @(:interaction context)
+                                      (q/read-property handle "imageWidth")
+                                      (q/read-property handle "imageHeight")))
+      (sync-geometry! context)
+      (sync-tool-sizes! context)
       (swap! (:state context)
              #(-> % (update :document-revision inc)
                   (assoc :status (if has-image?
@@ -71,7 +123,8 @@
       (when (and (pos? width) (pos? height)
                  (not= [width height]
                        ((juxt :canvas-width :canvas-height) @(:state context))))
-        (swap! (:state context) assoc :canvas-width width :canvas-height height)))))
+        (swap! (:state context) assoc :canvas-width width :canvas-height height))
+      (sync-geometry! context))))
 
 (defn- focus-canvas! [context]
   (when-let [handle (canvas context)] (widget/focus! handle)))
@@ -108,11 +161,14 @@
 
 (defn- adjust-size! [context delta]
   (when (and delta (not (zero? delta)))
-    (object/invoke! (canvas context) "adjustToolSize(double)" [(double delta)])
-    (refresh-context! context)))
+    (let [handle (canvas context)]
+      (transition! context #(geometry/wheel % delta
+                                            (q/read-property handle "imageWidth")
+                                            (q/read-property handle "imageHeight")
+                                            (:arranging? (command-state context)))))))
 
 (defn- wheel-size! [context event]
-  (let [tool (:tool @(:state context))]
+  (let [tool (:tool @(:interaction context))]
     (when (and (not (:arranging? (command-state context)))
                (#{"rect" "arrow" "text" "blur"} tool))
       (adjust-size! context (let [angle (:angle-y event)]
@@ -228,7 +284,7 @@
   (let [handle (canvas context)
         manager (:manager @runtime)]
     (case effect
-      :tool (swap! (:state context) assoc :tool (first args))
+      :tool (transition! context #(geometry/select-tool % (first args)))
       :ink (object/invoke! handle "setInkMode(QString)" (vec args))
       :open-dialog (do (swap! (:state context) assoc :modal? true)
                        (widget/open-dialog! (item context "open-file")))
@@ -249,6 +305,7 @@
       :undo (native/undo! handle)
       :redo (native/redo! handle)
       :finish (do
+                (cancel-gesture! context)
                 (native/cancel! handle)
                 (when (case (first args)
                         :copy (result! context native/copy! "Copied to clipboard"
@@ -257,7 +314,7 @@
                                        "Could not save the image. Check the Pictures folder and try again.")
                         false)
                   (sessions/close! manager (:id context))))
-      :dismiss (when-not (native/cancel! handle)
+      :dismiss (when-not (or (cancel-gesture! context) (native/cancel! handle))
                  (sessions/close! manager (:id context)))
       :review (when-let [owner @(:review context)]
                 (apply review/command! owner args)))))
@@ -356,7 +413,8 @@
     :else (str (q/read-property handle "textSize") " px · Mouse wheel to adjust")))
 
 (defn editor [context]
-  (let [{:keys [tool status error? draft canvas-width canvas-height]} @(:state context)
+  (let [{:keys [status error? draft canvas-width canvas-height]} @(:state context)
+        tool (:tool @(:interaction context))
         {:keys [has-image? arranging?] :as command-state} (command-state context)
         {:keys [shortcuts hints]} @settings/published
         handle (canvas context)
@@ -440,22 +498,34 @@
                        :height {:signal "heightChanged()" :handler #(sync-canvas-size! context)}}
                       :on-pointer-press (fn [{:keys [x y]}]
                                           (if (:draft @(:state context))
-                                            (do (reset! (:pointer-down context) false)
-                                                (commit-text! context) true)
-                                            (do (reset! (:pointer-down context) true)
-                                                (focus-canvas! context)
-                                                (native/begin! (canvas context) x y) true)))
+                                            (do (commit-text! context) true)
+                                            (do (focus-canvas! context)
+                                                (if arranging?
+                                                  (let [image (current-geometry context)]
+                                                    (transition! context
+                                                                 #(geometry/arrangement-press % image x y
+                                                                                              (region-at context image x y))))
+                                                  (transition! context
+                                                               #(geometry/press % (current-geometry context) x y)))
+                                                true)))
                       :on-pointer-move (fn [{:keys [x y]}]
-                                         (when @(:pointer-down context)
-                                           (native/move! (canvas context) x y)))
+                                         (if arranging?
+                                           (let [image (current-geometry context)]
+                                             (transition! context
+                                                          #(geometry/arrangement-drag % image x y
+                                                                                      (region-at context image x y))))
+                                           (transition! context
+                                                        #(geometry/drag % (current-geometry context) x y))))
                       :on-pointer-release (fn [{:keys [x y]}]
-                                            (when @(:pointer-down context)
-                                              (reset! (:pointer-down context) false)
-                                              (native/end! (canvas context) x y)))
+                                            (if arranging?
+                                              (let [image (current-geometry context)]
+                                                (transition! context
+                                                             #(geometry/arrangement-release % image x y
+                                                                                            (region-at context image x y))))
+                                              (transition! context
+                                                           #(geometry/release % (current-geometry context) x y))))
                       :on-pointer-cancel (fn [_]
-                                           (when @(:pointer-down context)
-                                             (reset! (:pointer-down context) false)
-                                             (native/cancel! (canvas context))))
+                                           (cancel-gesture! context))
                       :on-wheel #(wheel-size! context %)}
        [:snitt/canvas {:id "snitt-canvas" :width canvas-width :height canvas-height :tool tool
                        :qt/subscriptions
@@ -541,7 +611,8 @@
   (let [services (native/create-services!)
         context {:id id :window (atom nil) :services (atom services)
                  :review (atom nil)
-                 :pointer-down (atom false) :resize (atom nil)
+                 :resize (atom nil)
+                 :interaction (atom (geometry/initial-state))
                  :state (if (= id 1) state (r/atom (initial-state)))}]
     (try
       (settings/register! services)

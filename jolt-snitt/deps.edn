@@ -11,6 +11,8 @@
            :lifecycle {:extra-paths ["test"] :main-opts ["-m" "snitt.lifecycle-test"]}
            :desktop {:extra-paths ["test"] :main-opts ["-m" "snitt.desktop-test"]}
            :annotation {:extra-paths ["test"] :main-opts ["-m" "snitt.annotation-test"]}
+           :geometry {:extra-paths ["test"] :main-opts ["-m" "snitt.geometry-test"]}
+           :gesture {:extra-paths ["test"] :main-opts ["-m" "snitt.gesture-test"]}
            :arrangement {:extra-paths ["test"] :main-opts ["-m" "snitt.arrangement-test"]}
            :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}
            :capture {:extra-paths ["test"] :main-opts ["-m" "snitt.capture-test"]}

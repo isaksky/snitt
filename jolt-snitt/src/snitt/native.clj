@@ -57,6 +57,36 @@
 (defn end! [canvas x y]
   (object/invoke! canvas "end(double,double)" [(double x) (double y)]))
 (defn cancel! [canvas] (object/invoke! canvas "cancel()" []))
+(defn set-geometry! [canvas {:keys [x y scale]}]
+  (object/invoke! canvas "setExternalGeometry(double,double,double)"
+                  [(double x) (double y) (double scale)]))
+(defn set-tool-sizes! [canvas {:keys [stroke-width text-size pixel-block-size]}]
+  (object/invoke! canvas "setExternalToolSizes(int,int,int)"
+                  [stroke-width text-size pixel-block-size]))
+(defn set-preview! [canvas {:keys [gesture vertical?]}]
+  (let [{:keys [tool start end]} gesture]
+    (object/invoke! canvas "setExternalPreview(QString,double,double,double,double,bool)"
+                    [tool (double (first start)) (double (second start))
+                     (double (first end)) (double (second end)) vertical?])))
+(defn clear-preview! [canvas]
+  (object/invoke! canvas "clearExternalPreview()" []))
+(defn region-at [canvas point]
+  (object/invoke! canvas "externalRegionAt(double,double)"
+                  [(double (first point)) (double (second point))]))
+(defn set-drop-region! [canvas index]
+  (object/invoke! canvas "setExternalDropRegion(int)" [index]))
+(defn draw! [canvas {:keys [kind vertical? from to start end block-size tool stroke-width]}]
+  (case kind
+    :cut (object/invoke! canvas "drawExternalCut(bool,int,int)" [vertical? from to])
+    :blur (object/invoke! canvas "drawExternalBlur(double,double,double,double,int)"
+                          [(double (first start)) (double (second start))
+                           (double (first end)) (double (second end)) block-size])
+    :erase (object/invoke! canvas "drawExternalErase(double,double,double,double)"
+                           [(double (first start)) (double (second start))
+                            (double (first end)) (double (second end))])
+    :annotation (object/invoke! canvas "drawExternalAnnotation(QString,double,double,double,double,int)"
+                                [tool (double (first start)) (double (second start))
+                                 (double (first end)) (double (second end)) stroke-width])))
 (defn undo! [canvas] (object/invoke! canvas "undo()" []))
 (defn redo! [canvas] (object/invoke! canvas "redo()" []))
 (defn copy! [canvas] (object/invoke! canvas "copy()" []))

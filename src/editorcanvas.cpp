@@ -17,12 +17,14 @@ QString EditorCanvas::annotationFontFamily() const { return annotationfont::fami
 
 qreal EditorCanvas::imageScale() const {
     if (!hasImage()) return 1;
+    if (m_externalGeometry) return m_externalScale;
     return qMax(0.001, qMin((width() - 32) / imageWidth(), (height() - 32) / imageHeight()));
 }
 
 QRectF EditorCanvas::imageRect() const {
     if (!hasImage()) return {};
     const QSizeF size(imageWidth() * imageScale(), imageHeight() * imageScale());
+    if (m_externalGeometry) return QRectF(QPointF(m_externalX, m_externalY), size);
     return QRectF(QPointF((width() - size.width()) / 2, (height() - size.height()) / 2), size);
 }
 
@@ -34,7 +36,7 @@ void EditorCanvas::geometryChange(const QRectF &next, const QRectF &previous) {
 
 void EditorCanvas::setTool(const QString &tool) {
     if (tool == m_tool) return;
-    cancel();
+    if (!m_externalGeometry) cancel();
     m_tool = tool;
     m_wheelRemainder = 0;
     emit toolChanged();
@@ -107,6 +109,77 @@ void EditorCanvas::adjustToolSize(qreal wheelDelta) {
     update();
 }
 
+void EditorCanvas::setExternalGeometry(qreal x, qreal y, qreal scale) {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(scale) || scale <= 0) return;
+    if (m_externalGeometry && m_externalX == x && m_externalY == y && m_externalScale == scale) return;
+    m_externalGeometry = true;
+    m_externalX = x; m_externalY = y; m_externalScale = scale;
+    emit imageRectChanged();
+    update();
+}
+
+void EditorCanvas::setExternalToolSizes(int stroke, int text, int pixel) {
+    if (m_strokeWidth == stroke && m_textSize == text && m_pixelBlockSize == pixel) return;
+    m_strokeWidth = stroke; m_textSize = text; m_pixelBlockSize = pixel;
+    emit sizeChanged();
+    update();
+}
+
+void EditorCanvas::setExternalPreview(const QString &tool, qreal x1, qreal y1,
+                                      qreal x2, qreal y2, bool vertical) {
+    if (!hasImage() || !std::isfinite(x1) || !std::isfinite(y1)
+        || !std::isfinite(x2) || !std::isfinite(y2)) return;
+    m_previewTool = tool;
+    m_previewStart = QPointF(x1, y1);
+    m_previewEnd = QPointF(x2, y2);
+    m_previewVertical = vertical;
+    m_externalPreview = true;
+    update();
+}
+
+void EditorCanvas::clearExternalPreview() {
+    if (!m_externalPreview) return;
+    m_externalPreview = false;
+    update();
+}
+
+int EditorCanvas::externalRegionAt(qreal x, qreal y) const {
+    return m_arranging ? regionAt(QPointF(x, y)) : -1;
+}
+
+void EditorCanvas::setExternalDropRegion(int index) {
+    if (m_externalArrangementPreview == (index >= 0) && m_dropRegion == index) return;
+    m_externalArrangementPreview = index >= 0;
+    m_dropRegion = index;
+    update();
+}
+
+bool EditorCanvas::drawExternalCut(bool vertical, int from, int to) {
+    const bool committed = m_document.cut(vertical, from, to);
+    if (committed) changed();
+    return committed;
+}
+
+bool EditorCanvas::drawExternalBlur(qreal x1, qreal y1, qreal x2, qreal y2, int blockSize) {
+    const bool committed = m_document.blur(QRectF(QPointF(x1, y1), QPointF(x2, y2)), blockSize);
+    if (committed) changed();
+    return committed;
+}
+
+bool EditorCanvas::drawExternalErase(qreal x1, qreal y1, qreal x2, qreal y2) {
+    const bool committed = m_document.erase(QRectF(QPointF(x1, y1), QPointF(x2, y2)), QPointF(x1, y1));
+    if (committed) changed();
+    return committed;
+}
+
+bool EditorCanvas::drawExternalAnnotation(const QString &tool, qreal x1, qreal y1,
+                                          qreal x2, qreal y2, int stroke) {
+    const bool committed = m_document.annotate(tool, QPointF(x1, y1), QPointF(x2, y2),
+                                                m_ink, stroke, m_colorMode == QStringLiteral("good"));
+    if (committed) changed();
+    return committed;
+}
+
 void EditorCanvas::paint(QPainter *p) {
     if (!hasImage()) return;
     p->setRenderHint(QPainter::SmoothPixmapTransform);
@@ -122,7 +195,7 @@ void EditorCanvas::paint(QPainter *p) {
         for (int i = 0; i < m_regionRects.size(); ++i) {
             const QRectF area = m_regionRects[i];
             const bool selected = i == m_selectedRegion;
-            const bool target = m_dragging && i == m_dropRegion;
+            const bool target = (m_dragging || m_externalArrangementPreview) && i == m_dropRegion;
             p->setPen(QPen(QColor(target ? "#0d83b8" : selected ? "#1261a0" : "#596575"),
                           (selected || target ? 3 : 1) / imageScale(), target ? Qt::DashLine : Qt::SolidLine));
             p->setBrush(Qt::NoBrush);
@@ -136,23 +209,27 @@ void EditorCanvas::paint(QPainter *p) {
         }
         return;
     }
-    if (!m_dragging) return;
-    if (m_tool == "cut") {
-        const bool vertical = qAbs(m_end.x() - m_start.x()) >= qAbs(m_end.y() - m_start.y());
+    if (!m_dragging && !m_externalPreview) return;
+    const QString previewTool = m_externalPreview ? m_previewTool : m_tool;
+    const QPointF previewStart = m_externalPreview ? m_previewStart : m_start;
+    const QPointF previewEnd = m_externalPreview ? m_previewEnd : m_end;
+    if (previewTool == "cut") {
+        const bool vertical = m_externalPreview ? m_previewVertical
+            : qAbs(m_end.x() - m_start.x()) >= qAbs(m_end.y() - m_start.y());
         const QRectF strip = vertical
-            ? QRectF(qMin(m_start.x(), m_end.x()), 0, qAbs(m_end.x() - m_start.x()), imageHeight())
-            : QRectF(0, qMin(m_start.y(), m_end.y()), imageWidth(), qAbs(m_end.y() - m_start.y()));
+            ? QRectF(qMin(previewStart.x(), previewEnd.x()), 0, qAbs(previewEnd.x() - previewStart.x()), imageHeight())
+            : QRectF(0, qMin(previewStart.y(), previewEnd.y()), imageWidth(), qAbs(previewEnd.y() - previewStart.y()));
         p->fillRect(strip, QColor(239, 68, 68, 85));
         p->setPen(QPen(QColor("#ef4444"), 1.5 / imageScale(), Qt::DashLine));
         p->drawRect(strip);
-    } else if (m_tool == "blur" || m_tool == "erase") {
-        const QRect area = QRectF(m_start, m_end).normalized().toAlignedRect()
+    } else if (previewTool == "blur" || previewTool == "erase") {
+        const QRect area = QRectF(previewStart, previewEnd).normalized().toAlignedRect()
             .intersected(m_document.image().rect());
-        if (m_tool == "blur") {
+        if (previewTool == "blur") {
             ImageDocument::drawPixelation(*p, m_document.image(), area, m_pixelBlockSize);
         } else {
-            const int x = qBound(0, int(std::floor(m_start.x())), imageWidth() - 1);
-            const int y = qBound(0, int(std::floor(m_start.y())), imageHeight() - 1);
+            const int x = qBound(0, int(std::floor(previewStart.x())), imageWidth() - 1);
+            const int y = qBound(0, int(std::floor(previewStart.y())), imageHeight() - 1);
             p->save();
             p->setCompositionMode(QPainter::CompositionMode_Source);
             QImage sample(1, 1, QImage::Format_ARGB32_Premultiplied);
@@ -164,13 +241,14 @@ void EditorCanvas::paint(QPainter *p) {
         p->setBrush(Qt::NoBrush);
         p->drawRect(area);
     } else {
-        ImageDocument::drawAnnotation(*p, m_tool, m_start, m_end, m_ink, m_strokeWidth,
+        ImageDocument::drawAnnotation(*p, previewTool, previewStart, previewEnd, m_ink, m_strokeWidth,
                                       m_colorMode == QStringLiteral("good"));
     }
 }
 
 void EditorCanvas::changed() {
     cancel();
+    clearExternalPreview();
     m_strokeWidth = qBound(1, m_strokeWidth, maxStrokeWidth());
     m_textSize = qBound(8, m_textSize, maxTextSize());
     m_pixelBlockSize = qBound(4, m_pixelBlockSize, maxPixelBlockSize());
@@ -313,6 +391,7 @@ void EditorCanvas::addText(qreal x, qreal y, qreal width, qreal height, const QS
 void EditorCanvas::clearRegions() {
     m_regions.clear(); m_regionRects.clear();
     m_externalOrder.clear(); m_externalArrangement = false;
+    m_externalArrangementPreview = false;
     m_arranging = false; m_selectedRegion = -1; m_dropRegion = -1; m_dragStartRegion = -1; m_columns = 2;
     emit arrangementChanged();
 }

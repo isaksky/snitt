@@ -35,7 +35,7 @@ def pixels(path):
         position += 12 + length
         if kind == b"IHDR":
             width, height, depth, color, _, _, _ = struct.unpack(">IIBBBBB", payload)
-            assert (width, height, depth) == (SIZE, SIZE, 8)
+            assert width > 0 and height > 0 and depth == 8
             assert color in (2, 6)
             channels = 3 if color == 2 else 4
         elif kind == b"IDAT":

@@ -88,6 +88,20 @@ public:
     Q_INVOKABLE void end(qreal x, qreal y);
     Q_INVOKABLE bool cancel();
     Q_INVOKABLE void adjustToolSize(qreal wheelDelta);
+    // Jolt owns geometry and gesture decisions in its editor. These methods
+    // accept a render projection and complete document commands only.
+    Q_INVOKABLE void setExternalGeometry(qreal x, qreal y, qreal scale);
+    Q_INVOKABLE void setExternalToolSizes(int stroke, int text, int pixel);
+    Q_INVOKABLE void setExternalPreview(const QString &tool, qreal x1, qreal y1,
+                                        qreal x2, qreal y2, bool vertical);
+    Q_INVOKABLE void clearExternalPreview();
+    Q_INVOKABLE bool drawExternalCut(bool vertical, int from, int to);
+    Q_INVOKABLE bool drawExternalBlur(qreal x1, qreal y1, qreal x2, qreal y2, int blockSize);
+    Q_INVOKABLE bool drawExternalErase(qreal x1, qreal y1, qreal x2, qreal y2);
+    Q_INVOKABLE bool drawExternalAnnotation(const QString &tool, qreal x1, qreal y1,
+                                            qreal x2, qreal y2, int stroke);
+    Q_INVOKABLE int externalRegionAt(qreal x, qreal y) const;
+    Q_INVOKABLE void setExternalDropRegion(int index);
     Q_INVOKABLE void addText(qreal x, qreal y, qreal width, qreal height, const QString &text, int fontSize = 24);
 signals:
     void imageChanged();
@@ -125,6 +139,13 @@ private:
     qreal m_wheelRemainder = 0;
     bool m_dragging = false;
     QPointF m_start, m_end;
+    bool m_externalGeometry = false;
+    qreal m_externalX = 0, m_externalY = 0, m_externalScale = 1;
+    bool m_externalPreview = false;
+    QString m_previewTool;
+    QPointF m_previewStart, m_previewEnd;
+    bool m_previewVertical = false;
+    bool m_externalArrangementPreview = false;
     QList<QImage> m_regions;
     QList<int> m_externalOrder;
     bool m_externalArrangement = false;
