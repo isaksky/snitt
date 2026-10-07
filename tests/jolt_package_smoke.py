@@ -35,9 +35,17 @@ def environment(home, jolt=False):
     return result
 
 
-def exercise(bundle, home, jolt=False):
+def exercise(bundle, home, jolt=False, through_path=False):
     executable = bundle / "Contents/MacOS/snitt"
     env = environment(home, jolt)
+    if through_path:
+        cli = home / "bin"
+        cli.mkdir()
+        (cli / "snitt").symlink_to(executable)
+        env["PATH"] = str(cli) + os.pathsep + env["PATH"]
+        executable = "snitt"
+        subprocess.run([executable, "--quit"], cwd=home, env=env, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
     log = home / "launch.log"
     with log.open("wb") as output:
         owner = subprocess.Popen([str(executable), "--background"], cwd=home,
@@ -117,10 +125,10 @@ def main():
             for index in range(2):
                 home = root / f"{label}-{index}"
                 home.mkdir()
-                runs.append(exercise(bundle, home, jolt))
+                runs.append(exercise(bundle, home, jolt, through_path=jolt and index == 1))
             print(f"{label}: ready median {statistics.median(t for t, _ in runs):.3f}s; "
                   f"RSS median {statistics.median(r for _, r in runs) / 1024:.1f} MiB")
-        print("PASS: relocated Jolt smoke, forwarding, show, quit and repeated teardown")
+        print("PASS: relocated Jolt smoke, direct/PATH launch, forwarding, show, quit and repeated teardown")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 /* Bundle entry point for the Jolt application and its deployed Qt runtime. */
 #include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,9 +12,11 @@ static int child_path(char *out, size_t size, const char *contents, const char *
 }
 
 int main(int argc, char **argv) {
-    char executable[PATH_MAX], contents[PATH_MAX], plugins[PATH_MAX];
+    char launch_path[PATH_MAX], executable[PATH_MAX], contents[PATH_MAX], plugins[PATH_MAX];
     char qml[PATH_MAX], frameworks[PATH_MAX], jolt[PATH_MAX];
-    if (!realpath(argv[0], executable)) {
+    uint32_t launch_path_size = sizeof(launch_path);
+    if (_NSGetExecutablePath(launch_path, &launch_path_size) != 0 ||
+        !realpath(launch_path, executable)) {
         perror("Snitt executable");
         return 1;
     }
