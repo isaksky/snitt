@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -n "${SNITT_QMAKE:-}" ]; then
+    QMAKE="$SNITT_QMAKE"
+elif command -v qmake6 >/dev/null 2>&1; then
+    QMAKE=qmake6
+elif command -v qmake >/dev/null 2>&1; then
+    QMAKE=qmake
+elif [ -x /opt/homebrew/opt/qtbase/bin/qmake ]; then
+    QMAKE=/opt/homebrew/opt/qtbase/bin/qmake
+else
+    echo "Qt 6 qmake is required; set SNITT_QMAKE to its executable." >&2
+    exit 1
+fi
+QMAKE="$(command -v "$QMAKE")"
+case "$("$QMAKE" -query QT_VERSION)" in
+    6.*) ;;
+    *) echo "Qt 6 is required." >&2; exit 1 ;;
+esac
+
+mkdir -p "$ROOT/build"
+cd "$ROOT/build"
+"$QMAKE" "$ROOT/native/bridge.pro"
+make -j"$("$ROOT/../bin/build-jobs")"
+printf '%s\n' "$QMAKE" > "$ROOT/build/qmake-path"

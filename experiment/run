@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+JOLT="${JOLT:-jolt}"
+if ! command -v "$JOLT" >/dev/null 2>&1; then
+    echo "Jolt is required; install it or set JOLT to its executable." >&2
+    exit 1
+fi
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+# Use plugins/imports from the SDK that built the bridge, even with another Qt
+# installation on PATH. Jolt itself lives outside the Qt installation.
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+cd "$ROOT"
+if [ "${1:-}" = --smoke-test ]; then
+    shift
+    exec "$JOLT" -M:smoke "$@"
+fi
+exec "$JOLT" -M:run "$@"

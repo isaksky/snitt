@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+exec "${JOLT:-jolt}" -M:test "$@"

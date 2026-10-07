@@ -1,0 +1,10 @@
+<RCC>
+    <qresource prefix="/glimmer-qt">
+        <file alias="window.qml">../qml/window.qml</file>
+        <file alias="vbox.qml">../qml/vbox.qml</file>
+        <file alias="hbox.qml">../qml/hbox.qml</file>
+        <file alias="label.qml">../qml/label.qml</file>
+        <file alias="entry.qml">../qml/entry.qml</file>
+        <file alias="button.qml">../qml/button.qml</file>
+    </qresource>
+</RCC>

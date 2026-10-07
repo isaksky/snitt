@@ -1,0 +1,12 @@
+{:paths ["src"]
+
+ ;; No dependencies, native or otherwise: glimmer is the portable half of the
+ ;; toolkit — reactive cells, the component model and the reconciler. Everything
+ ;; that touches a real widget lives behind glimmer.backend, in a backend project
+ ;; such as glimmer-gtk (GTK4). The tests render through an in-memory backend, so
+ ;; the whole suite is headless.
+ :deps {}
+
+ :aliases {:test {:extra-paths ["test"] :main-opts ["-m" "glimmer.test-runner"]}}
+
+ :tasks {test "jolt -M:test"}}
