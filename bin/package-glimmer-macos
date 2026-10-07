@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""Build a separate, locally signed Jolt/Qt experiment bundle on macOS."""
+
+import json
+from contextlib import contextmanager
+import os
+from pathlib import Path
+import plistlib
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parent.parent
+RELEASE = runpy.run_path(str(ROOT / "bin/package-macos"))
+SUPPORTED_QT = {"6.11.1", "6.11.2"}
+QML_FILES = ("window.qml", "item.qml", "vbox.qml", "hbox.qml", "label.qml",
+             "entry.qml", "button.qml", "video-player.qml")
+PRIVATE_FILES = ("PlugIns/multimedia/libffmpegmediaplugin.dylib",
+                 "Frameworks/libavformat.61.dylib", "Frameworks/libavcodec.61.dylib",
+                 "Frameworks/libswresample.5.dylib", "Frameworks/libswscale.8.dylib",
+                 "Frameworks/libavutil.59.dylib")
+
+
+def run(*command, **kwargs):
+    subprocess.run([str(arg) for arg in command], check=True, **kwargs)
+
+
+def capture(*command):
+    return subprocess.check_output([str(arg) for arg in command], text=True).strip()
+
+
+def copy(source, target):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def require(path, instruction):
+    if not path.is_file():
+        raise RuntimeError(f"Missing {path}; {instruction}")
+
+
+@contextmanager
+def staging(parent):
+    work = Path(tempfile.mkdtemp(prefix="glimmer-package-", dir=parent))
+    try:
+        yield work
+    finally:
+        if os.environ.get("SNITT_GLIMMER_KEEP_STAGE"):
+            print(f"Kept Glimmer staging directory: {work}", file=sys.stderr)
+        else:
+            shutil.rmtree(work)
+
+
+def repair_signatures(bundle, private_files):
+    contents = bundle / "Contents"
+    private = {contents / relative for relative in private_files}
+    for binary in RELEASE["binary_files"](bundle):
+        if binary in private or binary == contents / "Resources/glimmer-jolt":
+            continue
+        if subprocess.run(["codesign", "--verify", "--strict", str(binary)],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            run("codesign", "--force", "--sign", "-", binary)
+    for framework in (contents / "Frameworks").glob("*.framework"):
+        if subprocess.run(["codesign", "--verify", "--strict", str(framework)],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            run("codesign", "--force", "--sign", "-", framework)
+
+
+def prune_qml(contents):
+    qml = contents / "Resources/qml"
+    allowed = {
+        qml: {"QtQml", "QtQuick", "QtMultimedia"},
+        qml / "QtQml": set(),
+        qml / "QtQuick": {"Controls", "Layouts", "Window", "Templates",
+                          "Shapes", "tooling"},
+        qml / "QtQuick/Controls": {"impl", "Basic", "Material"},
+        qml / "QtQuick/Shapes": set(),
+    }
+    for parent, names in allowed.items():
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_dir() and child.name not in names:
+                shutil.rmtree(child)
+    quick = contents / "PlugIns/quick"
+    referenced = {link.resolve() for link in qml.rglob("*.dylib") if link.is_symlink()}
+    for plugin in quick.glob("*.dylib"):
+        if plugin.resolve() not in referenced:
+            plugin.unlink()
+    broken = [link for link in qml.rglob("*.dylib") if link.is_symlink() and not link.exists()]
+    if broken:
+        raise RuntimeError(f"QML plugin link is broken: {broken[0]}")
+
+
+def prune_frameworks(bundle):
+    contents = bundle / "Contents"
+    frameworks = contents / "Frameworks"
+    binary_files = list(RELEASE["binary_files"](bundle))
+    roots = [path for path in binary_files if not path.is_relative_to(frameworks)]
+    roots.append(frameworks / "libglimmer_qt.dylib")  # Loaded by Jolt via dlopen.
+    seen = set()
+    while roots:
+        binary = roots.pop().resolve()
+        if binary in seen:
+            continue
+        seen.add(binary)
+        identity_lines = capture("otool", "-D", binary).splitlines()[1:]
+        identity = identity_lines[0].strip() if identity_lines else ""
+        for line in capture("otool", "-L", binary).splitlines()[1:]:
+            name = line.strip().split(" (compatibility version", 1)[0]
+            if name == identity or name.startswith(("/System/Library/", "/usr/lib/")):
+                continue
+            if name.startswith("@executable_path/"):
+                target = contents / "Resources" / name[len("@executable_path/"):]
+            elif name.startswith("@loader_path/"):
+                target = binary.parent / name[len("@loader_path/"):]
+            elif name.startswith("@rpath/"):
+                target = frameworks / name[len("@rpath/"):]
+            else:
+                raise RuntimeError(f"External runtime dependency in {binary}: {name}")
+            if not target.is_file() or not target.resolve().is_relative_to(bundle.resolve()):
+                raise RuntimeError(f"Unresolved bundled dependency in {binary}: {name}")
+            roots.append(target)
+    private = {contents / relative for relative in PRIVATE_FILES}
+    for entry in frameworks.iterdir():
+        if entry.suffix == ".framework":
+            if not any(binary.is_relative_to(entry.resolve()) for binary in seen):
+                shutil.rmtree(entry)
+        elif entry.is_file() and entry not in private and entry.resolve() not in seen:
+            entry.unlink()
+
+
+def license_material(bundle, qmake, qt_version, manifest):
+    resources = bundle / "Contents/Resources"
+    licenses = resources / "licenses"
+    copy(ROOT / "LICENSE", licenses / "snitt/LICENSE")
+    copy(ROOT / "glimmer-qt/vendor/glimmer/LICENSE", licenses / "glimmer/LICENSE")
+    jolt = Path(shutil.which(os.environ.get("JOLT", "jolt")) or "").resolve()
+    jolt_license = jolt.parent.parent / "LICENSE"
+    require(jolt_license, "the selected Jolt distribution must provide its EPL license")
+    copy(jolt_license, licenses / "jolt/LICENSE")
+    copy(ROOT / "src/icons/LICENSE", licenses / "lucide/LICENSE")
+    cache = ROOT / "build/package/license-sources"
+    cache.mkdir(parents=True, exist_ok=True)
+    binaries = [path for path in RELEASE["binary_files"](bundle)
+                if path.name != "libglimmer_qt.dylib"]
+    sdk = Path(capture(qmake, "-query", "QT_INSTALL_PREFIX")).resolve()
+    cellar = Path(capture("brew", "--cellar")).resolve()
+    inventory = []
+    if sdk.is_relative_to(cellar) or qmake.resolve().is_relative_to(cellar):
+        packages = RELEASE["source_packages"](bundle, binaries, cellar)
+        for package, files in sorted(packages.items()):
+            name = package.parent.name
+            target = licenses / f"{name}-{package.name}"
+            archive, url, sha = RELEASE["download_source"](package, cache)
+            RELEASE["archive_notices"](archive, target / "upstream")
+            for recipe in (package / ".brew").glob("*.rb"):
+                copy(recipe, target / recipe.name)
+            for sbom in (package / "share/qt/sbom").glob("*.spdx"):
+                copy(sbom, target / sbom.name)
+            inventory.append({"package": name, "version": package.name,
+                              "binaries": files, "source_url": url, "source_sha256": sha})
+    else:
+        files = RELEASE["official_qt_binaries"](bundle, binaries, sdk)
+        for module in ("qtbase", "qtdeclarative", "qtmultimedia", "qtsvg",
+                       "qtshadertools"):
+            archive, url, sha = RELEASE["official_source"](module, qt_version, cache)
+            target = licenses / f"qt-official-{qt_version}" / module
+            RELEASE["archive_notices"](archive, target / "upstream")
+            for sbom in (sdk / "sbom").glob(f"{module}-{qt_version}*.spdx"):
+                copy(sbom, target / sbom.name)
+            inventory.append({"package": module, "version": qt_version,
+                              "source_url": url, "source_sha256": sha})
+        inventory.append({"package": "qt-official-sdk", "version": qt_version,
+                          "binaries": files})
+    private = licenses / "private-playback"
+    sources = resources / "Sources"
+    for name, filename in (("ffmpeg", "ffmpeg-7.1.3.tar.xz"),
+                           ("qtmultimedia", f"qtmultimedia-everywhere-src-{qt_version}.tar.xz")):
+        archive = sources / filename
+        if RELEASE["digest"](archive) != manifest["sources"][name]["sha256"]:
+            raise RuntimeError(f"Private LGPL playback source mismatch: {filename}")
+        RELEASE["archive_notices"](archive, private / name)
+    for filename in ("FFMPEG-CONFIGURE.txt", "QTMULTIMEDIA-BUILD.txt",
+                     "qtmultimedia-6.11-sdk26.patch"):
+        copy(sources / filename, private / filename)
+    (private / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    inventory.extend((
+        {"package": "jolt", "version": capture(jolt, "--version"),
+         "source_url": "https://github.com/jolt-lang/jolt"},
+        {"package": "glimmer", "license": "MIT",
+         "source_revision": "09b8ab08705fa1e6f20145c2e99eaaba9ea812cc"},
+        {"package": "private LGPL FFmpeg playback", "version": manifest["ffmpeg_version"],
+         "license": manifest["ffmpeg_license"], "binaries": list(PRIVATE_FILES),
+         "sources": manifest["sources"], "configure": manifest["ffmpeg_configure"]},
+    ))
+    (resources / "DEPENDENCIES.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    (resources / "THIRD-PARTY-NOTICES.txt").write_text(
+        "This opt-in experiment bundles Jolt, Glimmer, Qt and a private LGPL-only "
+        "FFmpeg playback runtime. Exact components and source locations are in "
+        "DEPENDENCIES.json; license notices and complete corresponding playback "
+        "source archives are in licenses/ and Sources/. Qt and FFmpeg libraries "
+        "remain dynamically linked and can be replaced with compatible builds "
+        "before locally signing the modified bundle again.\n")
+
+
+def verify(bundle, qt_version, manifest):
+    contents = bundle / "Contents"
+    for relative in PRIVATE_FILES:
+        path = contents / relative
+        if RELEASE["digest"](path) != manifest["artifacts"][relative]:
+            raise RuntimeError(f"Private playback binary mismatch: {relative}")
+    for relative in ("MacOS/GlimmerExperiment", "Resources/glimmer-jolt",
+                     "Frameworks/libglimmer_qt.dylib", "Resources/qml/QtMultimedia/qmldir",
+                     "PlugIns/platforms/libqcocoa.dylib"):
+        require(contents / relative, "Qt deployment is incomplete")
+    for binary in RELEASE["binary_files"](bundle):
+        identity_lines = capture("otool", "-D", binary).splitlines()[1:]
+        identity = identity_lines[0].strip() if identity_lines else ""
+        for line in capture("otool", "-L", binary).splitlines()[1:]:
+            name = line.strip().split(" (compatibility version", 1)[0]
+            if name == identity:
+                continue
+            if name.startswith(("/System/Library/", "/usr/lib/")):
+                continue
+            if name.startswith("@executable_path/"):
+                target = contents / "Resources" / name[len("@executable_path/"):]
+            elif name.startswith("@loader_path/"):
+                target = binary.parent / name[len("@loader_path/"):]
+            elif name.startswith("@rpath/"):
+                target = contents / "Frameworks" / name[len("@rpath/"):]
+            else:
+                raise RuntimeError(f"External dependency in {binary}: {name}")
+            if not target.exists():
+                raise RuntimeError(f"Unresolved dependency in {binary}: {name}")
+            if "/Qt" in name and ".framework/Versions/A/" in name \
+                    and f"current version {qt_version})" not in line:
+                raise RuntimeError(f"Mixed Qt SDK in {binary}: {line}")
+    run("codesign", "--verify", "--deep", "--strict", bundle)
+
+
+def main():
+    if sys.platform != "darwin":
+        raise RuntimeError("This package command runs on macOS only")
+    qmake = Path(os.environ.get("SNITT_QMAKE") or
+                 (ROOT / "glimmer-qt/build/qmake-path").read_text().strip()).resolve()
+    require(qmake, "set SNITT_QMAKE to the supported Qt SDK qmake6")
+    qt_version = capture(qmake, "-query", "QT_VERSION")
+    if qt_version not in SUPPORTED_QT:
+        raise RuntimeError(f"Qt {qt_version} is unsupported; use 6.11.1 or 6.11.2")
+    run(ROOT / "bin/build-mac-multimedia-runtime", "--qmake", qmake, "--check-sdk")
+    stage = ROOT / "build/tools/mac-multimedia-runtime/stage"
+    require(stage / "manifest.json", "build the matching private playback runtime")
+    manifest = json.loads((stage / "manifest.json").read_text())
+    if manifest.get("qt_version") != qt_version or manifest.get("ffmpeg_license") != "LGPL-2.1-or-later":
+        raise RuntimeError("Private LGPL playback runtime does not match selected Qt SDK")
+    env = dict(os.environ, SNITT_QMAKE=str(qmake))
+    run(ROOT / "glimmer-qt/build-native", env=env)
+    if (ROOT / "glimmer-qt/build/qmake-path").read_text().strip() != str(qmake):
+        raise RuntimeError("Bridge was built against a different Qt SDK")
+    output = ROOT / "build/package/glimmer-macos/Glimmer Experiment.app"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with staging(output.parent) as work:
+        bundle = work / output.name
+        contents = bundle / "Contents"
+        (contents / "MacOS").mkdir(parents=True)
+        (contents / "Frameworks").mkdir()
+        (contents / "Resources").mkdir()
+        info = {"CFBundleExecutable": "GlimmerExperiment",
+                "CFBundleIdentifier": "local.snitt.glimmer-experiment",
+                "CFBundleName": "Glimmer Experiment",
+                "CFBundleDisplayName": "Glimmer Experiment",
+                "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
+                "CFBundleVersion": "0.1.0", "LSMinimumSystemVersion": "15.0",
+                "NSHighResolutionCapable": True}
+        (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+        launcher = contents / "MacOS/GlimmerExperiment"
+        run("cc", "-arch", "arm64", "-mmacosx-version-min=15.0", "-O2",
+            ROOT / "experiment/native/package_launcher.c", "-o", launcher)
+        binary = contents / "Resources/glimmer-jolt"
+        built = work / "glimmer-jolt"
+        run(os.environ.get("JOLT", "jolt"), "build", "-m", "hello.packaged", "-o", built,
+            cwd=ROOT / "experiment")
+        copy(built, binary)
+        copy(ROOT / "dev/demo.mp4", contents / "Resources/smoke.mp4")
+        copy(ROOT / "glimmer-qt/build/libglimmer_qt.dylib",
+             contents / "Frameworks/libglimmer_qt.dylib")
+        qml_scan = work / "qml-scan"
+        qml_scan.mkdir()
+        for filename in QML_FILES:
+            copy(ROOT / "glimmer-qt/qml" / filename, qml_scan / filename)
+        deploy = Path(capture(qmake, "-query", "QT_INSTALL_BINS")) / "macdeployqt"
+        require(deploy, "install the matching Qt deployment tool")
+        deploy_args = [deploy, bundle,
+                       f"-executable={contents / 'Frameworks/libglimmer_qt.dylib'}",
+                       f"-qmldir={qml_scan}", "-always-overwrite"]
+        qt_lib = Path(capture(qmake, "-query", "QT_INSTALL_LIBS"))
+        timeline_lib = qt_lib if qt_lib.resolve() != Path("/opt/homebrew/lib") else Path(
+            capture("brew", "--prefix", "qtquicktimeline")) / "lib"
+        sources = {source.name: source for source in qt_lib.glob("Qt*.framework")}
+        for name in ("QtQuickTimeline", "QtQuickTimelineBlendTrees"):
+            source = timeline_lib / f"{name}.framework"
+            require(source / f"Versions/A/{name}",
+                    "select an SDK with matching Qt Quick Timeline")
+            sources[source.name] = source
+        # macdeployqt's helper scans both the explicit path and the staging
+        # directory's lib/ while following plugin and QML import dependencies.
+        for libpath in (output.parent / "lib", work / "lib"):
+            libpath.mkdir(exist_ok=True)
+            for source in sources.values():
+                link = libpath / source.name
+                if link.is_symlink():
+                    link.unlink()
+                elif link.exists():
+                    raise RuntimeError(f"Cannot replace non-symlink Qt deployment path: {link}")
+                link.symlink_to(source, target_is_directory=True)
+        deploy_args.append(f"-libpath={work / 'lib'}")
+        deployment = subprocess.run([str(arg) for arg in deploy_args],
+                                    capture_output=True, text=True)
+        if deployment.returncode:
+            raise RuntimeError("Qt deployment failed:\n" + deployment.stderr[-4000:])
+        # The fixture uses Cocoa, its QML controls, and FFmpeg playback.
+        plugins = contents / "PlugIns"
+        for child in plugins.iterdir():
+            if child.name not in {"platforms", "multimedia", "quick"}:
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
+        for plugin in (plugins / "platforms").glob("*"):
+            if plugin.name != "libqcocoa.dylib":
+                plugin.unlink()
+        for plugin in (plugins / "multimedia").glob("*"):
+            if plugin.name != "libffmpegmediaplugin.dylib":
+                plugin.unlink()
+        styles = contents / "Resources/qml/QtQuick/Controls"
+        for name in ("FluentWinUI3", "Fusion", "Imagine", "iOS", "macOS", "designer"):
+            shutil.rmtree(styles / name, ignore_errors=True)
+        for framework in (contents / "Frameworks").glob("QtQuickControls2*.framework"):
+            if framework.name not in {"QtQuickControls2.framework", "QtQuickControls2Impl.framework",
+                                      "QtQuickControls2Material.framework",
+                                      "QtQuickControls2MaterialStyleImpl.framework",
+                                      "QtQuickControls2Basic.framework",
+                                      "QtQuickControls2BasicStyleImpl.framework"}:
+                shutil.rmtree(framework)
+        prune_qml(contents)
+        run("ditto", stage / "Contents", contents)
+        RELEASE["private_runtime_manifest"](bundle)
+        prune_frameworks(bundle)
+        license_material(bundle, qmake, qt_version, manifest)
+        repair_signatures(bundle, PRIVATE_FILES)
+        run(ROOT / "bin/sign-macos", bundle)
+        verify(bundle, qt_version, manifest)
+        if output.exists():
+            shutil.rmtree(output)
+        run("ditto", bundle, output)
+    print(f"Packaged {output}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+        sys.exit(f"Glimmer macOS package failed: {error}")

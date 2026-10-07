@@ -1,6 +1,7 @@
 {:paths ["src"]
  :jolt/native [{:name "hello-extensions" :optional true
-                :darwin ["build/extensions/libhello_extensions.dylib"]
+                :darwin ["libhello_extensions.dylib"
+                         "build/extensions/libhello_extensions.dylib"]
                 :windows ["build/extensions/release/hello_extensions.dll" "build/extensions/hello_extensions.dll"]
                 :linux ["build/extensions/libhello_extensions.so"]}]
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}

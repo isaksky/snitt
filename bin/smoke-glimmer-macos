@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Run the packaged fixture after moving it away from its build directory."""
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def main():
+    if len(sys.argv) > 2:
+        sys.exit("Usage: bin/smoke-glimmer-macos [Glimmer Experiment.app]")
+    source = Path(sys.argv[1] if len(sys.argv) == 2 else
+                  ROOT / "build/package/glimmer-macos/Glimmer Experiment.app").resolve()
+    if not (source / "Contents/MacOS/GlimmerExperiment").is_file():
+        sys.exit(f"Missing packaged Glimmer Experiment: {source}")
+    with tempfile.TemporaryDirectory(prefix="glimmer-relocated-") as temporary:
+        target = Path(temporary) / source.name
+        subprocess.run(["ditto", str(source), str(target)], check=True)
+        target = target.resolve()
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(target)], check=True)
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("DYLD_", "QT_", "QML_", "JOLT_", "SNITT_"))}
+        env["QT_QPA_PLATFORM"] = "cocoa"
+        env["QT_DEBUG_PLUGINS"] = "1"
+        env["DYLD_PRINT_LIBRARIES"] = "1"
+        try:
+            result = subprocess.run([str(target / "Contents/MacOS/GlimmerExperiment"),
+                                     "--smoke-test"], cwd=temporary, env=env,
+                                    capture_output=True, text=True, timeout=25)
+        except subprocess.TimeoutExpired:
+            sys.exit("Relocated package smoke timed out")
+        plugin = target / "Contents/PlugIns/multimedia/libffmpegmediaplugin.dylib"
+        if result.returncode or "PASS: packaged Qt controls and LGPL FFmpeg playback" not in result.stdout:
+            sys.stderr.write(result.stdout + result.stderr[-5000:])
+            sys.exit("Relocated package did not start and decode its media fixture")
+        if f'"{plugin}" loaded library' not in result.stderr:
+            sys.stderr.write(result.stderr[-5000:])
+            sys.exit("Relocated package did not load its bundled LGPL FFmpeg plugin")
+        loaded = [line for line in result.stderr.splitlines() if line.startswith("dyld[")]
+        bridge = target / "Contents/Frameworks/libglimmer_qt.dylib"
+        if not any(str(bridge) in line for line in loaded):
+            sys.exit("Relocated package did not load its bundled Glimmer bridge")
+        if any("/opt/homebrew/" in line or str(ROOT) in line for line in loaded):
+            sys.exit("Relocated package loaded a developer Qt or source-checkout library")
+        print("PASS: relocated signed app, Qt controls, and bundled LGPL FFmpeg playback")
+
+
+if __name__ == "__main__":
+    main()

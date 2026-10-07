@@ -18,6 +18,7 @@
            :scheduling-test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.scheduling-test"]}
            :test {:extra-paths ["test"] :main-opts ["-m" "glimmer-qt.lifecycle-test"]}}
  :jolt/native [{:name "glimmer-qt"
-                :darwin ["build/libglimmer_qt.dylib"]
+                :darwin ["libglimmer_qt.dylib"
+                         "build/libglimmer_qt.dylib"]
                 :windows ["build/release/glimmer_qt.dll" "build/glimmer_qt.dll"]
                 :linux ["build/libglimmer_qt.so"]}]}
