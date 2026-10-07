@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SNITT_ACCEPTANCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-acceptance.XXXXXX")"
+export SNITT_ACCEPTANCE_DIR
+trap 'rm -rf "$SNITT_ACCEPTANCE_DIR"' EXIT HUP INT TERM
+if ! "$ROOT/../glimmer-qt/build-native" 'CONFIG+=property_tests' > "$SNITT_ACCEPTANCE_DIR/build.log" 2>&1; then
+    tail -n 40 "$SNITT_ACCEPTANCE_DIR/build.log" >&2
+    exit 1
+fi
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+mkdir -p "$ROOT/build/extensions"
+cd "$ROOT/build/extensions"
+if ! ("$QMAKE" "$ROOT/native/extensions.pro" &&
+      rm -f qrc_resources.cpp qrc_resources.o &&
+      make -j"$("$ROOT/../bin/build-jobs")") > "$SNITT_ACCEPTANCE_DIR/extension-build.log" 2>&1; then
+    tail -n 40 "$SNITT_ACCEPTANCE_DIR/extension-build.log" >&2
+    exit 1
+fi
+
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export DYLD_FRAMEWORK_PATH="$("$QMAKE" -query QT_INSTALL_LIBS):$(brew --prefix)/lib${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
+RUNTIME_PLUGINS="$ROOT/../build/tools/mac-multimedia-runtime/stage/Contents/PlugIns"
+[ -d "$RUNTIME_PLUGINS" ] || { echo "Snitt's private macOS playback runtime is missing." >&2; exit 1; }
+export QT_PLUGIN_PATH="$(CDPATH= cd -- "$RUNTIME_PLUGINS" && pwd)"
+export QT_MEDIA_BACKEND=ffmpeg
+[ -f "$QT_PLUGIN_PATH/multimedia/libffmpegmediaplugin.dylib" ] || {
+    echo "Snitt's private macOS playback plugin is missing." >&2; exit 1;
+}
+
+SNITT_ACCEPTANCE_CLIP="$SNITT_ACCEPTANCE_DIR/clip.mp4"
+export SNITT_ACCEPTANCE_CLIP
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=red:s=160x90:r=12 \
+    -f lavfi -i sine=frequency=440:sample_rate=44100 -t 3 -c:v libx264 \
+    -pix_fmt yuv420p -c:a aac -shortest "$SNITT_ACCEPTANCE_CLIP"
+cd "$ROOT"
+"${JOLT:-jolt}" -M:acceptance

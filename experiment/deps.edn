@@ -8,6 +8,7 @@
  :aliases {:extensions {:extra-paths ["test"] :main-opts ["-m" "hello.extensions-test"]}
            :images {:extra-paths ["test"] :main-opts ["-m" "hello.images-test"]}
            :snitt {:extra-paths ["test"] :main-opts ["-m" "hello.snitt-test"]}
+           :acceptance {:extra-paths ["test"] :main-opts ["-m" "hello.acceptance-test"]}
            :extensions-demo {:main-opts ["-m" "hello.extensions"]}
            :run {:main-opts ["-m" "hello.core"]}
            :smoke {:extra-paths ["test"] :main-opts ["-m" "hello.smoke"]}}}
