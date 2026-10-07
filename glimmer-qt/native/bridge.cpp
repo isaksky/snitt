@@ -4,6 +4,7 @@
 #include <QCloseEvent>
 #include <QSet>
 #include <QImage>
+#include <QFontMetricsF>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -393,6 +394,25 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
     return 1;
 }
 #include "values.h"
+
+extern "C" Q_DECL_EXPORT const char *gqt_measure_text(Handle id, const char *text) {
+    try {
+        auto *object = objectFor(id);
+        if (!object) return nullptr;
+        auto font = Values::property(object, "font").read();
+        if (font.metaType() != QMetaType::fromType<QFont>())
+            Values::reject("Text measurement requires a font-bearing control");
+        const QFontMetricsF metrics(font.value<QFont>());
+        const auto str = QString::fromUtf8(text);
+        const auto bounds = metrics.boundingRect(str);
+        return Values::result(Values::encode(QVariantMap{
+            {"advance", metrics.horizontalAdvance(str)}, {"height", metrics.height()},
+            {"ascent", metrics.ascent()}, {"descent", metrics.descent()},
+            {"underline-position", metrics.underlinePos()}, {"line-width", metrics.lineWidth()},
+            {"x", bounds.x()}, {"y", bounds.y()}, {"width", bounds.width()}}));
+    } catch (const std::exception &e) { fail(e.what()); return nullptr; }
+}
+
 #include "objects.h"
 struct Factory { GqtFactory create; GqtComplete complete; };
 static QHash<QString, Factory> factories;
@@ -687,6 +707,20 @@ extern "C" Q_DECL_EXPORT int gqt_test_click(Handle id) {
     if (!item || !item->window()) return 0;
     QTest::mouseClick(item->window(), Qt::LeftButton, Qt::NoModifier,
                      item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint());
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_test_action_input(Handle id, int action) {
+    auto *item = itemFor(id);
+    if (!item || !item->window()) return 0;
+    auto *window = item->window();
+    const auto point = item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint();
+    switch (action) {
+    case 0: QTest::mouseMove(window, point); break;
+    case 1: QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, point); break;
+    case 2: QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, point); break;
+    case 3: QTest::keyClick(window, Qt::Key_Tab); break;
+    default: return fail("Unknown test input");
+    }
     return 1;
 }
 extern "C" Q_DECL_EXPORT int gqt_test_space(Handle id) {

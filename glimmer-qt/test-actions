@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" CONFIG+=property_tests
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+# Bound native input/event-loop stalls independently of the GUI deadline.
+exec python3 - "${JOLT:-jolt}" "$@" <<'PYTHON'
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.argv[1], '-M:actions-test', *sys.argv[2:]], timeout=60).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit('Qt action tests exceeded 60 seconds')
+PYTHON

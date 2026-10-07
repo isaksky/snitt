@@ -52,6 +52,32 @@
    :implicit-width ["implicitWidth" :number 0]
    :implicit-height ["implicitHeight" :number 0]})
 
+;; Shared text and accessibility contract; enum values use value/enum.
+(def ^:private typography
+  {:font-family ["font.family" :string ""]
+   :font-size ["font.pixelSize" :number 14]
+   :font-weight ["font.weight" :number 400]
+   :font-italic ["font.italic" :bool false]})
+(def ^:private accessible
+  {:accessible-name ["accessibleName" :string ""]
+   :accessible-description ["Accessible.description" :string ""]
+   :tooltip ["tooltip" :string ""]})
+(def ^:private text-layout
+  {:text-alignment ["horizontalAlignment" :value (value/enum "AlignLeft")]
+   :wrap ["wrapMode" :value (value/enum "Wrap")]
+   :elide ["elide" :value (value/enum "ElideNone")]})
+(def ^:private actions
+  (merge common typography accessible
+         {:label ["text" :string ""] :highlighted ["highlighted" :bool false]
+          :checked ["checked" :bool false] :checkable ["checkable" :bool false]
+          :icon ["iconSource" :string ""]
+          :icon-only ["iconOnly" :bool false]
+          :mode ["mode" :string "normal"]
+          :accent ["Material.accent" :color "#91bff0"]
+          :theme ["Material.theme" :value (value/enum "Dark")]
+          :content-source ["contentSource" :string ""]
+          :background-source ["backgroundSource" :string ""]}))
+
 (defonce ^:private registry (atom {}))
 
 (defn register!
@@ -100,12 +126,11 @@
                                             :radius ["radius" :number 0]
                                             :border-width ["border.width" :number 0]
                                             :border-color ["border.color" :color "transparent"]}) {} :self ""]
-         [:label (merge common {:label ["text" :string ""] :color ["color" :color "#ffffff"]
-                                :font-size ["font.pixelSize" :number 14]
-                                :font-weight ["font.weight" :number 400]}) {} :none ""]
+         [:label (merge common typography accessible text-layout
+                        {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
          [:entry (merge common {:text ["text" :string ""] :placeholder ["hint" :string ""]})
           {:on-change :string :on-activate :none} :none "relay"]
-         [:button (merge common {:label ["text" :string ""] :highlighted ["highlighted" :bool false]})
+         [:button actions
           {:on-click :none} :none "relay"]]]
   (register! tag {:source (str "qrc:/glimmer-qt/" (name tag) ".qml")
                   :props props :events events :children children :relay relay}))
@@ -131,6 +156,10 @@
                    (get props :margin 0) default)))
 
 (defn- validate-props! [tag props]
+  (when (and (= tag :button) (contains? props :mode) (not (#{"normal" "good" "bad"} (:mode props))))
+    (throw (ex-info "Action mode must be normal, good or bad." {})))
+  (when (and (= tag :button) (:icon-only props) (empty? (:accessible-name props)))
+    (throw (ex-info "Icon-only actions require an accessible name." {})))
   (object/validate-subscriptions! (:qt/subscriptions props))
   (when (and (contains? props :anchor) (not (#{"none" "fill" "center"} (:anchor props))))
     (throw (ex-info "Unsupported anchor; use none, fill or center relative to parent." {})))
@@ -186,7 +215,7 @@
     (doseq [[key entry] spec :when entry]
       (let [[property type default] entry
             value (prop-value props key default)]
-        (when (or (nil? previous) (= key :text) (not= value (prop-value previous key default)))
+        (when (or (nil? previous) (#{:text :checked} key) (not= value (prop-value previous key default)))
           (q/set-controlled-property! widget property (if (= type :color) (value/color value) value)))))
     (swap! widgets assoc-in [widget :props] props)
     (object/reconcile! widget (:qt/subscriptions props)))

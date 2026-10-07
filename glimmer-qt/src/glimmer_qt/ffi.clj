@@ -111,3 +111,14 @@
     (throw (ex-info "Unsupported Qt component tag" {:tag tag})))
   (create-registered session (str "qrc:/glimmer-qt/" tag ".qml")
                      (value/encode {}) (if (#{"entry" "button"} tag) "relay" "")))
+
+(defchecked measure-text-native "gqt_measure_text" [:uint64 :string] :string)
+(defn measure-text
+  "Measure a single line with a live control's font on the GUI thread. Returns
+  string keys: advance, height, ascent, descent, underline-position, line-width,
+  x, y, width in logical pixels. No widget mutation or temporary native owners."
+  [handle text]
+  (property-args! handle "font")
+  (when-not (and (string? text) (not (str/includes? text "\u0000")))
+    (throw (ex-info "Text measurement requires a string without NUL." {})))
+  (value/decode (measure-text-native handle text)))
