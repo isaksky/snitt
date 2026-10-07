@@ -5,10 +5,12 @@
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
+            [glimmer-qt.tray :as tray]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
             [snitt.native :as native]
-            [snitt.sessions :as sessions]))
+            [snitt.sessions :as sessions]
+            [snitt.settings :as settings]))
 
 (defn- initial-state []
   {:tool "rect" :status "Open or paste an image" :error? false
@@ -82,10 +84,14 @@
 (defn editor [context]
   (let [{:keys [tool status error? has-image? can-undo? can-redo?
                 canvas-width canvas-height]} @(:state context)
+        {:keys [shortcuts hints]} @settings/published
+        binding (fn [action fallback] (get shortcuts action fallback))
+        hint (fn [action fallback] (get hints action fallback))
         manager (:manager @runtime)]
     [:vbox {:hexpand true :vexpand true :padding 10 :spacing 8}
      [:hbox {:spacing 6}
-      [:button {:id "open" :label "Open" :on-click #(open-dialog! context)}]
+      [:button {:id "open" :label (str "Open (" (hint "openImage" "Ctrl+O") ")")
+                :on-click #(open-dialog! context)}]
       [:button {:id "paste" :label "Paste"
                 :on-click #(command! context (fn [c] (object/invoke! c "paste()" [])) "Pasted"
                                      "The clipboard has no image to paste.")}]
@@ -93,7 +99,8 @@
                 :on-click #(sessions/capture! manager false false)}]
       [:button {:id "record" :label "Record"
                 :on-click #(sessions/capture! manager false true)}]
-      [:button {:id "rect" :label "Rectangle" :checkable true :checked (= tool "rect")
+      [:button {:id "rect" :label (str "Rectangle (" (hint "toolRectangle" "R") ")")
+                :checkable true :checked (= tool "rect")
                 :sensitive has-image? :on-click #(choose-tool! context "rect")}]
       [:button {:id "arrow" :label "Arrow" :checkable true :checked (= tool "arrow")
                 :sensitive has-image? :on-click #(choose-tool! context "arrow")}]
@@ -123,18 +130,18 @@
                        :error {:signal "error(QString)" :handler #(report! context % true)}}}]]
      [:label {:id "status" :label status :color (if error? "#ffb4a8" "#ffffff")}]
      [:file-chooser {:id "open-file" :on-accepted #(accept-image! context %)}]
-     [:shortcut {:id "open-key" :sequences ["Ctrl+O"]
+     [:shortcut {:id "open-key" :sequences (binding "openImage" ["Ctrl+O"])
                  :on-activate #(open-dialog! context)}]
-     [:shortcut {:id "rect-key" :sequences ["R"] :enabled has-image?
+     [:shortcut {:id "rect-key" :sequences (binding "toolRectangle" ["R"]) :enabled has-image?
                  :on-activate #(choose-tool! context "rect")}]
-     [:shortcut {:id "undo-key" :sequences ["Ctrl+Z"] :enabled can-undo?
+     [:shortcut {:id "undo-key" :sequences (binding "undo" ["Ctrl+Z"]) :enabled can-undo?
                  :on-activate #(native/undo! (canvas context))}]
-     [:shortcut {:id "redo-key" :sequences ["Ctrl+Shift+Z"] :enabled can-redo?
+     [:shortcut {:id "redo-key" :sequences (binding "redo" ["Ctrl+Shift+Z"]) :enabled can-redo?
                  :on-activate #(native/redo! (canvas context))}]
-     [:shortcut {:id "copy-key" :sequences ["Ctrl+C"] :enabled has-image?
+     [:shortcut {:id "copy-key" :sequences (binding "copyClose" ["Ctrl+C"]) :enabled has-image?
                  :on-activate #(command! context native/copy! "Copied to clipboard"
                                          "Could not copy to the clipboard. Try again.")}]
-     [:shortcut {:id "save-key" :sequences ["Ctrl+S"] :enabled has-image?
+     [:shortcut {:id "save-key" :sequences (binding "saveClose" ["Ctrl+S"]) :enabled has-image?
                  :on-activate #(command! context native/save! "Saved"
                                          "Could not save the image. Check the Pictures folder and try again.")}]]))
 
@@ -173,6 +180,7 @@
                  :state (if (= id 1) state (r/atom (initial-state)))}
         services (native/create-services!)]
     (try
+      (settings/register! services)
       (let [window (qt/open-window! #(editor context)
                                     :title (if label (str "Snitt — " label) "Snitt · Jolt development")
                                     :width 900 :height 640 :visible false
@@ -185,6 +193,9 @@
           (sync-canvas-size! context)
           (q/set-property! canvas "saveRoot"
                            (q/read-property (:settings services) "picturesRoot"))
+          (when-let [{:keys [good-color bad-color]} @settings/published]
+            (q/set-property! canvas "goodColor" (value/color good-color))
+            (q/set-property! canvas "badColor" (value/color bad-color)))
           (refresh! context))
         {:window window :services services :context context
          :load-url #(open-url! context %)
@@ -196,14 +207,48 @@
         (widget/dispose! (:root services))
         (throw e)))))
 
+(defn- settings-published! [{:keys [good-color bad-color pictures-root hints]}]
+  (when-let [manager (:manager @runtime)]
+    (doseq [{:keys [context]} (sessions/sessions manager)]
+      (when-let [handle (canvas context)]
+        (q/set-property! handle "goodColor" (value/color good-color))
+        (q/set-property! handle "badColor" (value/color bad-color))
+        (q/set-property! handle "saveRoot" pictures-root))))
+  (when-let [{:keys [tray capture-action]} @runtime]
+    (when (q/alive? tray)
+      (tray/set-tooltip! tray (str "Snitt — Capture " (get hints "globalCapture")))
+      (tray/update-action! capture-action :shortcut-hint (get hints "globalCapture")))))
+
+(defn- settings-error! [message]
+  (when-let [manager (:manager @runtime)]
+    (doseq [{:keys [context]} (sessions/sessions manager)]
+      (report! context message true)))
+  (when-let [icon (:tray @runtime)]
+    (when (q/alive? icon)
+      (tray/notify! icon "Snitt settings not applied" message :kind :warning))))
+
 (defn start! [& {:keys [image capture-start]}]
   (native/install!)
   (reset! state (initial-state))
+  (settings/configure! :on-publish settings-published! :on-error settings-error!
+                       :on-capture #(when-let [manager (:manager @runtime)]
+                                      (sessions/hotkey-capture! manager)))
   (let [manager (sessions/manager create-editor! :start-capture capture-start)]
     (reset! runtime {:manager manager})
     (let [id (sessions/create! manager nil)
           {:keys [window services context]} (sessions/session manager id)]
       (swap! runtime assoc :window window :services services :context context)
+      (when (tray/available?)
+        (let [icon (tray/create! ":/icons/square.svg"
+                                 :tooltip (str "Snitt — Capture "
+                                               (get-in @settings/published [:hints "globalCapture"])))
+              action (tray/add-action! icon :label "Capture"
+                                        :shortcut-hint (get-in @settings/published [:hints "globalCapture"])
+                                        :on-trigger #(sessions/hotkey-capture! manager))]
+          (tray/add-action! icon :label "Show Snitt"
+                            :on-trigger #(sessions/show-editor! manager))
+          (tray/show! icon)
+          (swap! runtime assoc :tray icon :capture-action action)))
       (qt/activate! window)
       (when image
         (when-not (native/load-image! (canvas context) image)
@@ -228,4 +273,4 @@
                   (qt/quit!)))))
        :app-id "snitt-jolt-development" :keep-alive false
        :auto-quit-ms (when smoke? 5000))
-      (finally (reset! runtime nil) (shutdown-agents)))))
+      (finally (settings/clear!) (reset! runtime nil) (shutdown-agents)))))

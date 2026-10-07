@@ -18,6 +18,21 @@ Set `SNITT_JOLT_DATA_DIR` to an absolute disposable directory for tests or an
 isolated workspace. The C++ production entry point and its IPC identity are
 unchanged.
 
+`snitt.settings` parses and validates the INI, owns the published settings
+snapshot, and applies accepted values to every editor session. The native
+`AppSettings` object runs in externally controlled mode for this launcher: it
+provides isolated paths, default-file creation, file/directory watching, Qt
+shortcut spelling, and a projection for retained native consumers. The native
+global hotkey adapter registers a candidate before Jolt publishes it, so failed
+registration keeps the previous settings and shortcut active. Editor shortcut
+labels, key bindings, colors, save roots, and tray hints follow the same Jolt
+snapshot. The original C++ entry point continues using its existing settings
+loader until the application cutover.
+
+Run `./jolt-snitt/test-settings` for isolated macOS settings cases, including
+ordinary saves, atomic replacement, deletion/recreation, validation errors,
+multi-editor projection, and native hotkey rollback.
+
 `snitt.native/install!` registers `snitt-jolt.canvas` and
 `snitt-jolt.services` with the generic Glimmer factory seam on the Qt thread.
 The native library links the existing `EditorCanvas`, `AppSettings`, `Backend`,

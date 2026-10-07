@@ -155,7 +155,10 @@ AppSettings::Paths AppSettings::standardPaths() {
 
 AppSettings::AppSettings(QObject *parent) : AppSettings(standardPaths(), parent) {}
 
-AppSettings::AppSettings(const Paths &paths, QObject *parent) : QObject(parent), m_paths(paths) {
+AppSettings::AppSettings(const Paths &paths, QObject *parent) : AppSettings(paths, false, parent) {}
+
+AppSettings::AppSettings(const Paths &paths, bool externalController, QObject *parent)
+    : QObject(parent), m_paths(paths), m_externalController(externalController) {
     const Paths standard = standardPaths();
     if (m_paths.settingsFile.isEmpty()) m_paths.settingsFile = standard.settingsFile;
     if (m_paths.guideFile.isEmpty()) m_paths.guideFile = standard.guideFile;
@@ -166,7 +169,10 @@ AppSettings::AppSettings(const Paths &paths, QObject *parent) : QObject(parent),
 
     m_reloadTimer.setSingleShot(true);
     m_reloadTimer.setInterval(220);
-    connect(&m_reloadTimer, &QTimer::timeout, this, [this] { reloadNow(); });
+    connect(&m_reloadTimer, &QTimer::timeout, this, [this] {
+        if (m_externalController) emit candidateChanged();
+        else reloadNow();
+    });
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { scheduleReload(); });
     connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { scheduleReload(); });
     m_filePollTimer.setInterval(300);
@@ -264,7 +270,7 @@ void AppSettings::initialize() {
     if (!guideReady) setError(error);
     if (guideReady && !createDefaultIniIfMissing(&error)) setError(error);
     pollSettingsFile();
-    if (QFileInfo::exists(m_paths.settingsFile)) reloadNow();
+    if (!m_externalController && QFileInfo::exists(m_paths.settingsFile)) reloadNow();
     watchFiles();
 }
 
@@ -460,6 +466,7 @@ void AppSettings::publish(const Candidate &candidate) {
 }
 
 bool AppSettings::reloadNow() {
+    if (m_externalController) return false;
     Candidate candidate;
     QString error;
     if (!parseCandidate(&candidate, &error)) {
@@ -484,6 +491,65 @@ bool AppSettings::reloadNow() {
     watchFiles();
     emit reloaded();
     return true;
+}
+
+QVariantMap AppSettings::shortcutInfo(const QString &configured) const {
+    const QKeySequence parsed = QKeySequence::fromString(configured, QKeySequence::PortableText);
+    if (configured.isEmpty() || parsed.count() != 1 || parsed[0].key() == Qt::Key_unknown
+        || parsed.toString(QKeySequence::PortableText).isEmpty()) return {};
+    const QKeySequence converted = qtSequence(configured);
+    return {{QStringLiteral("normalized"), parsed.toString(QKeySequence::PortableText)},
+            {QStringLiteral("portable"), converted.toString(QKeySequence::PortableText)},
+            {QStringLiteral("hint"), displaySequence(converted)}};
+}
+
+QString AppSettings::standardShortcut(const QString &action) const {
+    if (action == QStringLiteral("copyClose")) return QKeySequence(QKeySequence::Copy).toString(QKeySequence::PortableText);
+    if (action == QStringLiteral("saveClose")) return QKeySequence(QKeySequence::Save).toString(QKeySequence::PortableText);
+    return {};
+}
+
+QString AppSettings::cleanRoot(const QString &value, const QString &fallback) const {
+    return normalizedRoot(value, fallback, nullptr, QString());
+}
+
+bool AppSettings::applyExternal(QVariantMap values) {
+    if (!m_externalController) return false;
+    const QVariantMap shortcuts = values.value(QStringLiteral("shortcuts")).toMap();
+    const QVariantMap hints = values.value(QStringLiteral("hints")).toMap();
+    if (shortcuts.size() != std::size(shortcutDefinitions) || hints.size() != shortcuts.size()) return false;
+    QVariantMap normalizedShortcuts;
+    for (const auto &definition : shortcutDefinitions) {
+        const QString key = QString::fromLatin1(definition.name);
+        if (!shortcuts.contains(key) || !hints.contains(key)) return false;
+        QStringList sequences;
+        for (const QVariant &sequence : shortcuts.value(key).toList()) {
+            if (sequence.metaType() != QMetaType::fromType<QString>()) return false;
+            sequences.append(sequence.toString());
+        }
+        normalizedShortcuts.insert(key, sequences);
+    }
+    const QColor good(values.value(QStringLiteral("goodColor")).toString());
+    const QColor bad(values.value(QStringLiteral("badColor")).toString());
+    const QString pictures = values.value(QStringLiteral("picturesRoot")).toString();
+    const QString videos = values.value(QStringLiteral("videosRoot")).toString();
+    if (!good.isValid() || !bad.isValid() || !QDir::isAbsolutePath(pictures) || !QDir::isAbsolutePath(videos)) return false;
+    m_shortcuts = normalizedShortcuts;
+    m_shortcutHints = hints;
+    m_goodColor = good;
+    m_badColor = bad;
+    m_picturesRoot = pictures;
+    m_videosRoot = videos;
+    emit settingsChanged();
+    setError(QString());
+    emit reloaded();
+    return true;
+}
+
+void AppSettings::externalError(const QString &message) {
+    if (!m_externalController) return;
+    setError(message);
+    emit reloadFailed(message);
 }
 
 void AppSettings::attachGlobalHotkey(GlobalHotkey *hotkey) {

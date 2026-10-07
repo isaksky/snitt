@@ -2,13 +2,17 @@
 #include "../../src/appsettings.h"
 #include "../../src/backend.h"
 #include "../../src/editorcanvas.h"
+#include "../../src/globalhotkey.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QPointer>
+#include <QKeySequence>
 #include <QStandardPaths>
 
 namespace {
+QPointer<GlobalHotkey> applicationHotkey;
+
 AppSettings::Paths applicationPaths() {
     // This development entry point must never read production settings or save
     // into the installed application's default picture/video directories.
@@ -25,9 +29,10 @@ class Services final : public QObject {
     Q_PROPERTY(QObject *settings READ settings CONSTANT)
     Q_PROPERTY(QObject *backend READ backend CONSTANT)
     Q_PROPERTY(QObject *trim READ trim CONSTANT)
+    Q_PROPERTY(bool macOS READ macOS CONSTANT)
 public:
     Services() {
-        m_settings = new AppSettings(applicationPaths(), this);
+        m_settings = new AppSettings(applicationPaths(), true, this);
         m_backend = new Backend(m_settings, this);
         // Backend owns a member TrimSession; parent it for the bridge's
         // descendant check, then expose only a borrowed handle to Jolt.
@@ -46,6 +51,13 @@ public:
     QObject *settings() const { return m_settings; }
     QObject *backend() const { return m_backend; }
     QObject *trim() const { return m_backend->trim(); }
+    bool macOS() const {
+#ifdef Q_OS_MACOS
+        return true;
+#else
+        return false;
+#endif
+    }
 
     Q_INVOKABLE bool bindCanvas(QObject *canvas) {
         auto *editor = qobject_cast<EditorCanvas *>(canvas);
@@ -59,10 +71,26 @@ public:
         return gqt_expose_object(m_settings) && gqt_expose_object(m_backend)
             && gqt_expose_object(m_backend->trim());
     }
+    Q_INVOKABLE bool activateGlobalShortcut(const QString &configured) {
+        if (!applicationHotkey) applicationHotkey = new GlobalHotkey(qApp);
+        if (!m_hotkeyConnected) {
+            connect(applicationHotkey, &GlobalHotkey::activated, this, &Services::globalCaptureActivated);
+            m_hotkeyConnected = true;
+        }
+        m_hotkeyError.clear();
+        const QString portable = m_settings->shortcutInfo(configured).value(QStringLiteral("portable")).toString();
+        return applicationHotkey->setShortcut(
+            QKeySequence::fromString(portable, QKeySequence::PortableText), &m_hotkeyError);
+    }
+    Q_INVOKABLE QString hotkeyError() const { return m_hotkeyError; }
+signals:
+    void globalCaptureActivated();
 private:
     AppSettings *m_settings = nullptr;
     Backend *m_backend = nullptr;
     QPointer<EditorCanvas> m_canvas;
+    QString m_hotkeyError;
+    bool m_hotkeyConnected = false;
 };
 
 QObject *canvasFactory() { return new EditorCanvas; }

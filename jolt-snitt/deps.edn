@@ -6,4 +6,5 @@
                 :linux ["../build/jolt-snitt/libsnitt_jolt.so"]}]
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}
  :aliases {:run {:main-opts ["-m" "snitt.app"]}
-           :test {:extra-paths ["test"] :main-opts ["-m" "snitt.app-test"]}}}
+           :test {:extra-paths ["test"] :main-opts ["-m" "snitt.app-test"]}
+           :settings {:extra-paths ["test"] :main-opts ["-m" "snitt.settings-test"]}}}

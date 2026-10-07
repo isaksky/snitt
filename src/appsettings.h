@@ -19,6 +19,8 @@ class AppSettings final : public QObject {
     Q_PROPERTY(QString videosRoot READ videosRoot NOTIFY settingsChanged)
     Q_PROPERTY(QString settingsFile READ settingsFile CONSTANT)
     Q_PROPERTY(QString guideFile READ guideFile CONSTANT)
+    Q_PROPERTY(QString defaultPicturesRoot READ defaultPicturesRoot CONSTANT)
+    Q_PROPERTY(QString defaultVideosRoot READ defaultVideosRoot CONSTANT)
     Q_PROPERTY(QString lastError READ lastError NOTIFY errorChanged)
 public:
     struct Paths {
@@ -30,6 +32,7 @@ public:
 
     explicit AppSettings(QObject *parent = nullptr);
     explicit AppSettings(const Paths &paths, QObject *parent = nullptr);
+    AppSettings(const Paths &paths, bool externalController, QObject *parent = nullptr);
 
     static Paths standardPaths();
     QVariantMap shortcuts() const { return m_shortcuts; }
@@ -40,14 +43,22 @@ public:
     QString videosRoot() const { return m_videosRoot; }
     QString settingsFile() const { return m_paths.settingsFile; }
     QString guideFile() const { return m_paths.guideFile; }
+    QString defaultPicturesRoot() const { return m_paths.defaultPicturesRoot; }
+    QString defaultVideosRoot() const { return m_paths.defaultVideosRoot; }
     QString lastError() const { return m_lastError; }
     bool reloadNow();
     void attachGlobalHotkey(GlobalHotkey *hotkey);
+    Q_INVOKABLE QVariantMap shortcutInfo(const QString &configured) const;
+    Q_INVOKABLE QString standardShortcut(const QString &action) const;
+    Q_INVOKABLE QString cleanRoot(const QString &value, const QString &fallback) const;
+    Q_INVOKABLE bool applyExternal(QVariantMap values);
+    Q_INVOKABLE void externalError(const QString &message);
 signals:
     void settingsChanged();
     void errorChanged();
     void reloadFailed(const QString &message);
     void reloaded();
+    void candidateChanged();
 private:
     struct Candidate {
         // Keep INI modifier names here; publish converts them to Qt semantics.
@@ -85,4 +96,5 @@ private:
     QString m_picturesRoot;
     QString m_videosRoot;
     QString m_lastError;
+    bool m_externalController = false;
 };

@@ -6,7 +6,8 @@
             [jolt.ffi :as ffi]
             [snitt.app :as app]
             [snitt.native :as native]
-            [snitt.sessions :as sessions]))
+            [snitt.sessions :as sessions]
+            [snitt.settings :as settings]))
 
 (ffi/defcfn click-native "gqt_test_click" [:uint64] :int :blocking)
 (ffi/defcfn key-native "gqt_test_key" [:uint64 :int :int] :int :blocking)
@@ -58,6 +59,7 @@
             "Canvas and services share the Qt session")
     (check! (.startsWith (q/read-property settings "settingsFile") directory)
             "Development settings stay in isolated data directory")
+    (check! (some? @settings/published) "Jolt validated and published initial settings")
     (check! (not-any? enabled? ["undo" "redo" "copy" "save" "rect"])
             "Document commands start disabled")
     (check! (not (q/read-property (id "snitt-pointer") "enabled"))
@@ -162,6 +164,18 @@
           (check! (not= backend (get-in second [:services :backend]))
                   "Each editor owns a distinct native backend")
           (check! (q/read-property second-canvas "hasImage") "Second image opens independently")
+          (let [settings-path (q/read-property settings "settingsFile")
+                changed (-> (slurp settings-path)
+                            (str/replace "good=#22c55e" "good=#426ab3")
+                            (str/replace "toolRectangle=R" "toolRectangle=F6"))]
+            (spit settings-path changed)
+            (check! (settings/reload!) "Jolt accepts a live settings change")
+            (check! (= "#ff426ab3" (:value (q/read-property canvas "goodColor")))
+                    "First editor receives live color")
+            (check! (= "#ff426ab3" (:value (q/read-property second-canvas "goodColor")))
+                    "Second editor receives live color")
+            (check! (= ["F6"] (get-in @settings/published [:shortcuts "toolRectangle"]))
+                    "Jolt publishes new shortcut"))
           (native/begin! second-canvas 200 200)
           (native/move! second-canvas 400 400)
           (native/end! second-canvas 400 400)
@@ -217,12 +231,21 @@
           (check! (q/read-property canvas "canRedo") "Surviving editor remains editable")
           (native/redo! canvas)
           (check! (q/read-property canvas "canUndo") "Surviving editor can redo its edit"))
-        (sessions/close! (:manager @app/runtime) 1)
-        (check! (not (q/alive? settings)) "Disposal invalidates settings")
-        (check! (not (q/alive? backend)) "Disposal invalidates backend")
-        (check! (not (q/alive? trim)) "Disposal invalidates trim")
-        (reset! completed? true)
-        (qt/close-window! window))])))
+        (qt/later! 120
+          (fn []
+            (check! (str/includes? (q/read-property (id "rect") "text") "F6")
+                    "Live shortcut hint reaches first editor toolbar")
+            (when-let [icon (:tray @app/runtime)]
+              (when (q/alive? icon)
+                (check! (str/includes? (q/read-property icon "toolTip")
+                                      (get-in @settings/published [:hints "globalCapture"]))
+                        "Tray hint follows the published shortcut")))
+            (sessions/close! (:manager @app/runtime) 1)
+            (check! (not (q/alive? settings)) "Disposal invalidates settings")
+            (check! (not (q/alive? backend)) "Disposal invalidates backend")
+            (check! (not (q/alive? trim)) "Disposal invalidates trim")
+            (reset! completed? true)
+            (qt/close-window! window))))])))
 
 (defn -main [& _]
   (let [image (System/getenv "SNITT_JOLT_IMAGE")]
