@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SNITT_EXTENSION_FIXTURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-extensions.XXXXXX")"
+export SNITT_EXTENSION_FIXTURE_DIR
+trap 'rm -rf "$SNITT_EXTENSION_FIXTURE_DIR"' EXIT HUP INT TERM
+"$ROOT/build-native"
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+mkdir -p "$ROOT/build/extensions"
+cd "$ROOT/build/extensions"
+"$QMAKE" "$ROOT/native/extensions.pro"
+# qmake can retain a same-named generated resource from an older extension
+# project in this build directory even after RESOURCES changes.
+rm -f qrc_resources.cpp qrc_resources.o
+make -j"$("$ROOT/../bin/build-jobs")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+cd "$ROOT"
+"${JOLT:-jolt}" -M:snitt
