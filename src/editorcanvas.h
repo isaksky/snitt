@@ -60,7 +60,7 @@ public:
     int maxTextSize() const;
     void paint(QPainter *painter) override;
     bool arranging() const { return m_arranging; }
-    int regionCount() const { return m_regions.size(); }
+    int regionCount() const { return m_externalArrangement ? m_externalOrder.size() : m_regions.size(); }
     int columns() const { return m_columns; }
     int selectedRegion() const { return m_selectedRegion; }
     void setColumns(int columns);
@@ -69,6 +69,11 @@ public:
     Q_INVOKABLE void annotate();
     Q_INVOKABLE void moveRegion(int from, int to);
     Q_INVOKABLE void removeRegion(int index);
+    // The Jolt editor owns arrangement decisions. This canvas retains only
+    // captured pixels and the last successfully rendered projection.
+    bool loadExternalRegions(const QVariantList &images);
+    Q_INVOKABLE bool applyExternalArrangement(const QString &order, int columns,
+                                             int selected, bool arranging);
     Q_INVOKABLE bool load(const QUrl &url);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
@@ -92,6 +97,9 @@ signals:
     void error(const QString &message);
     void textRequested(qreal x, qreal y);
     void arrangementChanged();
+    void externalRegionsLoaded(int count);
+    void externalRegionSelected(int index);
+    void externalRegionMoved(int from, int to);
 protected:
     void geometryChange(const QRectF &next, const QRectF &previous) override;
 private:
@@ -99,6 +107,8 @@ private:
     QPointF imagePoint(qreal x, qreal y) const;
     void changed();
     bool composeRegions();
+    bool composeRegions(const QList<QImage> &regions, int columns,
+                        QImage *image, QList<QRect> *areas);
     void clearRegions();
     int regionAt(const QPointF &point) const;
     ImageDocument m_document;
@@ -115,9 +125,12 @@ private:
     bool m_dragging = false;
     QPointF m_start, m_end;
     QList<QImage> m_regions;
+    QList<int> m_externalOrder;
+    bool m_externalArrangement = false;
     QList<QRect> m_regionRects;
     int m_columns = 2;
     int m_selectedRegion = -1;
     int m_dropRegion = -1;
+    int m_dragStartRegion = -1;
     bool m_arranging = false;
 };

@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QImageReader>
 #include <QKeySequence>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -167,7 +168,7 @@ public:
             if (m_canvas) m_canvas->load(url);
         });
         connect(m_backend, &Backend::regionsCaptured, this, [this](const QVariantList &images) {
-            if (m_canvas) m_canvas->loadRegions(images);
+            if (m_canvas) m_canvas->loadExternalRegions(images);
         });
     }
 
@@ -188,6 +189,17 @@ public:
         m_canvas = editor;
         connect(editor, &QObject::destroyed, this, [this] { m_canvas = nullptr; });
         return true;
+    }
+
+    Q_INVOKABLE bool loadRegionFilesForTest(const QStringList &paths) {
+        QVariantList images;
+        for (const QString &path : paths) {
+            QImageReader reader(path);
+            const QImage image = reader.read();
+            if (image.isNull()) return false;
+            images.append(image);
+        }
+        return m_canvas && m_canvas->loadExternalRegions(images);
     }
 
     Q_INVOKABLE bool expose() {

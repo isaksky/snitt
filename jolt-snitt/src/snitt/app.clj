@@ -1,5 +1,5 @@
 (ns snitt.app
-  "Jolt-owned editor sessions; each EditorCanvas remains its document owner."
+  "Jolt-owned editor sessions; native canvases retain pixels and annotation history."
   (:require [glimmer.ratom :as r]
             [clojure.string :as str]
             [glimmer-qt.core :as qt]
@@ -8,6 +8,7 @@
             [glimmer-qt.tray :as tray]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
+            [snitt.arrangement :as arrangement]
             [snitt.commands :as commands]
             [snitt.lifecycle :as lifecycle]
             [snitt.native :as native]
@@ -17,7 +18,7 @@
 (defn- initial-state []
   {:tool "rect" :status "Open or paste an image" :error? false
    :document-revision 0 :modal? false :draft nil :draft-content-height 0
-   :canvas-width 800 :canvas-height 500})
+   :canvas-width 800 :canvas-height 500 :arrangement nil})
 
 ;; The first session remains addressable for the development smoke and parity
 ;; tests; every additional editor gets its own atom and independent Glimmer root.
@@ -54,7 +55,9 @@
                                    (str (q/read-property handle "imageWidth") " × "
                                         (q/read-property handle "imageHeight"))
                                    "Open or paste an image")
-                         :error? false))))))
+                         :error? false)
+                  (cond-> (zero? (q/read-property handle "regionCount"))
+                    (assoc :arrangement nil)))))))
 
 (defn- refresh-context! [context]
   (swap! (:state context) update :context-revision (fnil inc 0)))
@@ -150,7 +153,7 @@
 
 (defn- open-url! [context url]
   (if (native/load-url! (canvas context) (value/url url))
-    true
+    (do (swap! (:state context) assoc :arrangement nil) true)
     (do (report! context "Could not open this image. Choose a supported image file and try again." true)
         false)))
 
@@ -170,7 +173,8 @@
         manager (:manager @runtime)
         session (when manager (sessions/session manager (:id context)))
         document (fn [property fallback]
-                   (if handle (q/read-property handle property) fallback))]
+                   (if handle (q/read-property handle property) fallback))
+        layout (:arrangement @(:state context))]
     {:text-draft? (boolean (:draft @(:state context)))
      :modal? (or (:modal? @(:state context))
                  (when-let [chooser (item context "open-file")]
@@ -187,10 +191,35 @@
      :has-image? (document "hasImage" false)
      :can-undo? (document "canUndo" false)
      :can-redo? (document "canRedo" false)
-     :arranging? (document "arranging" false)
-     :columns (document "columns" 1)
-     :region-count (document "regionCount" 0)
-     :selected-region (document "selectedRegion" -1)}))
+     :arranging? (= :arrange (:phase layout))
+     :columns (:columns layout 1)
+     :region-count (count (:order layout))
+     :selected-region (:selected layout -1)}))
+
+(defn- apply-arrangement! [context candidate]
+  (when candidate
+    (let [handle (canvas context)]
+      (when (object/invoke! handle "applyExternalArrangement(QString,int,int,bool)"
+                            [(str/join "," (:order candidate)) (:columns candidate)
+                             (:selected candidate) (= :arrange (:phase candidate))])
+        (swap! (:state context) assoc :arrangement candidate)
+        true))))
+
+(defn- change-arrangement! [context f & args]
+  (apply-arrangement! context (apply f (:arrangement @(:state context)) args)))
+
+(defn- remove-region! [context index]
+  (let [layout (:arrangement @(:state context))]
+    (if (= 1 (count (:order layout)))
+      (when (and (= :arrange (:phase layout)) (= index (:selected layout)))
+        (object/invoke! (canvas context) "clear()" [])
+        (swap! (:state context) assoc :arrangement nil)
+        true)
+      (change-arrangement! context arrangement/remove-region index))))
+
+(defn- return-to-arrangement! [context]
+  (change-arrangement! context arrangement/arrange)
+  (focus-canvas! context))
 
 (defn- run-effect! [context [effect & args]]
   (let [handle (canvas context)
@@ -202,12 +231,18 @@
                        (widget/open-dialog! (item context "open-file")))
       :paste (when (result! context #(object/invoke! % "paste()" []) "Pasted"
                             "The clipboard has no image to paste.")
-               (cancel-text! context))
+               (cancel-text! context)
+               (swap! (:state context) assoc :arrangement nil))
       :capture (apply sessions/capture! manager args)
-      :annotate (object/invoke! handle "annotate()" [])
-      :columns (q/set-property! handle "columns" (first args))
-      :remove-region (object/invoke! handle "removeRegion(int)" (vec args))
-      :move-region (object/invoke! handle "moveRegion(int,int)" (vec args))
+      :annotate (change-arrangement! context arrangement/annotate)
+      :return-arrange (if (or (q/read-property handle "canUndo")
+                              (q/read-property handle "canRedo"))
+                        (do (swap! (:state context) assoc :modal? true)
+                            (widget/open-dialog! (item context "rearrange-dialog")))
+                        (return-to-arrangement! context))
+      :columns (change-arrangement! context arrangement/columns (first args))
+      :remove-region (remove-region! context (first args))
+      :move-region (apply change-arrangement! context arrangement/move args)
       :undo (native/undo! handle)
       :redo (native/redo! handle)
       :finish (do
@@ -250,7 +285,9 @@
   "Paste can replace an unfinished draft; only a successful native paste clears it."
   (let [success? (result! context #(object/invoke! % "paste()" []) "Pasted"
                           "The clipboard has no image to paste.")]
-    (when success? (cancel-text! context))
+    (when success?
+      (cancel-text! context)
+      (swap! (:state context) assoc :arrangement nil))
     success?))
 
 (defn dispatch-global!
@@ -348,6 +385,11 @@
                     :tooltip (str label " (" (hint action) ")")
                     :sensitive (enabled? action) :on-click #(dispatch! context action)}])]
        [:flow {:id "annotation-toolbar" :hexpand true :spacing 8}
+        (when (pos? (:region-count command-state))
+          [:button {:id "return-arrange" :label "Back to Arrange"
+                    :accessible-name "Back to Arrange"
+                    :sensitive (enabled? "returnArrange")
+                    :on-click #(dispatch! context "returnArrange")}])
         [:hbox {:id "annotation-tools" :spacing 2}
          (for [[action name label glyph] annotation-tools]
            [:vbox {:key name :spacing 2 :preferred-width 42}
@@ -420,6 +462,13 @@
                         :arrangement {:signal "arrangementChanged()" :handler #(refresh-context! context)}
                         :size {:signal "sizeChanged()" :handler #(refresh-context! context)}
                         :ink {:signal "inkChanged()" :handler #(refresh-context! context)}
+                        :regions-loaded {:signal "externalRegionsLoaded(int)"
+                                         :handler #(swap! (:state context) assoc
+                                                          :arrangement (arrangement/captured %))}
+                        :region-selected {:signal "externalRegionSelected(int)"
+                                          :handler #(change-arrangement! context arrangement/select %)}
+                        :region-moved {:signal "externalRegionMoved(int,int)"
+                                       :handler #(change-arrangement! context arrangement/move %1 %2)}
                         :text {:signal "textRequested(qreal,qreal)" :handler #(start-text! context %1 %2)}
                         :error {:signal "error(QString)" :handler #(report! context % true)}}}]]
       (when geometry
@@ -459,6 +508,16 @@
                      :on-rejected #(swap! (:state context) assoc :modal? false)
                      :on-visible-change #(when-not (widget/dialog-visible? (item context "open-file"))
                                            (swap! (:state context) assoc :modal? false))}]
+     [:dialog {:id "rearrange-dialog" :title "Return to Arrange?"
+               :on-accepted #(do (swap! (:state context) assoc :modal? false)
+                                 (return-to-arrangement! context))
+               :on-rejected #(swap! (:state context) assoc :modal? false)}
+      [:label {:label "Returning to Arrange will discard your annotations and cuts. Your captured regions will be kept."}]
+      [:hbox {:spacing 8}
+       [:button {:id "keep-editing" :label "Keep editing"
+                 :on-click #(widget/reject-dialog! (item context "rearrange-dialog"))}]
+       [:button {:id "discard-edits" :label "Discard edits"
+                 :on-click #(widget/accept-dialog! (item context "rearrange-dialog"))}]]]
      (for [action commands/editor-actions]
        [:shortcut {:id (str "command-" action) :sequences (binding action)
                    :enabled (enabled? action)

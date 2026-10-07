@@ -22,6 +22,7 @@
     (cond
       (contains? tools action) annotation?
       (#{"goodMode" "badMode"} action) annotation?
+      (= action "returnArrange") (and annotation? (pos? (:region-count s 0)))
       (= action "undo") (and annotation? (:can-undo? s))
       (= action "redo") (and annotation? (:can-redo? s))
       (#{"openImage" "pasteImage"} action)
@@ -32,7 +33,7 @@
           "moveRegionLeft" "moveRegionRight"} action)
       (and arrangement?
            (case action
-             "columnsMore" (< (:columns s 1) (:region-count s 0))
+             "columnsMore" (< (:columns s 1) (min 6 (:region-count s 0)))
              "columnsLess" (> (:columns s 1) 1)
              "removeRegion" (pos? (:region-count s 0))
              "moveRegionLeft" (pos? (:selected-region s -1))
@@ -59,6 +60,7 @@
       (= action "captureMultiple") [[:capture true false]]
       (= action "captureVideo") [[:capture false true]]
       (= action "arrange") [[:annotate]]
+      (= action "returnArrange") [[:return-arrange]]
       (= action "columnsMore") [[:columns (inc (:columns s))]]
       (= action "columnsLess") [[:columns (dec (:columns s))]]
       (= action "removeRegion") [[:remove-region (:selected-region s)]]

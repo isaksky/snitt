@@ -1,6 +1,7 @@
 (ns snitt.commands-test
   (:require [clojure.test :refer [deftest is testing run-tests]]
-            [snitt.commands :as commands]))
+            [snitt.commands :as commands]
+            [snitt.arrangement :as arrangement]))
 
 (def ready {:has-image? true :can-undo? true :can-redo? true
             :session-manager? true :columns 2 :region-count 3
@@ -32,11 +33,31 @@
     (is (= [[:paste]] (commands/decide arranging "pasteImage")))
     (is (nil? (commands/decide (assoc arranging :selected-region 0) "moveRegionLeft")))
     (is (nil? (commands/decide (assoc arranging :columns 3) "columnsMore"))))
+  (is (nil? (commands/decide (assoc ready :arranging? true :columns 6 :region-count 7)
+                             "columnsMore")))
   (is (nil? (commands/decide (assoc ready :can-undo? false) "undo")))
   (is (nil? (commands/decide (assoc ready :can-redo? false) "redo")))
+  (is (= [[:return-arrange]] (commands/decide ready "returnArrange")))
   (is (= [[:open-dialog]] (commands/decide {} "openImage")))
   (is (nil? (commands/decide {:has-image? true} "capture")))
   (is (false? (commands/enabled? ready "unknown"))))
+
+(deftest arrangement-model
+  (let [captured (arrangement/captured 3)
+        moved (arrangement/move captured 0 2)]
+    (is (= [0 1 2] (:order captured)))
+    (is (= [1 2 0] (:order moved)))
+    (is (= 2 (:selected moved)))
+    (is (= 3 (:columns (arrangement/columns captured 10))))
+    (is (= 1 (:columns (arrangement/columns captured -2))))
+    (is (nil? (arrangement/move captured -1 1)))
+    (is (nil? (arrangement/select captured 3)))
+    (is (= [1 2] (:order (arrangement/remove-region captured 0))))
+    (is (= :annotate (:phase (arrangement/annotate captured))))
+    (is (nil? (arrangement/move (arrangement/annotate captured) 0 1)))
+    (is (= captured (arrangement/arrange (arrangement/annotate captured)))))
+  (is (nil? (arrangement/captured 25)))
+  (is (nil? (arrangement/captured 0))))
 
 (deftest review-context
   (let [review {:review? true :review-can-edit? true}]

@@ -92,6 +92,7 @@ private slots:
     void captureToolbarInteraction();
     void settingsRegionToolbarHintsLive();
     void gridArrangementPreservesPixels();
+    void externalArrangementCommitsAtomically();
     void desktopMultipleCapture();
     void windowsHotkeyRegistration();
     void windowsDesktopCapture();
@@ -2797,6 +2798,70 @@ void EditorTests::gridArrangementPreservesPixels() {
     QVERIFY(!canvas.hasImage());
     QVERIFY(!canvas.arranging());
     QCOMPARE(canvas.regionCount(), 0);
+}
+
+void EditorTests::externalArrangementCommitsAtomically() {
+    QImage red(80, 60, QImage::Format_RGB32); red.fill(Qt::red);
+    QImage green(32, 90, QImage::Format_RGB32); green.fill(Qt::green);
+    QImage blue(50, 20, QImage::Format_RGB32); blue.fill(Qt::blue);
+    EditorCanvas canvas;
+    QVERIFY(canvas.loadExternalRegions({red, green, blue}));
+    QCOMPARE(canvas.regionCount(), 3);
+    QCOMPARE(canvas.columns(), 2);
+    QVERIFY(canvas.copy());
+    QImage initial = QGuiApplication::clipboard()->image();
+    QCOMPARE(initial.size(), QSize(184, 182));
+    QCOMPARE(initial.pixelColor(24, 24), QColor(Qt::red));
+    QCOMPARE(initial.pixelColor(128, 24), QColor(Qt::green));
+    QCOMPARE(initial.pixelColor(24, 138), QColor(Qt::blue));
+    QCOMPARE(initial.pixelColor(0, 0), QColor("#f5f7fa"));
+
+    // The native canvas cannot independently change Jolt-owned decisions.
+    canvas.setColumns(1); canvas.moveRegion(0, 2); canvas.removeRegion(1);
+    canvas.annotate(); canvas.arrange();
+    QCOMPARE(canvas.columns(), 2);
+    QCOMPARE(canvas.regionCount(), 3);
+    QVERIFY(canvas.arranging());
+    QVERIFY(canvas.applyExternalArrangement("1,0,2", 2, 1, true));
+    QVERIFY(canvas.copy());
+    const QImage reordered = QGuiApplication::clipboard()->image();
+    QCOMPARE(reordered.pixelColor(24, 24), QColor(Qt::green));
+    QCOMPARE(reordered.pixelColor(98, 24), QColor(Qt::red));
+    QCOMPARE(reordered.pixelColor(24, 138), QColor(Qt::blue));
+    QVERIFY(!canvas.applyExternalArrangement("1,1,2", 2, 0, true));
+    QVERIFY(!canvas.applyExternalArrangement("1,0,2", 7, 0, true));
+    QVERIFY(!canvas.applyExternalArrangement("1,0,2", 2, 3, true));
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), reordered);
+    QCOMPARE(canvas.selectedRegion(), 1);
+
+    QVERIFY(canvas.applyExternalArrangement("1,0,2", 2, 1, false));
+    canvas.addText(24, 24, 100, 40, "Edit");
+    QVERIFY(canvas.canUndo());
+    QVERIFY(canvas.copy());
+    const QImage edited = QGuiApplication::clipboard()->image();
+    QVariantList tooMany;
+    for (int i = 0; i < 25; ++i) tooMany.append(red);
+    QVERIFY(!canvas.loadExternalRegions(tooMany));
+    QVERIFY(!canvas.loadExternalRegions({QImage(32769, 1, QImage::Format_RGB32)}));
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), edited);
+    QVERIFY(canvas.canUndo());
+    QVERIFY(canvas.applyExternalArrangement("1,0,2", 2, 1, true));
+    QVERIFY(!canvas.canUndo());
+    QVERIFY(canvas.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), reordered);
+
+    QImage wide(11000, 1, QImage::Format_RGB32); wide.fill(Qt::red);
+    EditorCanvas large;
+    QVERIFY(large.loadExternalRegions({wide, wide, wide}));
+    QVERIFY(large.copy());
+    const QImage before = QGuiApplication::clipboard()->image();
+    QVERIFY(!large.applyExternalArrangement("0,1,2", 3, 2, true));
+    QCOMPARE(large.columns(), 2);
+    QCOMPARE(large.selectedRegion(), 0);
+    QVERIFY(large.copy());
+    QCOMPARE(QGuiApplication::clipboard()->image(), before);
 }
 
 void EditorTests::regionSelectionScalesAndCancels() {

@@ -247,8 +247,10 @@ void EditorCanvas::begin(qreal x, qreal y) {
     if (!hasImage() || !imageRect().contains(x, y)) return;
     m_start = m_end = imagePoint(x, y);
     if (m_arranging) {
-        m_selectedRegion = m_dropRegion = regionAt(m_start);
-        m_dragging = m_selectedRegion >= 0;
+        m_dragStartRegion = m_dropRegion = regionAt(m_start);
+        if (m_externalArrangement) emit externalRegionSelected(m_dropRegion);
+        else m_selectedRegion = m_dropRegion;
+        m_dragging = m_dropRegion >= 0;
         emit arrangementChanged(); update(); return;
     }
     if (m_tool == "text") {
@@ -271,8 +273,10 @@ void EditorCanvas::end(qreal x, qreal y) {
     move(x, y);
     m_dragging = false;
     if (m_arranging) {
-        if ((m_end - m_start).manhattanLength() * imageScale() >= 4)
-            moveRegion(m_selectedRegion, m_dropRegion);
+        if ((m_end - m_start).manhattanLength() * imageScale() >= 4) {
+            if (m_externalArrangement) emit externalRegionMoved(m_dragStartRegion, m_dropRegion);
+            else moveRegion(m_selectedRegion, m_dropRegion);
+        }
         update(); return;
     }
     if (m_tool == "cut") {
@@ -303,7 +307,8 @@ void EditorCanvas::addText(qreal x, qreal y, qreal width, qreal height, const QS
 
 void EditorCanvas::clearRegions() {
     m_regions.clear(); m_regionRects.clear();
-    m_arranging = false; m_selectedRegion = -1; m_dropRegion = -1; m_columns = 2;
+    m_externalOrder.clear(); m_externalArrangement = false;
+    m_arranging = false; m_selectedRegion = -1; m_dropRegion = -1; m_dragStartRegion = -1; m_columns = 2;
     emit arrangementChanged();
 }
 
@@ -314,13 +319,24 @@ int EditorCanvas::regionAt(const QPointF &point) const {
 }
 
 bool EditorCanvas::composeRegions() {
-    if (m_regions.isEmpty()) return false;
-    const int cols = qMin(m_columns, int(m_regions.size()));
-    const int rows = (m_regions.size() + cols - 1) / cols;
+    QImage image;
+    QList<QRect> areas;
+    if (!composeRegions(m_regions, m_columns, &image, &areas)) return false;
+    m_regionRects = areas;
+    m_document.reset(image);
+    changed(); emit arrangementChanged();
+    return true;
+}
+
+bool EditorCanvas::composeRegions(const QList<QImage> &regions, int columns,
+                                  QImage *result, QList<QRect> *areas) {
+    if (regions.isEmpty()) return false;
+    const int cols = qMin(columns, int(regions.size()));
+    const int rows = (regions.size() + cols - 1) / cols;
     QList<int> widths(cols, 0), heights(rows, 0);
-    for (int i = 0; i < m_regions.size(); ++i) {
-        widths[i % cols] = qMax(widths[i % cols], m_regions[i].width());
-        heights[i / cols] = qMax(heights[i / cols], m_regions[i].height());
+    for (int i = 0; i < regions.size(); ++i) {
+        widths[i % cols] = qMax(widths[i % cols], regions[i].width());
+        heights[i / cols] = qMax(heights[i / cols], regions[i].height());
     }
     constexpr int gap = 24;
     qint64 width = gap, height = gap;
@@ -333,24 +349,97 @@ bool EditorCanvas::composeRegions() {
     QImage image(int(width), int(height), QImage::Format_ARGB32_Premultiplied);
     if (image.isNull()) { emit error(QStringLiteral("Not enough memory for this layout.")); return false; }
     image.fill(QColor("#f5f7fa"));
-    QList<QRect> areas;
+    areas->clear();
     QPainter painter(&image);
     int y = gap;
     for (int row = 0; row < rows; ++row) {
         int x = gap;
         for (int col = 0; col < cols; ++col) {
             const int i = row * cols + col;
-            if (i >= m_regions.size()) break;
-            areas.append(QRect(QPoint(x, y), m_regions[i].size()));
-            painter.drawImage(x, y, m_regions[i]);
+            if (i >= regions.size()) break;
+            areas->append(QRect(QPoint(x, y), regions[i].size()));
+            painter.drawImage(x, y, regions[i]);
             x += widths[col] + gap;
         }
         y += heights[row] + gap;
     }
     painter.end();
+    *result = image;
+    return true;
+}
+
+bool EditorCanvas::loadExternalRegions(const QVariantList &images) {
+    if (images.isEmpty() || images.size() > 24) return false;
+    QList<QImage> regions;
+    qint64 bytes = 0;
+    for (const auto &value : images) {
+        QImage image = qvariant_cast<QImage>(value);
+        if (image.isNull()) return false;
+        image.setDevicePixelRatio(1);
+        bytes += image.sizeInBytes();
+        if (bytes > 256 * 1024 * 1024) {
+            emit error(QStringLiteral("Too many captured pixels. Select smaller regions."));
+            return false;
+        }
+        regions.append(image);
+    }
+    QImage composed;
+    QList<QRect> areas;
+    if (!composeRegions(regions, 2, &composed, &areas)) return false;
+    m_regions = regions;
+    m_externalOrder.clear();
+    for (int i = 0; i < regions.size(); ++i) m_externalOrder.append(i);
+    m_externalArrangement = true;
     m_regionRects = areas;
-    m_document.reset(image);
+    m_columns = 2;
+    m_selectedRegion = 0;
+    m_dropRegion = -1;
+    m_dragStartRegion = -1;
+    m_arranging = true;
+    m_document.reset(composed);
     changed(); emit arrangementChanged();
+    emit externalRegionsLoaded(regions.size());
+    return true;
+}
+
+bool EditorCanvas::applyExternalArrangement(const QString &order, int columns,
+                                             int selected, bool arranging) {
+    if (!m_externalArrangement) return false;
+    const QStringList parts = order.split(QLatin1Char(','));
+    if (parts.isEmpty() || parts.size() > m_regions.size()
+        || columns < 1 || columns > qMin(6, parts.size())
+        || selected < 0 || selected >= parts.size()) return false;
+    QList<int> indices;
+    for (const QString &part : parts) {
+        bool ok = false;
+        const int index = part.toInt(&ok);
+        if (!ok || index < 0 || index >= m_regions.size() || indices.contains(index)) return false;
+        indices.append(index);
+    }
+    if (indices == m_externalOrder && columns == m_columns && arranging == m_arranging) {
+        if (selected != m_selectedRegion) {
+            m_selectedRegion = selected;
+            emit arrangementChanged(); update();
+        }
+        return true;
+    }
+    if (arranging) {
+        QList<QImage> ordered;
+        for (int index : indices) ordered.append(m_regions[index]);
+        QImage composed;
+        QList<QRect> areas;
+        if (!composeRegions(ordered, columns, &composed, &areas)) return false;
+        m_regionRects = areas;
+        m_document.reset(composed);
+        changed();
+    }
+    m_externalOrder = indices;
+    m_columns = columns;
+    m_selectedRegion = selected;
+    m_dropRegion = -1;
+    m_dragStartRegion = -1;
+    m_arranging = arranging;
+    emit arrangementChanged(); update();
     return true;
 }
 
@@ -370,12 +459,14 @@ bool EditorCanvas::loadRegions(const QVariantList &images) {
     const int previousColumns = m_columns;
     m_regions = regions; m_columns = 2;
     if (!composeRegions()) { m_regions = previous; m_columns = previousColumns; return false; }
+    m_externalArrangement = false; m_externalOrder.clear();
     m_arranging = true; m_selectedRegion = 0;
     emit arrangementChanged(); update();
     return true;
 }
 
 void EditorCanvas::setColumns(int columns) {
+    if (m_externalArrangement) return;
     columns = qBound(1, columns, qMax(1, qMin(6, int(m_regions.size()))));
     if (!m_arranging || columns == m_columns) return;
     const int previous = m_columns;
@@ -384,6 +475,7 @@ void EditorCanvas::setColumns(int columns) {
 }
 
 void EditorCanvas::moveRegion(int from, int to) {
+    if (m_externalArrangement) return;
     if (!m_arranging || from < 0 || to < 0 || from >= m_regions.size() || to >= m_regions.size() || from == to) return;
     m_regions.move(from, to);
     if (!composeRegions()) { m_regions.move(to, from); return; }
@@ -391,6 +483,7 @@ void EditorCanvas::moveRegion(int from, int to) {
 }
 
 void EditorCanvas::removeRegion(int index) {
+    if (m_externalArrangement) return;
     if (!m_arranging || index < 0 || index >= m_regions.size()) return;
     const auto previous = m_regions;
     m_regions.removeAt(index);
@@ -401,10 +494,12 @@ void EditorCanvas::removeRegion(int index) {
 }
 
 void EditorCanvas::arrange() {
+    if (m_externalArrangement) return;
     if (m_regions.isEmpty() || !composeRegions()) return;
     m_arranging = true; emit arrangementChanged(); update();
 }
 
 void EditorCanvas::annotate() {
+    if (m_externalArrangement) return;
     cancel(); m_arranging = false; emit arrangementChanged(); update();
 }
