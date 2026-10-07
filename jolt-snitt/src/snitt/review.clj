@@ -6,7 +6,8 @@
             [glimmer-qt.ffi :as q]
             [glimmer-qt.media :as media]
             [glimmer-qt.object :as object]
-            [glimmer-qt.value :as value]))
+            [glimmer-qt.value :as value]
+            [snitt.settings :as settings]))
 
 (defn clamp [low high n] (max low (min high n)))
 (defn minimum-range [duration] (min 0.1 duration))
@@ -169,7 +170,9 @@
   (let [{:keys [duration start end playhead playing priming preparing error
                 busy problem progress thumbnails]} @(:state owner)
         editable (editable? @(:state owner) busy)
-        thumbs thumbnails]
+        thumbs thumbnails
+        {:keys [shortcuts hints]} @settings/published
+        play-hint (get hints "reviewPlayPause" "")]
     [:vbox {:id "review-root" :hexpand true :vexpand true :padding 24 :spacing 12}
      [:label {:label "Review recording" :font-size 24 :font-weight 600}]
      [:label {:label "Drag the white handle to seek, or the blue handles to trim."
@@ -181,7 +184,9 @@
      [:hbox {:hexpand true}
       [:spacer {:hexpand true}]
       [:button {:id "review-play" :label (if priming "Loading…" (if playing "Pause" "Play"))
-                :sensitive editable :on-click #(command! owner :play-pause)}]
+                :sensitive editable
+                :tooltip (str "Play or pause" (when (seq play-hint) (str " (" play-hint ")")))
+                :on-click #(command! owner :play-pause)}]
       [:spacer {:hexpand true}]]
      [:hbox {:id "review-filmstrip" :hexpand true :preferred-height 58 :spacing 0}
       (for [i (range 12)] (thumbnail (nth thumbs i nil) i))]
@@ -220,17 +225,17 @@
       [:button {:id "review-save" :label (if (trimmed? @(:state owner)) "Save trim" "Keep original")
                 :sensitive (if (trimmed? @(:state owner)) editable (not (or busy preparing)))
                 :on-click #(command! owner (if (trimmed? @(:state owner)) :export :keep))}]]
-     (for [[id keys action args] [["review-space" ["Space"] :play-pause []]
-                                   ["review-left" ["Left"] :seek [-1]]
-                                   ["review-right" ["Right"] :seek [1]]
-                                   ["review-shift-left" ["Shift+Left"] :seek [-5]]
-                                   ["review-shift-right" ["Shift+Right"] :seek [5]]
-                                   ["review-mark-start" ["I"] :mark-start []]
-                                   ["review-mark-end" ["O"] :mark-end []]
-                                   ["review-escape" ["Escape"] :cancel []]]]
-       [:shortcut {:key id :id id :sequences keys
-                   :enabled (if (= action :cancel) true editable)
-                   :on-activate #(apply command! owner action args)}])]))
+     (for [[action id command args] [["reviewPlayPause" "review-space" :play-pause []]
+                                     ["reviewSeekBackward" "review-left" :seek [-1]]
+                                     ["reviewSeekForward" "review-right" :seek [1]]
+                                     ["reviewSeekBackwardFar" "review-shift-left" :seek [-5]]
+                                     ["reviewSeekForwardFar" "review-shift-right" :seek [5]]
+                                     ["reviewMarkStart" "review-mark-start" :mark-start []]
+                                     ["reviewMarkEnd" "review-mark-end" :mark-end []]
+                                     ["reviewCancel" "review-escape" :cancel []]]]
+       [:shortcut {:key id :id id :sequences (get shortcuts action [])
+                   :enabled (if (= command :cancel) true editable)
+                   :on-activate #(apply command! owner command args)}])]))
 
 (defn- refresh-trim! [owner]
   (when-not @(:closed owner)

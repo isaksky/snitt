@@ -8,7 +8,7 @@ export DYLD_FRAMEWORK_PATH="$("$QMAKE" -query QT_INSTALL_LIBS):$BREW_LIB${DYLD_F
 export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
 export QT_PLUGIN_PATH="$ROOT/../build/tools/mac-multimedia-runtime/stage/Contents/PlugIns"
 test -f "$QT_PLUGIN_PATH/multimedia/libffmpegmediaplugin.dylib"
-export QT_MEDIA_BACKEND=ffmpeg QT_QPA_PLATFORM=cocoa JOLT_AOT_CACHE=0
+export QT_MEDIA_BACKEND=ffmpeg QT_QPA_PLATFORM=cocoa JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt-review.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT HUP INT TERM
 export SNITT_JOLT_DATA_DIR="$TEST_DIR/data"
@@ -24,14 +24,14 @@ cp "$TEST_DIR/regular.mp4" "$TEST_DIR/cancel-active.mp4"
 ORIGINAL_HASH="$(shasum -a 256 "$TEST_DIR/cancel-active.mp4" | cut -d ' ' -f 1)"
 cd "$ROOT"
 run_review() {
-  if ! "${JOLT:-jolt}" -M:review "$TEST_DIR/$1.mp4" "$TEST_DIR/missing.mp4" \
+  if ! SNITT_REVIEW_SHORTCUTS="${2:-0}" "${JOLT:-jolt}" -M:review "$TEST_DIR/$1.mp4" "$TEST_DIR/missing.mp4" \
        >"$TEST_DIR/$1.log" 2>&1; then
     tail -n 45 "$TEST_DIR/$1.log" >&2
     exit 1
   fi
   rg '^PASS:' "$TEST_DIR/$1.log"
 }
-run_review regular
+run_review regular 1
 run_review short
 run_review static
 SNITT_REVIEW_EXPORT=1 run_review export

@@ -1,5 +1,6 @@
 (ns snitt.review-test
   (:require [snitt.trim :as trim]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is run-tests]]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
@@ -9,7 +10,8 @@
             [glimmer-qt.widget :as widget]
             [jolt.ffi :as ffi]
             [snitt.native :as native]
-            [snitt.review :as review]))
+            [snitt.review :as review]
+            [snitt.settings :as settings]))
 
 (ffi/defcfn click-native "gqt_test_click" [:uint64] :int :blocking)
 (ffi/defcfn key-native "gqt_test_key" [:uint64 :int :int] :int :blocking)
@@ -46,6 +48,61 @@
     #(cond (predicate) (action)
            (zero? attempts) (throw (ex-info (str "Timed out: " label) {}))
            :else (wait-for! label predicate action (dec attempts)))))
+
+(defn check-live-shortcuts! [owner window service continue]
+  (if (not= "1" (System/getenv "SNITT_REVIEW_SHORTCUTS"))
+    (continue)
+    (let [path (q/read-property (:settings service) "settingsFile")
+          source (slurp path)
+          changed (-> source
+                      (str/replace "reviewPlayPause=Space" "reviewPlayPause=F6|F7")
+                      (str/replace "reviewMarkStart=Ctrl+Space" "reviewMarkStart=F8")
+                      (str/replace "reviewMarkEnd=Alt+Space" "reviewMarkEnd=F9"))]
+      (check! (not= source changed) "Review fixture changes configured keys")
+      (check! (= (get-in @settings/published [:shortcuts "reviewMarkStart"])
+                 (q/read-property (qt/find-by-id window "review-mark-start") "sequences"))
+              "Default mark shortcut reaches review window")
+      (spit path changed)
+      (check! (settings/reload!) "Review shortcuts reload from settings")
+      (qt/later! 120
+        (fn []
+          (check! (= ["F6" "F7"]
+                     (q/read-property (qt/find-by-id window "review-space") "sequences"))
+                  "Live review shortcuts include alternatives")
+          (check! (= 1 (key-native window 32 0)) "Former Space shortcut input")
+          (check! (not (:playing @(:state owner))) "Old review shortcut was removed")
+          (check! (= 1 (key-native window 16777269 0)) "Configured F6 input")
+          (check! (:playing @(:state owner)) "Configured review shortcut plays")
+          (check! (= 1 (key-native window 16777270 0)) "Alternate F7 input")
+          (check! (not (:playing @(:state owner))) "Alternate review shortcut pauses")
+          (review/seek! owner 0.3)
+          (check! (= 1 (key-native window 16777271 0)) "Configured F8 mark start")
+          (check! (< (abs (- 0.3 (:start @(:state owner)))) 0.01)
+                  "Configured start mark updates trim")
+          (review/seek! owner 0.6)
+          (check! (= 1 (key-native window 16777272 0)) "Configured F9 mark end")
+          (check! (< (abs (- 0.6 (:end @(:state owner)))) 0.01)
+                  "Configured end mark updates trim")
+          (spit path (str/replace changed "reviewPlayPause=F6|F7" "reviewPlayPause="))
+          (check! (settings/reload!) "Optional review shortcut can be disabled")
+          (qt/later! 120
+            (fn []
+              (check! (empty?
+                       (q/read-property (qt/find-by-id window "review-space") "sequences"))
+                      "Disabled review shortcut has no keys")
+              (check! (= 1 (key-native window 16777269 0)) "Former F6 input after disable")
+              (check! (not (:playing @(:state owner))) "Disabled review shortcut does not act")
+              (spit path source)
+              (check! (settings/reload!) "Default review shortcuts restore")
+              (qt/later! 120
+                (fn []
+                  (check! (= ["Space"]
+                         (q/read-property (qt/find-by-id window "review-space") "sequences"))
+                          "Reload removes obsolete review alternatives")
+                  (review/handle! owner :start 0)
+                  (review/handle! owner :end (:duration @(:state owner)))
+                  (review/seek! owner 0)
+                  (continue))))))))))
 
 (defn check-load-failure! [owner trim video clip missing]
   (wait-for! "filmstrip thumbnail"
@@ -92,7 +149,8 @@
 
 (defn exercise! [clip missing]
   (native/install!)
-  (let [services (native/create-services!)
+  (settings/configure!)
+  (let [services (settings/register! (native/create-services!))
         root (:root services)
         trim (:trim services)
         owner-ref (atom nil)]
@@ -118,6 +176,8 @@
                      (when-let [path (System/getenv "SNITT_REVIEW_SCREENSHOT")]
                        (check! (q/save-window @widget/session path)
                                "Review screenshot saved"))
+                     (check-live-shortcuts! owner window services
+                      (fn []
                      (let [start (qt/find-by-id window "review-start")
                            end (qt/find-by-id window "review-end")
                            seek (qt/find-by-id window "review-seek")]
@@ -160,7 +220,7 @@
                                (check! (= clip (trim/property trim "path"))
                                        "Cancellation retains original media")
                                (finish-after-cancel! owner trim video clip missing))
-                            100)) 120)) 100)) 100)) 120))))
+                            100)) 120)))) 100)) 100)) 120))))
 
 (defn -main [& [clip missing]]
   (let [{:keys [fail error]} (run-tests 'snitt.review-test)]
@@ -174,4 +234,4 @@
       (check! (zero? (widget/live-count)) "Review widgets released")
       (check! (zero? (q/owned-count)) "Review native handles released")
       (println "PASS: Jolt review playback, input, trim and cancellation")
-      (finally (shutdown-agents)))))
+      (finally (settings/clear!) (shutdown-agents)))))
