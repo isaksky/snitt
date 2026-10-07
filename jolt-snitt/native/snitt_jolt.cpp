@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QPointer>
 #include <QStandardPaths>
 
 namespace {
@@ -31,11 +32,28 @@ public:
         // Backend owns a member TrimSession; parent it for the bridge's
         // descendant check, then expose only a borrowed handle to Jolt.
         m_backend->trim()->setParent(m_backend);
+        // Backend removes its temporary capture file immediately after emitting
+        // captured. Copy it into this session's document on the native stack;
+        // Jolt's queued signal delivery is intentionally too late for the file.
+        connect(m_backend, &Backend::captured, this, [this](const QUrl &url) {
+            if (m_canvas) m_canvas->load(url);
+        });
+        connect(m_backend, &Backend::regionsCaptured, this, [this](const QVariantList &images) {
+            if (m_canvas) m_canvas->loadRegions(images);
+        });
     }
 
     QObject *settings() const { return m_settings; }
     QObject *backend() const { return m_backend; }
     QObject *trim() const { return m_backend->trim(); }
+
+    Q_INVOKABLE bool bindCanvas(QObject *canvas) {
+        auto *editor = qobject_cast<EditorCanvas *>(canvas);
+        if (!editor || m_canvas) return false;
+        m_canvas = editor;
+        connect(editor, &QObject::destroyed, this, [this] { m_canvas = nullptr; });
+        return true;
+    }
 
     Q_INVOKABLE bool expose() {
         return gqt_expose_object(m_settings) && gqt_expose_object(m_backend)
@@ -44,6 +62,7 @@ public:
 private:
     AppSettings *m_settings = nullptr;
     Backend *m_backend = nullptr;
+    QPointer<EditorCanvas> m_canvas;
 };
 
 QObject *canvasFactory() { return new EditorCanvas; }

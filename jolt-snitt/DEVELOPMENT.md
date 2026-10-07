@@ -22,11 +22,15 @@ unchanged.
 `snitt-jolt.services` with the generic Glimmer factory seam on the Qt thread.
 The native library links the existing `EditorCanvas`, `AppSettings`, `Backend`,
 and their C++ dependencies against the same shared `glimmer_qt` and Qt runtime.
-`snitt.app` owns the window, toolbar, pointer commands, and one retained services
-root. `snitt.native/create-services!` returns that owned root plus borrowed
-settings, backend, and trim handles; `widget/dispose!` on the root invalidates all
-borrowed handles. On session close, Glimmer also destroys any retained root.
-Canvas mount/unmount owns its native document. Application namespaces call
+`snitt.app` owns each editor's Glimmer root, toolbar, pointer commands, and
+reactive state. `snitt.sessions` owns session identity, active-window selection,
+capture admission, visibility snapshots, and teardown. Each session has its own
+retained native services root and canvas. `snitt.native/create-services!` returns
+that owned root plus borrowed settings, backend, and trim handles; disposing the
+root invalidates all borrowed handles. The native adapter loads temporary capture
+files into the session's canvas before the backend removes them, while Jolt owns
+the decision to show or close that editor. Canvas mount/unmount owns its native
+document. Application namespaces call
 `snitt.native` methods and `glimmer-qt.object` with explicit Qt signatures;
 image pixels and undo history stay in `EditorCanvas`, never in reactive state.
 
