@@ -11,11 +11,103 @@
 (ffi/defcfn register-fixture "gqt_register_window_fixture" [] :int)
 (ffi/defcfn click "gqt_test_click" [:uint64] :int :blocking)
 (ffi/defcfn space "gqt_test_space" [:uint64] :int :blocking)
+(ffi/defcfn top-window-at "gqt_test_top_window_at" [:int :int] :uint64)
 (w/register! :test/widget {:source "native:test.widget"})
 
 (defn steps! [steps]
   (when-let [step (first steps)]
     (qt/later! 100 #(do (step) (steps! (rest steps))))))
+
+(defn overlay-windows! []
+  (let [left {:id 11 :geometry [-1920 -200 1920 1080]
+              :available [-1920 -200 1920 1040] :device-pixel-ratio 2.0}
+        right {:id 12 :geometry [0 0 2560 1440]
+               :available [0 24 2560 1376] :device-pixel-ratio 1.25}
+        snapshot [left right]
+        outline (atom nil) controls (atom nil) ordinary (atom nil)
+        control-clicks (atom 0) finished (atom false)]
+    (check! (= left (qt/screen-containing snapshot -1 -200)) "Negative-origin screen selection")
+    (check! (= right (qt/screen-containing snapshot 0 0)) "Adjacent monitor boundary")
+    (check! (nil? (qt/screen-containing snapshot -1921 0)) "Outside all monitors")
+    (check! (= right (qt/screen-containing [right] 100 100)) "Monitor removal refreshes selection")
+    (check! (= [0 24 2560 1376] (:available right)) "Available area excludes desktop reservation")
+    (check! (= [2.0 1.25] (mapv :device-pixel-ratio snapshot)) "Mixed DPR remains explicit")
+    (qt/run-application!
+     (fn []
+       (let [screen (first (qt/screens))
+             [x y] (:available screen)]
+         (check! (and (:id screen) (pos? (:device-pixel-ratio screen))) "Live monitor data")
+         (reset! controls (qt/open-window! (fn [] [:button {:id "record-control" :label "Stop"
+                                                          :on-click #(swap! control-clicks inc)}])
+                                          :screen screen :x x :y y :width 190 :height 90
+                                          :tool true :frameless true :topmost true
+                                          :transparent-background true :opacity 0.8))
+         (reset! outline (qt/open-window! (fn [] [:rectangle {:color "transparent"}])
+                                         :visible false :screen screen :x x :y y
+                                         :width 180 :height 80 :tool true :frameless true
+                                         :topmost true :input-transparent true
+                                         :transparent-background true :opacity 0.5))
+         (reset! ordinary (qt/open-window! (fn [] [:label {:label "ordinary"}])
+                                          :screen screen :x x :y y :width 190 :height 90))
+         (check! (= x (q/read-property @outline "x")) "Logical desktop x placement")
+         (check! (= y (q/read-property @outline "y")) "Logical desktop y placement")
+         (check! (= 0.5 (q/read-property @outline "opacity")) "Window opacity")
+         (let [flags (:value (q/read-property @outline "flags"))]
+           (check! (some #{"WindowTransparentForInput"} flags) "Outline passes input through")
+           (check! (some #{"WindowDoesNotAcceptFocus"} flags) "Outline refuses focus")
+           (check! (some #{"WindowStaysOnTopHint"} flags) "Outline stays on top"))
+         (let [flags (:value (q/read-property @controls "flags"))]
+           (check! (not (some #{"WindowTransparentForInput"} flags)) "Recording controls accept input")
+           (check! (some #{"WindowStaysOnTopHint"} flags) "Recording controls stay on top"))
+         (qt/style-window! @outline {:tool true :frameless true :topmost true
+                                     :input-transparent true :transparent-background true
+                                     :opacity 0.6})
+         (check! (= 0.6 (q/read-property @outline "opacity")) "Live overlay style update")
+         (throws! #(qt/style-window! @outline {:topmost :yes}) #"Invalid Qt window style")
+         (check! (not= (:id screen) 0) "Monitor has a stable session identity")
+         (check! (try (qt/place-window! @outline 999999 x y 180 80) false
+                      (catch Throwable e (boolean (re-find #"disconnected" (ex-message e)))))
+                 "Disconnected monitor rejects placement")
+         (let [seen (atom false)]
+           (qt/with-native-window! @outline
+             (fn [pointer] (reset! seen (not (ffi/null? pointer))) true))
+           (check! @seen "Native platform window exists before hook")
+           (throws! #(qt/with-native-window! @outline (fn [_] false)) #"hook failed")
+           (throws! #(qt/with-native-window! @outline
+                       (fn [_] (throw (ex-info "exclusion failed" {})))) #"exclusion failed"))
+         (qt/show! @outline)
+         (qt/activate! @controls)
+         (steps!
+          [(fn []
+             (when (= "cocoa" (System/getenv "QT_QPA_PLATFORM"))
+               (qt/hide! @outline)
+               (check! (= @controls (top-window-at (+ x 95) (+ y 45)))
+                       "Desktop: topmost controls stack above ordinary window")
+               (qt/show! @outline)
+               (check! (true? (q/read-property @controls "active"))
+                       "Desktop: controls can take focus with outline visible")
+               (check! (false? (q/read-property @outline "active"))
+                       "Desktop: input-transparent outline does not take focus"))
+             (click (qt/find-by-id @controls "record-control"))
+             (check! (= 1 @control-clicks) "Recording controls remain interactive")
+             (qt/style-window! @controls {:tool true :frameless true :topmost true
+                                          :transparent-background true :opacity 0.9})
+             (check! (true? (q/read-property @controls "visible"))
+                     "Restyling a visible control window keeps it shown")
+             (qt/minimize! @controls))
+           (fn []
+             (check! (= (v/enum "Minimized") (q/read-property @controls "visibility"))
+                     "Minimized controls retain window identity")
+             (check! (seq (qt/screens)) "Available geometry remains queryable while minimized")
+             (qt/restore! @controls)
+             (qt/close-window! @outline))
+           (fn []
+             (throws! #(qt/with-native-window! @outline (fn [_] true)) #"disposed")
+             (reset! finished true)
+             (qt/quit!))])))
+     :auto-quit-ms 5000)
+    (check! @finished "Overlay window scenario completed")
+    (clean! [])))
 
 (defn independent-windows! []
   (let [a (atom nil) b (atom nil) service (atom nil)
@@ -212,6 +304,7 @@
 
 (defn -main [& _]
   (try
+    (overlay-windows!)
     (independent-windows!)
     (deferred-and-failed-close!)
     (failed-open-and-reload!)

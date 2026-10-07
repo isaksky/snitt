@@ -5,6 +5,7 @@
 #include <QVideoFrame>
 #include <QVideoSink>
 #include "extensions.h"
+#include "window_hook.h"
 #include <QElapsedTimer>
 #include <QCloseEvent>
 #include <QKeyEvent>
@@ -20,11 +21,13 @@
 #include <QQuickImageProvider>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QThread>
 #include <QTimer>
 #include <QWidget>
 #include <QDebug>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -165,6 +168,8 @@ struct Session {
     QPointer<QQuickWindow> window;
     Handle container = 0;
     QHash<Handle, Handle> windows; // window -> mount point
+    QHash<Handle, QPointer<QScreen>> screens;
+    QHash<QScreen *, Handle> screenIds;
     bool exitRequested = false;
     bool executing = false;
     int exitCode = 0;
@@ -348,6 +353,61 @@ static QQuickWindow *windowFor(Handle id) {
     if (!window || !active->windows.contains(id)) { fail("Invalid or disposed Qt window handle"); return nullptr; }
     return window;
 }
+static QVariantMap screenInfo(Session *s, QScreen *screen) {
+    Handle id = s->screenIds.value(screen);
+    if (!id) {
+        id = freshHandle();
+        s->screenIds.insert(screen, id);
+        s->screens.insert(id, screen);
+        QObject::connect(screen, &QObject::destroyed, &s->relay, [s, screen, id] {
+            s->screenIds.remove(screen);
+            s->screens.remove(id);
+        });
+    }
+    return {{"id", qint64(id)}, {"name", screen->name()},
+            {"geometry", screen->geometry()}, {"available", screen->availableGeometry()},
+            {"device-pixel-ratio", screen->devicePixelRatio()},
+            {"primary", screen == QGuiApplication::primaryScreen()}};
+}
+extern "C" Q_DECL_EXPORT int gqt_window_place(Handle id, Handle screenId,
+                                               int x, int y, int width, int height) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    auto *screen = active->screens.value(screenId).data();
+    if (!screen || !QGuiApplication::screens().contains(screen))
+        return fail("Invalid or disconnected Qt screen");
+    if (width < 1 || height < 1) return fail("Invalid Qt window size");
+    window->setScreen(screen);
+    window->setGeometry(x, y, width, height);
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_window_style(Handle id, int bits, double opacity, int transparent) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    if ((bits & ~31) || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
+        (transparent != 0 && transparent != 1)) return fail("Invalid Qt window style");
+    Qt::WindowFlags flags = bits & 1 ? Qt::Tool : Qt::Window;
+    if (bits & 2) flags |= Qt::FramelessWindowHint;
+    if (bits & 4) flags |= Qt::WindowStaysOnTopHint;
+    if (bits & 8) flags |= Qt::WindowTransparentForInput;
+    if (bits & 16) flags |= Qt::WindowDoesNotAcceptFocus;
+    const bool visible = window->isVisible();
+    window->setFlags(flags);
+    window->setColor(transparent ? Qt::transparent : QColor("#111317"));
+    window->setOpacity(opacity);
+    if (visible) window->show(); // Qt can hide a window when its flags change.
+    return 1;
+}
+extern "C" Q_DECL_EXPORT int gqt_window_with_native(Handle id, GqtNativeWindowHook hook, void *context) {
+    auto *window = windowFor(id);
+    if (!window) return 0;
+    if (!hook) return fail("Missing native window hook");
+    // Force creation before a capture-exclusion hook sees the window. The pointer
+    // is borrowed only for this synchronous call; callers must not retain it.
+    if (!window->winId() || !window->handle()) return fail("Could not create native Qt window");
+    if (!hook(window, context)) return fail("Native window hook failed");
+    return 1;
+}
 extern "C" Q_DECL_EXPORT int gqt_window_action(Handle id, int action) {
     auto *window = windowFor(id);
     if (!window) return 0;
@@ -407,6 +467,13 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
     return 1;
 }
 #include "values.h"
+extern "C" Q_DECL_EXPORT const char *gqt_screens(Handle session) {
+    auto *s = sessionFor(session);
+    if (!s) return nullptr;
+    QVariantList result;
+    for (auto *screen : QGuiApplication::screens()) result.append(screenInfo(s, screen));
+    return Values::result(Values::encode(result));
+}
 
 bool Relay::pointer(QObject *widget, const QString &event, QVariantMap payload) {
     const Handle id = identities.value(widget);
@@ -942,6 +1009,10 @@ extern "C" Q_DECL_EXPORT int gqt_test_space(Handle id) {
     if (!window) return 0;
     QTest::keyClick(window, Qt::Key_Space);
     return 1;
+}
+extern "C" Q_DECL_EXPORT Handle gqt_test_top_window_at(int x, int y) {
+    if (!guiThread() || !active) return 0;
+    return active->relay.identities.value(QGuiApplication::topLevelAt(QPoint(x, y)));
 }
 extern "C" Q_DECL_EXPORT int gqt_test_awaiting_gc() { return ObjectFixture::awaitingGc; }
 extern "C" Q_DECL_EXPORT void gqt_test_gc_completed() { ObjectFixture::collected = true; }

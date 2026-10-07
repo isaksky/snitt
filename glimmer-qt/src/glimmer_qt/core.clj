@@ -115,6 +115,87 @@
 (defn window-alive? [window] (contains? @windows window))
 (defn window-count [] (count @windows))
 
+(defn screens
+  "Current monitors in logical desktop coordinates. IDs remain valid until a
+  monitor disconnects or this application session ends; refresh after changes.
+  Geometry and available geometry are [x y width height]."
+  []
+  (gui-thread!)
+  (if-let [session @w/session]
+    (mapv (fn [screen]
+            {:id (get screen "id") :name (get screen "name")
+             :geometry (:value (get screen "geometry"))
+             :available (:value (get screen "available"))
+             :device-pixel-ratio (get screen "device-pixel-ratio")
+             :primary? (get screen "primary")})
+          (q/screens session))
+    (throw (ex-info "No running Qt application." {}))))
+
+(defn screen-containing
+  "Select a monitor from a screen snapshot by absolute logical desktop point.
+  Returns nil when the point is outside every current monitor."
+  [snapshot x y]
+  (first (filter (fn [{:keys [geometry]}]
+                   (when (and (vector? geometry) (= 4 (count geometry)))
+                     (let [[sx sy width height] geometry]
+                       (and (<= sx x) (< x (+ sx width))
+                            (<= sy y) (< y (+ sy height))))))
+                 snapshot)))
+
+(defn- int32? [n] (and (integer? n) (<= -2147483648 n 2147483647)))
+
+(defn place-window!
+  "Set the chosen monitor and absolute logical desktop rectangle. Use a fresh
+  screen descriptor from screens after display changes; Qt reports DPR for an
+  explicit pixel conversion by the application."
+  [window screen x y width height]
+  (window! window)
+  (let [id (if (map? screen) (:id screen) screen)]
+    (when-not (and (integer? id) (pos? id) (every? int32? [x y width height])
+                   (pos? width) (pos? height))
+      (throw (ex-info "Invalid Qt window placement." {})))
+    (q/window-place window id x y width height))
+  nil)
+
+(defn style-window!
+  "Apply explicit top-level window behavior. Input-transparent windows always
+  reject focus; controls remain interactive when that option is false."
+  [window {:keys [tool frameless topmost input-transparent no-focus
+                  transparent-background opacity]
+           :or {opacity 1.0} :as opts}]
+  (window! window)
+  (when-not (and (every? #{:tool :frameless :topmost :input-transparent :no-focus
+                           :transparent-background :opacity} (keys opts))
+                 (every? boolean? (map #(get opts % false)
+                                      [:tool :frameless :topmost :input-transparent
+                                       :no-focus :transparent-background]))
+                 (number? opacity) (<= 0 opacity 1))
+    (throw (ex-info "Invalid Qt window style." {})))
+  (q/window-style window
+                  (+ (if tool 1 0) (if frameless 2 0) (if topmost 4 0)
+                     (if input-transparent 8 0) (if (or no-focus input-transparent) 16 0))
+                  (double opacity) (if transparent-background 1 0))
+  nil)
+
+(defn with-native-window!
+  "Run a synchronous app-owned hook with a borrowed QWindow pointer after Qt
+  creates its platform window. The pointer is valid only during this callback;
+  the hook must return truthy for success. Failures reach the caller."
+  [window hook]
+  (window! window)
+  (when-not (ifn? hook) (throw (ex-info "Native window hook must be callable." {})))
+  (let [failure (atom nil)
+        callback (ffi/foreign-callable
+                  (fn [pointer _]
+                    (try (if (hook pointer) 1 0)
+                         (catch Throwable e (reset! failure e) 0)))
+                  [:pointer :pointer] :int :collect-safe)]
+    (try
+      (try (q/window-with-native window callback ffi/null)
+           (catch Throwable e (if-let [original @failure] (throw original) (throw e))))
+      (finally (ffi/free-callable callback))))
+  nil)
+
 (defn- action! [window action]
   (window! window)
   (q/window-action window action)
@@ -153,16 +234,25 @@
 
 (defn- create-window! [opts lifecycle]
   (when-not @w/session (throw (ex-info "No running Qt application." {})))
-  (let [{:keys [title width height on-close visible]
+  (let [{:keys [title width height on-close visible screen x y]
          :or {title "Glimmer · Qt" width 560 height 360 visible true}} opts]
     (when-not (and (string? title) (integer? width) (<= 1 width 2147483647)
                    (integer? height) (<= 1 height 2147483647) (boolean? visible)
-                   (or (nil? on-close) (ifn? on-close)))
+                   (or (nil? on-close) (ifn? on-close))
+                   (or (and (nil? screen) (nil? x) (nil? y))
+                       (and screen (int32? x) (int32? y))))
       (throw (ex-info "Invalid Qt window options." {})))
     (let [window (q/window-create @w/session title width height)
           container (w/register-window! (q/window-container window))]
       (swap! windows assoc window (assoc lifecycle :container container :on-close on-close))
       (try
+        (when (some #(contains? opts %)
+                    [:tool :frameless :topmost :input-transparent :no-focus
+                     :transparent-background :opacity])
+          (style-window! window (select-keys opts [:tool :frameless :topmost
+                                                  :input-transparent :no-focus
+                                                  :transparent-background :opacity])))
+        (when screen (place-window! window screen x y width height))
         ((:mount! lifecycle) container :window)
         (when visible (show! window))
         window
@@ -170,7 +260,8 @@
 
 (defn open-window!
   "Mount an independent root on the GUI thread. Options: :title, :width, :height,
-  :visible (default true), :on-close (fn [window]). A callback must return true
+  :visible (default true), :screen with :x/:y, window style keys from
+  style-window!, and :on-close (fn [window]). A callback must return true
   to accept; false/nil defers. Without a callback a request closes this window.
   Use close-window! later to accept a deferred request. Returns an opaque handle."
   [root-fn & {:as opts}]

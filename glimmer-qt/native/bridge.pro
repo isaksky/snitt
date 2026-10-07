@@ -8,7 +8,7 @@ macx: QMAKE_SONAME_PREFIX = @rpath
 DEFINES += GQT_BUILD
 SOURCES += bridge.cpp
 RESOURCES += resources.qrc
-HEADERS += values.h objects.h extensions.h
+HEADERS += values.h objects.h extensions.h window_hook.h
 contains(CONFIG, property_tests) {
     QT += testlib
     DEFINES += GQT_PROPERTY_TESTS

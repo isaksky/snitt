@@ -37,6 +37,27 @@ and an activation request (the desktop window manager controls focus).
 `window-container`, `window-alive?`, and `window-count` expose lifetime state.
 Window mutation and lookup require the GUI thread; use `later!` from workers.
 
+`screens` returns current monitor descriptors with a session ID, name, logical
+desktop `:geometry` and `:available` rectangles, `:device-pixel-ratio`, and
+`:primary?`. Refresh the snapshot after display changes; an ID for a removed
+monitor fails placement. `screen-containing` selects from a supplied snapshot
+using absolute logical coordinates, including negative origins. `place-window!`
+sets a chosen screen and an absolute `[x y width height]` rectangle in logical
+coordinates. The application can use the reported DPR when it needs explicit
+physical-pixel conversion. `open-window!` accepts `:screen` with `:x` and `:y`
+for initial placement; minimized windows do not change the monitor's available
+geometry.
+
+Window style options are `:tool`, `:frameless`, `:topmost`,
+`:input-transparent`, `:no-focus`, `:transparent-background`, and `:opacity`
+(0–1). They can be supplied at creation or applied with `style-window!`.
+Input-transparent windows also reject focus; omit that option for interactive
+recording controls. `with-native-window!` synchronously lends a live `QWindow*`
+to an application hook after Qt creates the platform window. The pointer must
+not escape the callback; returning false or throwing propagates failure. The
+application owns capture exclusion and platform policy. Native extensions can
+use the C declaration in `native/window_hook.h`.
+
 `:on-close (fn [window] ...)` is optional. Returning exactly `true` accepts the
 request; any other result rejects/defers it. Without a callback, closure is
 accepted. Native close events are consumed, and policy delivery is queued after
@@ -207,13 +228,17 @@ monotonic elapsed time during a stall, self-cancellation, callback exceptions,
 concurrent worker posts and ratom changes under explicit GC, coalesced renders,
 main-thread delivery, shutdown races, and zero retained jobs/timers after close.
 
-The window runner exercises independent roots with duplicate control IDs,
+The window runner exercises monitor snapshots, logical placement, overlay
+styles, native hook success/failure and stale handles, plus independent roots
+with duplicate control IDs,
 per-window reload/close, close rejection and deferred acceptance, background
 lifetime with zero editors, a real retained QWidget, failed creation/reload/close,
 and full cleanup on quit. QtTest sends mouse and keyboard events through the
 window for hit testing and focus routing. Run `QT_QPA_PLATFORM=cocoa ./glimmer-qt/test-windows` with desktop access to additionally verify activation
-and minimized restoration on macOS. Offscreen execution cannot prove desktop
-activation. Windows execution is deferred for this change.
+and minimized restoration on macOS. The Cocoa run separately checks that
+topmost controls stack above an ordinary window and remain active while an
+input-transparent outline is visible. Offscreen execution cannot prove desktop
+focus or stacking. Windows execution is deferred for this change.
 
 On Windows, build `native/bridge.pro` with UCRT64 `qmake6` and
 `mingw32-make` from `glimmer-qt/build`, put that Qt SDK's `bin` on `PATH`, set
