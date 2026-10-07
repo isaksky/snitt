@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-"$ROOT/../glimmer-qt/build-native"
+"$ROOT/../glimmer-qt/build-native" "$@"
 QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
 mkdir -p "$ROOT/../build/jolt-snitt"
 cd "$ROOT/../build/jolt-snitt"

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-"$ROOT/build-native"
+"$ROOT/build-native" "CONFIG+=property_tests"
 QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
 export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
 export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
@@ -10,9 +10,17 @@ export JOLT_AOT_CACHE=0
 SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-jolt.XXXXXX")"
 SNITT_JOLT_DATA_DIR="$(cd "$SNITT_JOLT_DATA_DIR" && pwd -P)"
 export SNITT_JOLT_DATA_DIR
+SNITT_JOLT_IMAGE="$SNITT_JOLT_DATA_DIR/source.png"
+SNITT_JOLT_SAVED_PATH="$SNITT_JOLT_DATA_DIR/saved-path.txt"
+SNITT_JOLT_COPIED_PATH="$SNITT_JOLT_DATA_DIR/copied.png"
+export SNITT_JOLT_IMAGE SNITT_JOLT_SAVED_PATH SNITT_JOLT_COPIED_PATH
 trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+python3 "$ROOT/test/image_pixels.py" generate "$SNITT_JOLT_IMAGE"
 cd "$ROOT"
 "${JOLT:-jolt}" -M:test
+python3 "$ROOT/test/image_pixels.py" verify "$(cat "$SNITT_JOLT_SAVED_PATH")"
+python3 "$ROOT/test/image_pixels.py" verify "$SNITT_JOLT_COPIED_PATH"
+python3 "$ROOT/test/image_pixels.py" compare "$(cat "$SNITT_JOLT_SAVED_PATH")" "$SNITT_JOLT_COPIED_PATH"
 "$ROOT/build-app" --all
 "$ROOT/../build/jolt-snitt/snitt-jolt-dev" --smoke-test
 "$ROOT/../build/jolt-snitt/snitt-jolt" --smoke-test
