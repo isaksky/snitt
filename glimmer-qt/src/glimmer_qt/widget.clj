@@ -30,6 +30,7 @@
    :clip ["clip" :bool false]
    :opacity ["opacity" :number 1]
    :z ["z" :number 0]
+   :scale ["scale" :number 1]
    :sensitive ["enabled" :bool true]
    :visible ["visible" :bool true]})
 
@@ -84,7 +85,7 @@
   "Register a tag before starting a session. :source is an absolute QML URL
   (qrc:/ or file:/) or native:factory-name. :props maps keys to [Qt-name type
   default], with :string/:number/:bool/:color/:value types. :events maps handler keys
-  to :none or :string payloads. :required lists props required on every render.
+  to :none, :string, or :pointer payloads (the latter uses relay.pointer). :required lists props required on every render.
   :children is :none (default), :self, or an owned QObject property name.
   Every tag accepts :qt/subscriptions; see glimmer-qt.object/reconcile!.
   :relay names an optional QtObject property for relay.dispatch(object,event,text).
@@ -106,7 +107,7 @@
       (throw (ex-info "Invalid Qt property schema." {:property key}))))
   (doseq [[key arity] events]
     (when-not (and (keyword? key) (not (#{:destroyed :shutdown :close-request :work :work-canceled :signal :signal-error :subscription-ended :qt/subscriptions} key))
-                   (#{:none :string} arity) (not (contains? props key)))
+                   (#{:none :string :pointer} arity) (not (contains? props key)))
       (throw (ex-info "Invalid Qt event schema." {:event key}))))
   (when-not (every? #(contains? props %) required)
     (throw (ex-info "Required Qt properties must have schemas." {})))
@@ -119,6 +120,14 @@
         [[:vbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
          [:hbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
          [:flow (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
+         [:pointer-area (merge common geometry
+                               {:buttons ["acceptedButtons" :value (value/flags "LeftButton")]
+                                :hover ["hoverEnabled" :bool false]
+                                :prevent-stealing ["preventStealing" :bool false]
+                                :cursor ["cursorShape" :value (value/enum "ArrowCursor")]})
+          {:on-pointer-press :pointer :on-pointer-move :pointer
+           :on-pointer-release :pointer :on-pointer-cancel :pointer
+           :on-hover-enter :pointer :on-hover-leave :pointer :on-wheel :pointer} :self "relay"]
          [:item (merge common geometry) {} :self ""]
          [:overlay (merge common geometry) {} :self ""]
          [:spacer (merge common geometry) {} :none ""]
@@ -199,7 +208,7 @@
              (or (some #(contains? props %) [:x :y :relative-x :relative-y :relative-width :relative-height :anchor])
                  (and (not= :flow parent-tag) (some #(contains? props %) [:width :height]))))
     (throw (ex-info "Layout owns child geometry; use preferred dimensions and an overlay container." {})))
-  (when (and (#{:flow :item :overlay :rectangle} parent-tag)
+  (when (and (#{:flow :item :overlay :rectangle :pointer-area} parent-tag)
              (some #(contains? props %) [:hexpand :vexpand :min-width :min-height :max-width :max-height
                                          :preferred-width :preferred-height :alignment :margin :margin-left
                                          :margin-right :margin-top :margin-bottom]))
@@ -282,7 +291,7 @@
 
 (defn- placement! [tag child]
   (validate-placement! tag (:props (live-widget child)))
-  (when (#{:item :overlay :rectangle :spacer} (:tag (live-widget child)))
+  (when (#{:item :overlay :rectangle :spacer :pointer-area} (:tag (live-widget child)))
     (q/set-property! child "positionManaged" (boolean (#{:window :hbox :vbox :flow} tag)))
     (q/set-property! child "sizeManaged" (boolean (#{:window :hbox :vbox} tag)))))
 
@@ -343,6 +352,10 @@
       (throw (ex-info "Qt destroyed a mounted object." {:widget widget})))
     (when-let [handler (get-in @widgets [widget :props (keyword event)])]
       (case (get-in @registry [(get-in @widgets [widget :tag]) :events (keyword event)])
+        :pointer (let [payload (value/decode value)
+                       event (into {} (map (fn [[k v]] [(keyword k) v]) (dissoc payload "token")))
+                       accepted (handler event)]
+                   (q/pointer-accept (get payload "token") (if (true? accepted) 1 0)))
         :string (handler value)
         :none (handler)
         nil))))

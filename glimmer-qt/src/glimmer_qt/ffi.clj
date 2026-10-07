@@ -122,3 +122,11 @@
   (when-not (and (string? text) (not (str/includes? text "\u0000")))
     (throw (ex-info "Text measurement requires a string without NUL." {})))
   (value/decode (measure-text-native handle text)))
+
+(defchecked pointer-accept "gqt_pointer_accept" [:uint64 :int] :int)
+(defchecked map-point-native "gqt_map_point" [:uint64 :uint64 :double :double] :string)
+(defn map-point
+  "Map local [x y] from a live attached item to another item, or nil for global
+  desktop coordinates. Preserves fractional pixels, transforms and negative origins."
+  [from to x y]
+  (value/decode (map-point-native from (or to 0) (double x) (double y))))

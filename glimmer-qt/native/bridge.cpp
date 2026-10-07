@@ -53,6 +53,8 @@ class Relay : public QObject {
     Q_OBJECT
 public:
     EventHandler handler = nullptr;
+    QHash<Handle, bool> pointerReplies;
+    Q_INVOKABLE bool pointer(QObject *widget, const QString &event, QVariantMap payload);
     int callbackDepth = 0;
     QHash<Handle, QPointer<QObject>> objects;
     QHash<QObject *, Handle> identities;
@@ -395,6 +397,36 @@ extern "C" Q_DECL_EXPORT int gqt_set_handler(Handle id, EventHandler handler) {
 }
 #include "values.h"
 
+bool Relay::pointer(QObject *widget, const QString &event, QVariantMap payload) {
+    const Handle id = identities.value(widget);
+    auto *item = qobject_cast<QQuickItem *>(widget);
+    if (!id || !item || (!item->isEnabled() && event != "on-pointer-cancel")) return false;
+    const Handle token = freshHandle();
+    payload.insert("token", QVariant::fromValue(qulonglong(token)));
+    pointerReplies.insert(token, false);
+    const QByteArray data = QJsonDocument(Values::encode(payload)).toJson(QJsonDocument::Compact);
+    notify(id, event.toUtf8().constData(), data.constData());
+    return pointerReplies.take(token);
+}
+extern "C" Q_DECL_EXPORT int gqt_pointer_accept(Handle token, int accepted) {
+    if (!guiThread() || !active || !active->relay.pointerReplies.contains(token))
+        return fail("Pointer event is no longer active");
+    active->relay.pointerReplies[token] = accepted != 0;
+    return 1;
+}
+extern "C" Q_DECL_EXPORT const char *gqt_map_point(Handle from, Handle to, double x, double y) {
+    auto *source = itemFor(from);
+    if (!source) return nullptr;
+    auto *target = to ? itemFor(to) : nullptr;
+    if (to && !target) return nullptr;
+    if (!source->window() || (target && !target->window()) || !std::isfinite(x) || !std::isfinite(y)) {
+        fail("Coordinate mapping requires attached items and finite coordinates"); return nullptr;
+    }
+    const QPointF global = source->mapToGlobal(QPointF(x, y));
+    const QPointF result = target ? target->mapFromGlobal(global) : global;
+    return Values::result(Values::encode(QVariantList{result.x(), result.y()}));
+}
+
 extern "C" Q_DECL_EXPORT const char *gqt_measure_text(Handle id, const char *text) {
     try {
         auto *object = objectFor(id);
@@ -691,6 +723,7 @@ extern "C" Q_DECL_EXPORT int gqt_destroy_native(Handle id) {
 #include "bridge.moc"
 #ifdef GQT_PROPERTY_TESTS
 #include <QTest>
+#include "../test/native/pointer_fixture.h"
 #include "../test/native/value_fixture.h"
 #include "../test/native/object_fixture.h"
 extern "C" Q_DECL_EXPORT int gqt_register_object_fixture() {
