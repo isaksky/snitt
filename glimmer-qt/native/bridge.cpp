@@ -33,6 +33,8 @@
 #include <QAction>
 #include <QIcon>
 #include <QCursor>
+#include <QToolTip>
+#include <QStyle>
 #include <QDebug>
 #include <cstdint>
 #include <cmath>
@@ -41,6 +43,7 @@
 #include <mutex>
 #ifdef Q_OS_MACOS
 #include <pthread.h>
+void gqtActivateMacApplication();
 #endif
 
 using Handle = uint64_t;
@@ -71,6 +74,25 @@ static thread_local QSet<Handle> controlledWrites;
 class Relay : public QObject {
     Q_OBJECT
 public:
+    QPointer<QObject> tooltipOwner;
+    Q_INVOKABLE int nativeToolTipDelay() const {
+        return QApplication::style()->styleHint(QStyle::SH_ToolTip_WakeUpDelay);
+    }
+    Q_INVOKABLE void nativeToolTip(QObject *owner, bool visible, const QString &text) {
+        if (!visible) {
+            if (tooltipOwner == owner) { QToolTip::hideText(); tooltipOwner.clear(); }
+            return;
+        }
+        if (!owner || text.isEmpty()) return;
+        tooltipOwner = owner;
+        if (!owner->property("_gqtNativeToolTipHook").toBool()) {
+            owner->setProperty("_gqtNativeToolTipHook", true);
+            QObject::connect(owner, &QObject::destroyed, this, [this] {
+                if (!tooltipOwner) QToolTip::hideText();
+            });
+        }
+        QToolTip::showText(QCursor::pos(), text);
+    }
     EventHandler handler = nullptr;
     QHash<Handle, bool> pointerReplies;
     Q_INVOKABLE bool pointer(QObject *widget, const QString &event, QVariantMap payload);
@@ -557,6 +579,11 @@ extern "C" Q_DECL_EXPORT int gqt_window_with_native(Handle id, GqtNativeWindowHo
 extern "C" Q_DECL_EXPORT int gqt_window_action(Handle id, int action) {
     auto *window = windowFor(id);
     if (!window) return 0;
+#ifdef Q_OS_MACOS
+    if ((action == 4 || action == 6) &&
+        !(window->flags() & Qt::WindowDoesNotAcceptFocus))
+        gqtActivateMacApplication();
+#endif
     switch (action) {
     case 0: window->show(); break;
     case 1: window->hide(); break;
@@ -1156,6 +1183,10 @@ extern "C" Q_DECL_EXPORT int gqt_emit(Handle id, const char *signal) {
     auto *object = objectFor(id);
     if (!object) return 0;
     return QMetaObject::invokeMethod(object, signal, Qt::DirectConnection) || fail("Invalid Qt signal");
+}
+extern "C" Q_DECL_EXPORT int gqt_window_snapshot(Handle id, const char *path) {
+    auto *window = windowFor(id);
+    return window && (window->grabWindow().save(QString::fromUtf8(path)) || fail("Could not save Qt window image"));
 }
 extern "C" Q_DECL_EXPORT int gqt_save_window(Handle id, const char *path) {
     auto *s = sessionFor(id);

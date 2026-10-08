@@ -1,11 +1,13 @@
 (ns snitt.app
   "Jolt-owned editor sessions and documents; native canvases render projections."
   (:require [snitt.trim :as trim]
+            [snitt.ui :as ui]
             [glimmer.ratom :as r]
             [clojure.string :as str]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
+            [glimmer-qt.services :as services]
             [glimmer-qt.tray :as tray]
             [glimmer-qt.value :as value]
             [glimmer-qt.widget :as widget]
@@ -20,7 +22,7 @@
             [snitt.settings :as settings]))
 
 (defn- initial-state []
-  {:status "Open or paste an image" :error? false
+  {:status "Open or paste an image" :error? false :notice ""
    :document-revision 0 :modal? false :draft nil :draft-content-height 0
    :canvas-width 800 :canvas-height 500 :arrangement nil})
 
@@ -46,7 +48,22 @@
         (when (and handle (q/alive? handle)) handle)))))
 
 (defn- report! [context message error?]
-  (swap! (:state context) assoc :status message :error? error?))
+  (let [generation (inc (get @(:state context) :notice-generation 0))]
+    (swap! (:state context) assoc :status message :notice message :error? error?
+           :notice-generation generation)
+    (when-let [window @(:window context)]
+      (qt/later! window 9000
+        #(when (= generation (:notice-generation @(:state context)))
+           (swap! (:state context) assoc :notice ""))))))
+
+(defn- show-capture-error! [context message]
+  (qt/activate! @(:window context))
+  (swap! (:state context) assoc :status message :error? true
+         :capture-error-message message :modal? true)
+  (widget/open-dialog! (item context "capture-error-dialog")))
+
+(defn- dialog-changed! [context]
+  (swap! (:state context) update :dialog-revision (fnil inc 0)))
 
 (declare command-state refresh-context! start-text! change-arrangement!)
 
@@ -157,7 +174,9 @@
                    :width width :text ""}
            :draft-content-height 0)
     (qt/later! 0 #(when-let [editor (item context "annotation-text")]
-                    (widget/focus! editor)))))
+                    (widget/focus! editor)
+                    (swap! (:state context) assoc :draft-content-height
+                           (q/read-property editor "contentHeight"))))))
 
 (defn- adjust-size! [context delta]
   (when (and delta (not (zero? delta)))
@@ -230,13 +249,20 @@
   (let [{:keys [ok? path error]} (native/save-result! handle)]
     (if-not ok?
       (report! context (or error "Could not save the image. Check the Pictures folder and try again.") true)
-      (if (reveal-saved! (:backend @(:services context)) path)
-        (do (report! context path false)
-            (sessions/close! manager (:id context)))
-        (do (report! context (str "Screenshot saved at " path
-                                  ", but could not reveal it in the file manager.") true)
-            (swap! (:state context) assoc :saved-path path :modal? true)
-            (widget/open-dialog! (item context "reveal-dialog")))))))
+      (do
+        (qt/hide! @(:window context))
+        (object/invoke! handle "clear()" [])
+        (document/sync! handle)
+        (swap! (:state context) assoc :arrangement nil :draft nil)
+        (if (reveal-saved! (:backend @(:services context)) path)
+          (sessions/close! manager (:id context))
+          (do (qt/activate! @(:window context))
+              (swap! (:state context) assoc :saved-path path :modal? true :error? true
+                     :status (str "Screenshot saved at " path ", but could not reveal it in the file manager."))
+              ;; Clearing the canvas and restoring the window can schedule a
+              ;; projection update. Open against the settled content tree.
+              (qt/later! @(:window context) 0
+                #(widget/open-dialog! (item context "reveal-dialog")))))))))
 
 (defn command-state [context]
   (let [handle (canvas context)
@@ -251,8 +277,8 @@
         layout (:arrangement @(:state context))]
     {:text-draft? (boolean (:draft @(:state context)))
      :modal? (or (:modal? @(:state context))
-                 (when-let [chooser (item context "open-file")]
-                   (widget/dialog-visible? chooser)))
+                 (some (fn [id] (when-let [dialog (item context id)] (widget/dialog-visible? dialog)))
+                       ["open-file" "rearrange-dialog" "reveal-dialog" "capture-error-dialog"]))
      :capturing? (or (and backend (q/read-property backend "capturing"))
                      (and manager (:capture (sessions/snapshot manager))))
      :recording? (and manager (sessions/recording? manager (:id context)))
@@ -406,14 +432,7 @@
              (report! context "Could not open this image. Choose a supported image file and try again." true))))
     (open-url! context url)))
 
-(def annotation-tools
-  [["toolCut" "cut" "Cut" "cut"]
-   ["toolRectangle" "rect" "Rectangle" "rectangle"]
-   ["toolHighlight" "highlight" "Highlight" "highlight"]
-   ["toolText" "text" "Text" "text"]
-   ["toolArrow" "arrow" "Arrow" "arrow"]
-   ["toolPixelate" "blur" "Pixelate" "pixelate"]
-   ["toolErase" "erase" "Smart erase" "smart-erase"]])
+(def annotation-tools ui/annotation-tools)
 
 (defn- size-hint [handle tool draft?]
   (cond
@@ -428,7 +447,7 @@
     :else (str (q/read-property handle "textSize") " px · Mouse wheel to adjust")))
 
 (defn editor [context]
-  (let [{:keys [status error? draft canvas-width canvas-height]} @(:state context)
+  (let [{:keys [notice draft canvas-width canvas-height]} @(:state context)
         tool (:tool @(:interaction context))
         {:keys [has-image? arranging?] :as command-state} (command-state context)
         {:keys [shortcuts hints]} @settings/published
@@ -436,78 +455,26 @@
         binding (fn [action] (get shortcuts action []))
         hint (fn [action] (get hints action ""))
         enabled? (fn [action] (boolean (commands/enabled? command-state action)))
-        toolbar-enabled? (fn [action] (boolean (commands/enabled? (assoc command-state :text-draft? false) action)))
+        toolbar-enabled? (fn [action] (boolean (commands/enabled? (assoc command-state :text-draft? false :modal? false) action)))
         action! (fn [action] #(dispatch-toolbar! context action))
         geometry (when (and draft handle) (draft-geometry context))
         color-mode (when handle (q/read-property handle "colorMode"))
         ink-color (when handle (:value (q/read-property handle "ink")))
         mode-color (fn [mode] (when handle (:value (q/read-property handle (str mode "Color")))))]
-    [:vbox {:hexpand true :vexpand true :padding 10 :spacing 8}
-     [:flow {:id "capture-toolbar" :hexpand true :spacing 6}
-      (for [[id label action] [["open" "Open" "openImage"] ["paste" "Paste" "pasteImage"]
-                               ["capture" "Capture" "capture"] ["capture-multiple" "Multiple regions" "captureMultiple"]
-                               ["record" "Record" "captureVideo"]]]
-        [:button {:key id :id id :label label :accessible-name label
-                  :tooltip (str label " (" (hint action) ")")
-                  :sensitive (enabled? action) :on-click #(dispatch! context action)}])]
-     (if arranging?
-       [:flow {:id "arrangement-toolbar" :hexpand true :spacing 4}
-        (for [[id label action] [["arrange" "Annotate" "arrange"] ["columns-less" "−" "columnsLess"]
-                                 ["columns-more" "+" "columnsMore"] ["region-left" "←" "moveRegionLeft"]
-                                 ["region-right" "→" "moveRegionRight"] ["region-remove" "Remove" "removeRegion"]]]
-          [:button {:key id :id id :label label :accessible-name (str label " region")
-                    :tooltip (str label " (" (hint action) ")")
-                    :sensitive (enabled? action) :on-click #(dispatch! context action)}])]
-       [:flow {:id "annotation-toolbar" :hexpand true :spacing 8}
-        (when (pos? (:region-count command-state))
-          [:button {:id "return-arrange" :label "Back to Arrange"
-                    :accessible-name "Back to Arrange"
-                    :sensitive (enabled? "returnArrange")
-                    :on-click #(dispatch! context "returnArrange")}])
-        [:hbox {:id "annotation-tools" :spacing 2}
-         (for [[action name label glyph] annotation-tools]
-           [:vbox {:key name :spacing 2 :preferred-width 42}
-            [:button {:id (if (#{"rect" "arrow"} name) name (str "tool-" name))
-                      :label (str label " (" (hint action) ")")
-                      :icon (str "qrc:/icons/annotation/" glyph ".svg")
-                      :icon-only true :accessible-name label
-                      :tooltip (str label " (" (hint action) ")")
-                      :checkable true :checked (= tool name) :preferred-width 40
-                      :sensitive (toolbar-enabled? action) :on-click (action! action)}]
-            [:label {:id (str "shortcut-" name) :label (hint action) :font-size 11
-                     :color "#9ba5b5"}]])]
-        [:hbox {:id "history-buttons" :spacing 2}
-         (for [[id label action icon] [["undo" "Undo" "undo" "undo-2"]
-                                       ["redo" "Redo" "redo" "redo-2"]]]
-           [:button {:key id :id id :label label :icon (str "qrc:/icons/" icon ".svg")
-                     :icon-only true :accessible-name label
-                     :tooltip (str label " (" (hint action) ")")
-                     :sensitive (enabled? action) :on-click (action! action)}])]
-        [:vbox {:id "mode-group" :spacing 2}
-         [:hbox {:spacing 2}
-          (for [[action mode label] [["goodMode" "good" "Good"] ["badMode" "bad" "Bad"]]]
-            [:button {:key mode :id (str "ink-" mode) :label label
-                      :accessible-name (str label " mode") :mode mode
-                      :mode-color (or (mode-color mode) "transparent")
-                      :tooltip (str label " mode (" (hint action) ")")
-                      :checkable true :checked (= color-mode mode)
-                      :sensitive (toolbar-enabled? action) :on-click (action! action)}])]
-         [:label {:label "Color Mode" :font-size 11 :color "#9ba5b5"}]]
-        [:vbox {:id "finish-group" :spacing 2}
-         [:hbox {:spacing 4}
-          [:button {:id "save" :label "Save" :accessible-name "Save image and close"
-                    :tooltip (str "Save and close (" (hint "saveClose") ")")
-                    :sensitive (toolbar-enabled? "saveClose") :on-click (action! "saveClose")}]
-          [:button {:id "copy" :label "Copy" :accessible-name "Copy image and close"
-                    :highlighted true :tooltip (str "Copy and close (" (hint "copyClose") ")")
-                    :sensitive (toolbar-enabled? "copyClose") :on-click (action! "copyClose") }]]
-         [:label {:label "Finish (will close)" :font-size 11 :color "#9ba5b5"}]]])
-     [:label {:id "annotation-hint" :label (if has-image? (size-hint handle tool (boolean draft)) "Capture or open an image")
-              :color "#9ba5b5" :font-size 12}]
-     [:overlay {:id "editor-stage" :hexpand true :vexpand true :clip true
+    [:vbox {:hexpand true :vexpand true :spacing 0}
+     (ui/header {:arranging? arranging? :region-count (:region-count command-state)
+                 :columns (if handle (q/read-property handle "columns") 1)
+                 :tool tool :color-mode color-mode :notice notice
+                 :hint-text (if has-image? (size-hint handle tool (boolean draft)) "Capture or open an image")
+                 :hints hints :shortcuts shortcuts :pictures-root (:pictures-root @settings/published)
+                 :enabled? enabled? :toolbar-enabled? toolbar-enabled?
+                 :dispatch! #(dispatch! context %) :action! action!
+                 :mode-color #(or (mode-color %) "transparent")})
+     [:overlay {:key "stage" :id "editor-stage" :hexpand true :vexpand true :clip true
                 :preferred-width 800 :preferred-height 500}
       [:pointer-area {:id "snitt-pointer" :anchor "fill"
                       :buttons (value/flags "LeftButton") :sensitive has-image?
+                      :cursor (value/enum (cond arranging? "OpenHandCursor" (= tool "text") "IBeamCursor" :else "CrossCursor"))
                       :qt/subscriptions
                       {:width {:signal "widthChanged()" :handler #(sync-canvas-size! context)}
                        :height {:signal "heightChanged()" :handler #(sync-canvas-size! context)}}
@@ -557,6 +524,7 @@
                                        :handler #(change-arrangement! context arrangement/move %1 %2)}
                         :text {:signal "textRequested(qreal,qreal)" :handler #(start-text! context %1 %2)}
                         :error {:signal "error(QString)" :handler #(report! context % true)}}}]]
+      (when-not has-image? (ui/empty-editor hints #(dispatch! context %)))
       (when geometry
         [:rectangle {:id "annotation-text-frame" :x (:x geometry) :y (:y geometry)
                      :width (:width geometry) :height (:height geometry)
@@ -568,6 +536,7 @@
           [:text-area {:id "annotation-text" :text (:text draft) :padding 0
                        :font-family (q/read-property handle "annotationFontFamily")
                        :font-size (:font-size geometry) :font-weight 600
+                       :wrap (value/enum "WordWrap") :plain true
                        :color ink-color :selection-color "#32547b"
                        :accessible-name "Annotation text"
                        :on-change #(swap! (:state context) assoc-in [:draft :text] %)
@@ -583,34 +552,61 @@
                         :y (:y geometry) :width 16
                         :height (max 24 (:height geometry)) :z 3
                         :hover true :prevent-stealing true
+                        :resize-grip true :tooltip "Resize text width"
                         :cursor (value/enum "SizeHorCursor")
                         :on-pointer-press #(resize-text! context % :press)
                         :on-pointer-move #(resize-text! context % :move)
                         :on-pointer-release #(resize-text! context % :release)
-                        :on-pointer-cancel #(resize-text! context % :release)}
-         [:rectangle {:anchor "center" :width 6 :height 24 :radius 3 :color "#dfe5ed"}]])]
-     [:label {:id "status" :label status :color (if error? "#ffb4a8" "#ffffff")}]
-     [:file-chooser {:id "open-file" :on-accepted #(accept-image! context %)
+                        :on-pointer-cancel #(resize-text! context % :release)}])]
+     (when has-image?
+       (ui/footer {:arranging? arranging? :notice notice :hints hints
+                   :scale (q/read-property handle "imageScale")
+                   :width (q/read-property handle "imageWidth") :height (q/read-property handle "imageHeight")}))
+     [:file-chooser {:key "open-file" :id "open-file" :title "Open a screenshot" :on-accepted #(accept-image! context %)
                      :on-rejected #(swap! (:state context) assoc :modal? false)
                      :on-visible-change #(when-not (widget/dialog-visible? (item context "open-file"))
                                            (swap! (:state context) assoc :modal? false))}]
-     [:dialog {:id "rearrange-dialog" :title "Return to Arrange?"
+     [:dialog {:key "rearrange-dialog" :on-visible-change #(dialog-changed! context) :id "rearrange-dialog" :title "Back to Arrange?"
+               :dialog-width 560 :fit-window true
+               :center-target (when-let [stage (item context "editor-stage")] (value/object stage)) :appearance "confirm" :spacing 20 :animated true
                :on-accepted #(do (swap! (:state context) assoc :modal? false)
                                  (return-to-arrangement! context))
-               :on-rejected #(swap! (:state context) assoc :modal? false)}
-      [:label {:label "Returning to Arrange will discard your annotations and cuts. Your captured regions will be kept."}]
-      [:hbox {:spacing 8}
-       [:button {:id "keep-editing" :label "Keep editing"
+               :on-rejected #(do (swap! (:state context) assoc :modal? false)
+                                  (focus-canvas! context))}
+      [:label {:label "Returning to Arrange will discard your annotations and cuts. Your captured regions will be kept."
+               :hexpand true :wrap (value/enum "WordWrap") :color "#dfe5ed"}]
+      [:hbox {:spacing 5 :alignment (value/flags "AlignRight")}
+       [:action-button {:id "keep-editing" :label "Keep editing"
                  :on-click #(widget/reject-dialog! (item context "rearrange-dialog"))}]
-       [:button {:id "discard-edits" :label "Discard edits"
+       [:action-button {:id "discard-edits" :label "Discard edits"
+                         :appearance "primary" :font-size 14 :font-weight 600 :natural-height true
                  :on-click #(widget/accept-dialog! (item context "rearrange-dialog"))}]]]
-     [:dialog {:id "reveal-dialog" :title "Could not reveal screenshot"
+     [:dialog {:key "reveal-dialog" :on-visible-change #(dialog-changed! context) :id "reveal-dialog" :title "Could not reveal screenshot"
+               :dialog-width 560 :fit-window true
+               :center-target (when-let [stage (item context "editor-stage")] (value/object stage)) :spacing 20 :appearance "reference" :animated true
                :on-accepted #(swap! (:state context) assoc :modal? false)
                :on-rejected #(swap! (:state context) assoc :modal? false)}
       [:label {:label (str "Screenshot saved at " (:saved-path @(:state context))
-                           ", but could not reveal it in the file manager.")}]
-      [:button {:id "reveal-ok" :label "OK"
+                           ", but could not reveal it in the file manager.")
+               :hexpand true :wrap (value/enum "WordWrap") :color "#dfe5ed"}]
+      [:action-button {:id "reveal-ok" :label "Close" :alignment (value/flags "AlignRight")
                 :on-click #(widget/accept-dialog! (item context "reveal-dialog"))}]]
+     [:dialog {:key "capture-error-dialog" :id "capture-error-dialog" :title "Capture unavailable"
+               :dialog-width 560 :fit-window true :spacing 20 :appearance "reference" :animated true
+               :center-target (when-let [stage (item context "editor-stage")] (value/object stage))
+               :on-visible-change #(dialog-changed! context)
+               :on-accepted #(swap! (:state context) assoc :modal? false)
+               :on-rejected #(swap! (:state context) assoc :modal? false)}
+      [:label {:label (or (:capture-error-message @(:state context)) "")
+               :hexpand true :wrap (value/enum "WordWrap") :color "#dfe5ed"}]
+      [:hbox {:spacing 5 :alignment (value/flags "AlignRight")}
+       [:action-button {:id "capture-error-close" :label "Close"
+                        :on-click #(widget/reject-dialog! (item context "capture-error-dialog"))}]
+       (when (and (str/includes? (System/getProperty "os.name") "Mac")
+                  (str/includes? (or (:capture-error-message @(:state context)) "") "System Settings"))
+         [:action-button {:id "capture-error-settings" :label "Open System Settings"
+                          :appearance "primary" :font-size 14 :font-weight 600 :natural-height true
+                          :on-click #(services/open-url! "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")}])]]
      (for [action commands/editor-actions]
        [:shortcut {:id (str "command-" action) :sequences (binding action)
                    :enabled (enabled? action)
@@ -639,9 +635,11 @@
     (try
       (settings/register! services)
       (let [window (qt/open-window! #(editor context)
-                                    :title (if label (str "Snitt — " label) "Snitt · Jolt development")
-                                    :width 900 :height 640 :visible false
+                                    :title (if label (str "Snitt — " label) "Snitt")
+                                    :width 1100 :height 760 :visible false
                                     :on-close (fn [_] (on-close) false))]
+        (q/set-property! window "minimumWidth" 860)
+        (q/set-property! window "minimumHeight" 560)
         (reset! (:window context) window)
         (let [canvas (canvas context)]
           (document/create! canvas)
@@ -663,7 +661,7 @@
         {:window window :services services :context context
          :load-url #(open-url! context %)
          :on-close-document #(document/dispose! (canvas context))
-         :on-error (fn [_ message] (report! context message true))
+         :on-error (fn [_ message] (show-capture-error! context message))
          :on-close-review #(when-let [owner @(:review context)]
                              (review/dispose! owner)
                              (reset! (:review context) nil))
@@ -674,6 +672,10 @@
         (widget/dispose! (:root services))
         (throw e)))))
 
+(defn- global-shortcut-description []
+  (object/invoke! (get-in @runtime [:host :root]) "globalShortcutDescription(QString)"
+                  [(first (get-in @settings/published [:shortcuts "globalCapture"]))]))
+
 (defn- settings-published! [{:keys [good-color bad-color pictures-root hints]}]
   (when-let [manager (:manager @runtime)]
     (when-let [picker (:picker (sessions/snapshot manager))]
@@ -683,15 +685,16 @@
         (q/set-property! handle "goodColor" (value/color good-color))
         (q/set-property! handle "badColor" (value/color bad-color))
         (q/set-property! handle "saveRoot" pictures-root))))
-  (when-let [{:keys [tray capture-action]} @runtime]
+  (when-let [{:keys [tray hotkey-action]} @runtime]
     (when (q/alive? tray)
-      (tray/set-tooltip! tray (str "Snitt — Capture " (get hints "globalCapture")))
-      (tray/update-action! capture-action :shortcut-hint (get hints "globalCapture")))))
+      (let [description (global-shortcut-description)]
+        (tray/set-tooltip! tray (str "Snitt · " description))
+        (tray/update-action! hotkey-action :label description)))))
 
 (defn- settings-error! [message]
   (when-let [manager (:manager @runtime)]
     (doseq [{:keys [context]} (sessions/sessions manager)]
-      (report! context message true)))
+      (report! context (str "Settings not applied: " message) true)))
   (when-let [icon (:tray @runtime)]
     (when (q/alive? icon)
       (tray/notify! icon "Snitt settings not applied" message :kind :warning))))
@@ -715,21 +718,30 @@
             (report! context (str "Could not open " image) true)))))
     (when (tray/available?)
       (let [icon (tray/create! ":/icons/square.svg"
-                               :tooltip (str "Snitt — Capture "
-                                             (get-in @settings/published [:hints "globalCapture"]))
+                               :tooltip (str "Snitt · " (global-shortcut-description))
                                :on-activate #(when (= % :double-click)
                                                (dispatch-global! "capture")))
             action (tray/add-action! icon :label "Capture region"
-                                      :shortcut-hint (get-in @settings/published [:hints "globalCapture"])
                                       :on-trigger #(dispatch-global! "capture"))
             show-action (tray/add-action! icon :label "Open editor"
                                           :on-trigger #(dispatch-global! "showEditor"))]
+        (object/invoke! (get-in @runtime [:host :root]) "applyTrayArtwork(QObject*)" [(value/object icon)])
         (tray/add-separator! icon)
-        (let [quit-action (tray/add-action! icon :label "Quit Snitt"
+        (let [hotkey-action (tray/add-action! icon :label (global-shortcut-description) :enabled false)
+              _ (tray/add-separator! icon)
+              quit-action (tray/add-action! icon :label "Quit Snitt"
                                             :on-trigger #(dispatch-global! "quit"))]
           (tray/show! icon)
           (swap! runtime assoc :tray icon :capture-action action
-                 :show-action show-action :quit-action quit-action))))
+                 :show-action show-action :hotkey-action hotkey-action :quit-action quit-action)
+          (when (seq (object/invoke! (:root host) "hotkeyError()" []))
+            (qt/later! icon 500
+              #(tray/notify! icon "Snitt shortcut unavailable"
+                             (str (global-shortcut-description) ". Use Capture region in this menu.")
+                             :kind :warning)))
+          (when-let [message (not-empty (q/read-property (:settings host) "lastError"))]
+            (qt/later! icon 750
+              #(tray/notify! icon "Snitt settings not applied" message :kind :warning))))))
     @runtime))
 
 (defn -main [& args]

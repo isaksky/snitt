@@ -12,6 +12,7 @@
 
 (ffi/defcfn pointer! "gqt_test_pointer" [:uint64 :int :double :double] :int :blocking)
 (ffi/defcfn key! "gqt_test_key" [:uint64 :int :int] :int :blocking)
+(ffi/defcfn accessible-mode! "gqt_test_accessible_mode" [:uint64 :int] :int :blocking)
 
 (def completed? (atom false))
 (def checks (atom 0))
@@ -44,6 +45,22 @@
   (input! picker 0 x1 y1)
   (input! picker 1 x2 y2)
   (input! picker 2 x2 y2))
+
+(defn accessible-modes! [picker]
+  (let [window (first @(:windows picker))
+        toolbar (qt/find-by-id window "picker-toolbar-0")
+        single (q/child-target toolbar "singleButton")
+        multiple (q/child-target toolbar "multipleButton")
+        video (q/child-target toolbar "videoButton")]
+    (check! (= 7 (accessible-mode! single 0)) "Selected mode exposes checked checkbox state")
+    (check! (= 3 (accessible-mode! multiple 0)) "Other mode exposes unchecked checkbox state")
+    (check! (= 7 (accessible-mode! multiple 1)) "Accessibility activation checks multiple mode")
+    (check! (= :multiple (:mode @(:state picker))) "Accessibility activation reaches Jolt mode command")
+    (check! (= 7 (accessible-mode! multiple 1)) "Repeated activation keeps selected mode checked")
+    (check! (= :multiple (:mode @(:state picker))) "Repeated activation preserves Jolt mode")
+    (check! (= 7 (accessible-mode! video 1)) "Accessibility activation checks video mode")
+    (check! (= :video (:mode @(:state picker))) "Accessibility activation reaches video command")
+    (check! (= 1 (key! window 82 0)) "Keyboard restores single mode after accessible activation")))
 
 (defn exercise! [image]
   (let [screen (first (qt/screens))
@@ -115,7 +132,7 @@
                   (check! (= 1 (count (:regions @(:state picker)))) "Settings hint update keeps selection")
                   (qt/later! 150
                     (fn []
-                  (let [button (qt/find-by-id (first @(:windows picker)) "picker-arrange-0")]
+                  (let [button (q/child-target (qt/find-by-id (first @(:windows picker)) "picker-toolbar-0") "arrangeButton")]
                     (check! (str/includes? (q/read-property button "tooltip") "A")
                             (str "Shortcut hint refreshes live: " (q/read-property button "tooltip")))
                     (check! (= 1 (key! (first @(:windows picker)) 65 0))
@@ -131,8 +148,12 @@
                       (fn []
                         (let [picker (:picker (sessions/snapshot manager))
                               window (first @(:windows picker))]
-                          (check! (= 1 (key! window 86 0)) "V key reaches picker")
+                          (do (accessible-modes! picker) (check! (= 1 (key! window 86 0)) "V key reaches picker"))
                           (check! (= :video (:mode @(:state picker))) "Video mode selected in Jolt")
+                          (check! (= 1 (key! window 86 0)) "Repeated V key reaches picker")
+                          (check! (= :video (:mode @(:state picker))) "Active video mode does not toggle off")
+                          (check! (= 1 (key! window 77 0)) "M during video does not bypass disabled mode")
+                          (check! (= :video (:mode @(:state picker))) "Multiple regions stays unavailable in video mode")
                           (check! (= 1 (key! window 82 0)) "R key reaches picker")
                           (check! (= :single (:mode @(:state picker))) "Single mode restored")
                           (input! picker 0 100 150)

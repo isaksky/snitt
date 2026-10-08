@@ -11,6 +11,7 @@
   {:source "qrc:/glimmer-qt/video-player.qml"
    :props {:id ["objectName" :string ""]
            :fill-mode ["fillMode" :string "fit"]
+           :anchor ["anchorMode" :string "none"]
            :hexpand ["Layout.fillWidth" :bool false]
            :vexpand ["Layout.fillHeight" :bool false]}
    :events {:on-first-frame :none}

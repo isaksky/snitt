@@ -21,11 +21,20 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPointer>
+#include <QPainter>
+#include <QSvgRenderer>
+#include <QTextLayout>
+#include <QStyleOptionButton>
+#include <QPushButton>
+#include <QLabel>
+#include <QSystemTrayIcon>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QWindow>
+#include <QWidget>
+#include <QScreen>
 #include <QUuid>
 #include <memory>
 #ifdef Q_OS_WIN
@@ -40,6 +49,135 @@ QHash<QString, QImage> pickerImages;
 QImage pickerImageRequest(void *, const QString &id, QSize *, const QSize &) {
     QMutexLocker lock(&pickerImagesMutex);
     return pickerImages.value(id);
+}
+
+// Match the selector's QIcon rasterization at the destination display scale.
+// This is artwork only; selection, modes and all commands remain Jolt-owned.
+QImage selectorIconRequest(void *, const QString &id, QSize *size, const QSize &requested) {
+    const auto parts = id.split('/');
+    if (parts.size() != 2 || !QStringList{"square-dashed", "copy", "video", "trash"}.contains(parts[0]))
+        return {};
+    QSvgRenderer svg(QStringLiteral(":/icons/") + parts[0] + QStringLiteral(".svg"));
+    QPixmap artwork(96, 96);
+    artwork.fill(Qt::transparent);
+    {
+        QPainter painter(&artwork);
+        svg.render(&painter);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(artwork.rect(), QColor(parts[1] == "checked" ? "#15283d" : "#e9edf3"));
+    }
+    artwork.setDevicePixelRatio(4);
+    QIcon icon(artwork);
+    const int extent = parts[0] == "trash" ? 20 : 22;
+    const QSize pixels = !requested.isEmpty() ? requested : QSize(extent, extent);
+    QImage result(pixels, QImage::Format_ARGB32_Premultiplied);
+    result.setDotsPerMeterX(qRound(QGuiApplication::primaryScreen()->logicalDotsPerInchX() / 0.0254));
+    result.setDotsPerMeterY(qRound(QGuiApplication::primaryScreen()->logicalDotsPerInchY() / 0.0254));
+    result.setDevicePixelRatio(qreal(pixels.width()) / extent);
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    icon.paint(&painter, QRect(0, 0, extent, extent), Qt::AlignCenter,
+               parts[1] == "disabled" ? QIcon::Disabled : QIcon::Normal);
+    if (size) *size = pixels;
+    return result;
+}
+
+// Raster primitives keep QWidget's edge and text metrics in the Quick selector.
+// The provider is stateless: Jolt supplies all labels, dimensions and modes.
+QImage selectorArtworkRequest(void *, const QString &id, QSize *size, const QSize &requested) {
+    const auto parts = id.split('/');
+    if (parts.size() < 4) return {};
+    const QString kind = parts[0];
+    const QSizeF logicalSize(parts[1].toDouble(), parts[2].toDouble());
+    const QSize logical = logicalSize.toSize();
+    if (logical.isEmpty() || logical.width() > 16384 || logical.height() > 16384) return {};
+    const QSize pixels = !requested.isEmpty() ? requested : logical;
+    QImage result(pixels, QImage::Format_ARGB32_Premultiplied);
+    result.setDotsPerMeterX(qRound(QGuiApplication::primaryScreen()->logicalDotsPerInchX() / 0.0254));
+    result.setDotsPerMeterY(qRound(QGuiApplication::primaryScreen()->logicalDotsPerInchY() / 0.0254));
+    result.setDevicePixelRatio(qreal(pixels.width()) / logicalSize.width());
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    const QRect bounds(QPoint(), logical);
+    const QString label = QUrl::fromPercentEncoding(parts.mid(3).join('/').toUtf8());
+    if (kind == "label") {
+        const auto fields = label.split('|');
+        if (fields.size() < 4) return {};
+        QFont font = QApplication::font(); font.setPixelSize(fields[0].toInt());
+        painter.setFont(font); painter.setPen(QColor(fields[1]));
+        painter.drawText(bounds, Qt::AlignVCenter | (fields[2] == "left" ? Qt::AlignLeft : fields[2] == "right" ? Qt::AlignRight : Qt::AlignHCenter), fields.mid(3).join('|'));
+    } else if (kind == "mode") {
+        const auto fields = label.split('|');
+        if (fields.size() < 6) return {};
+        QFont font = QApplication::font(); font.setPixelSize(fields[0].toInt());
+        QPushButton measure;
+        measure.resize(logical); measure.setFont(font);
+        measure.setStyleSheet("border: 1px solid transparent; border-radius: 6px; padding: 6px 10px;");
+        measure.ensurePolished();
+        QStyleOptionButton option; option.initFrom(&measure); option.rect = bounds;
+        const QRectF contents = measure.style()->subElementRect(QStyle::SE_PushButtonContents, &option, &measure);
+        QTextLayout layout(fields.mid(5).join('|'), font);
+        if (fields[3] == "true") {
+            QTextCharFormat format; format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+            layout.setFormats({{0, 1, format}});
+        }
+        layout.beginLayout(); auto line = layout.createLine(); line.setLineWidth(contents.width()); layout.endLayout();
+        const qreal x = contents.center().x() - (26 + line.naturalTextWidth()) / 2;
+        const auto state = fields[1] == "false" ? "disabled" : fields[2] == "true" ? "checked" : "normal";
+        const QImage icon = selectorIconRequest(nullptr, fields[4] + "/" + state, nullptr,
+                                                 QSize(qRound(22 * result.devicePixelRatio()), qRound(22 * result.devicePixelRatio())));
+        painter.drawImage(QPointF(qRound(x), qRound(contents.center().y() - 11)), icon);
+        painter.setPen(fields[1] == "false" ? QColor("#727a86") : fields[2] == "true" ? QColor("#15283d") : QColor("#e9edf3"));
+        layout.draw(&painter, QPointF(x + 26, contents.center().y() - line.height() / 2));
+    } else if (kind == "border") {
+        const auto fields = label.split('|');
+        if (fields.size() != 4) return {};
+        painter.setPen(QPen(QColor("#91bff0"), 2));
+        painter.drawRect(QRectF(fields[0].toDouble(), fields[1].toDouble(),
+                               fields[2].toDouble(), fields[3].toDouble()));
+    } else if (kind == "badge" || kind == "dimensions") {
+        QFont font = QApplication::font();
+        font.setPixelSize(kind == "badge" ? 16 : 14);
+        font.setBold(kind == "badge");
+        painter.setFont(font);
+        const auto fields = label.split('|');
+        const QRectF textBounds = kind == "badge"
+            ? QRectF(fields.value(1).toDouble(), fields.value(2).toDouble(), 28, 28)
+            : QRectF(bounds);
+        if (kind == "badge") painter.fillRect(textBounds, QColor("#91bff0"));
+        else {
+            painter.setPen(Qt::NoPen); painter.setBrush(QColor("#1b1e23"));
+            painter.drawRoundedRect(bounds, 5, 5);
+        }
+        painter.setPen(kind == "badge" ? QColor("#15283d") : Qt::white);
+        painter.drawText(textBounds, Qt::AlignCenter, kind == "badge" ? fields[0] : label);
+    } else {
+        QWidget surface;
+        surface.setAttribute(Qt::WA_TranslucentBackground);
+        surface.resize(logical);
+        // A child retains the same stylesheet paint path as the live reference.
+        std::unique_ptr<QWidget> widget(kind == "notice"
+            ? static_cast<QWidget *>(new QLabel(label, &surface)) : new QWidget(&surface));
+        QWidget &control = *widget;
+        control.setAttribute(Qt::WA_StyledBackground);
+        control.setGeometry(bounds);
+        QString style;
+        if (kind == "panel") style = "background: rgba(27,30,35,190); border: 1px solid #414751; border-radius: 12px;";
+        else if (kind == "button") style = QString("background: %1; border: 1px solid transparent; border-radius: 6px;").arg(label);
+        else if (kind == "remove") style = QString("background: %1; border: 1px solid #91bff0; border-radius: 5px;").arg(label);
+        else if (kind == "notice") {
+            auto *notice = static_cast<QLabel *>(&control);
+            notice->setWordWrap(true);
+            notice->setAlignment(Qt::AlignCenter);
+            style = "color: #f1d4a2; background: #1b1e23; border-radius: 6px; padding: 10px;";
+        }
+        else return {};
+        control.setStyleSheet(style);
+        control.ensurePolished();
+        surface.render(&painter, QPoint(), QRegion(), QWidget::DrawChildren);
+    }
+    if (size) *size = pixels;
+    return result;
 }
 
 class Lifecycle final : public QObject {
@@ -400,6 +538,37 @@ public:
         return gqt_expose_object(m_settings) && gqt_expose_object(m_backend)
             && gqt_expose_object(m_media);
     }
+    // Desktop artwork and platform key spelling only; Jolt owns the menu/actions.
+    Q_INVOKABLE bool applyTrayArtwork(QObject *object) {
+        auto *tray = qobject_cast<QSystemTrayIcon *>(object);
+        if (!tray) return false;
+        QPixmap pixmap(32, 32); pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap); painter.setRenderHint(QPainter::Antialiasing);
+#ifdef Q_OS_MACOS
+        painter.setPen(QPen(Qt::black, 3));
+#else
+        painter.setPen(QPen(QColor("#91bff0"), 3));
+#endif
+        painter.drawRoundedRect(QRectF(3, 7, 26, 20), 4, 4);
+        painter.drawEllipse(QPointF(16, 17), 5, 5);
+        painter.drawLine(QPointF(10, 4), QPointF(21, 4)); painter.end();
+        QIcon icon(pixmap);
+#ifdef Q_OS_MACOS
+        icon.setIsMask(true);
+#endif
+        tray->setIcon(icon);
+        return true;
+    }
+    Q_INVOKABLE QString globalShortcutDescription(const QString &configured) const {
+        if (applicationHotkey) return applicationHotkey->description();
+        const auto sequence = QKeySequence::fromString(configured, QKeySequence::PortableText);
+        QString description = sequence.toString(QKeySequence::NativeText);
+#ifdef Q_OS_MACOS
+        if (sequence.count() == 1 && sequence[0].key() == Qt::Key_Print)
+            description.replace(QStringLiteral("Print"), QStringLiteral("F13 / Print Screen"));
+#endif
+        return description.isEmpty() ? QStringLiteral("Capture shortcut") : description;
+    }
     Q_INVOKABLE bool activateGlobalShortcut(const QString &configured) {
         if (qEnvironmentVariable("SNITT_JOLT_FAKE_HOTKEY") == QStringLiteral("1")) {
             m_hotkeyError.clear();
@@ -485,6 +654,8 @@ extern "C" Q_DECL_EXPORT int snitt_jolt_register() {
     }
     initializeSnittResources();
     return gqt_register_image_provider("snitt-capture", pickerImageRequest, nullptr, nullptr)
+        && gqt_register_image_provider("snitt-selector-icon", selectorIconRequest, nullptr, nullptr)
+        && gqt_register_image_provider("snitt-selector-artwork", selectorArtworkRequest, nullptr, nullptr)
         && gqt_register_factory("snitt-jolt.canvas", canvasFactory, nullptr)
         && gqt_register_factory("snitt-jolt.services", servicesFactory, nullptr)
         && gqt_register_factory("snitt-jolt.lifecycle", lifecycleFactory, nullptr);

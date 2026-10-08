@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/glimmer-qt">
+        <file alias="NativeToolTip.qml">../qml/NativeToolTip.qml</file>
         <file alias="dialog.qml">../qml/dialog.qml</file>
         <file alias="file-chooser.qml">../qml/file-chooser.qml</file>
         <file alias="shortcut.qml">../qml/shortcut.qml</file>
@@ -11,6 +12,14 @@
         <file alias="text-area.qml">../qml/text-area.qml</file>
         <file alias="entry.qml">../qml/entry.qml</file>
         <file alias="button.qml">../qml/button.qml</file>
+        <file alias="action-button.qml">../qml/action-button.qml</file>
+        <file alias="toolbar.qml">../qml/toolbar.qml</file>
+        <file alias="center.qml">../qml/center.qml</file>
+        <file alias="trim-bar.qml">../qml/trim-bar.qml</file>
+        <file alias="recording-indicator.qml">../qml/recording-indicator.qml</file>
+        <file alias="playback-controls.qml">../qml/playback-controls.qml</file>
+        <file alias="selector-toolbar.qml">../qml/selector-toolbar.qml</file>
+        <file alias="selection-decoration.qml">../qml/selection-decoration.qml</file>
         <file alias="slider.qml">../qml/slider.qml</file>
         <file alias="progress.qml">../qml/progress.qml</file>
         <file alias="busy-indicator.qml">../qml/busy-indicator.qml</file>

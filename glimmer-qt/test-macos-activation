@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+[ "$(uname -s)" = Darwin ] || { echo 'macOS is required'; exit 1; }
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" CONFIG+=property_tests >/dev/null
+QMAKE="$(cat "$ROOT/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM=cocoa JOLT_AOT_CACHE=0
+cd "$ROOT"
+exec python3 - "${JOLT:-jolt}" <<'PYTHON'
+import os, subprocess, sys
+try:
+    command = [sys.argv[1], '-A:test', '-m', 'glimmer-qt.macos-activation-test']
+    for raise_process in ('1', '0'):
+        # Explicit activation must not depend on Qt's incidental raise() path:
+        # Cocoa skips that path until a new Quick window is natively visible.
+        print(f'QT_MAC_SET_RAISE_PROCESS={raise_process}', flush=True)
+        result = subprocess.run(command, env=dict(os.environ, QT_MAC_SET_RAISE_PROCESS=raise_process), timeout=30)
+        if result.returncode:
+            sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit('macOS activation regression exceeded 30 seconds')
+PYTHON

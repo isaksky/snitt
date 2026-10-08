@@ -16,8 +16,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE = runpy.run_path(str(ROOT / "bin/package-macos"))
 SUPPORTED_QT = {"6.11.1", "6.11.2"}
-QML_FILES = ("window.qml", "item.qml", "vbox.qml", "hbox.qml", "label.qml",
-             "entry.qml", "button.qml", "video-player.qml")
+# Scan every shipped presentation component, including selector/review/dialog
+# controls, so a release bundle carries their actual Qt module dependencies.
+QML_FILES = tuple(sorted(path.name for path in (ROOT / "glimmer-qt/qml").glob("*.qml")))
 PRIVATE_FILES = ("PlugIns/multimedia/libffmpegmediaplugin.dylib",
                  "Frameworks/libavformat.61.dylib", "Frameworks/libavcodec.61.dylib",
                  "Frameworks/libswresample.5.dylib", "Frameworks/libswscale.8.dylib",

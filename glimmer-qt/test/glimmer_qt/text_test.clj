@@ -78,9 +78,13 @@
                 (check (> (readp "contentHeight") 160) "Long Unicode text wraps beyond frame")
                 (check (seq @heights) "Content height notifications reach Glimmer")
                 (reset! old-height (readp "contentHeight"))
-                (q/set-property! window "width" 170))
+                ;; With the inherited platform font, 250 and 170 can both put
+                ;; this fixture on two lines. Cross a full additional wrap.
+                (q/set-property! window "width" 120))
               (fn []
-                (check (> (readp "contentHeight") @old-height) "Narrower frame rewraps text")
+                (check (> (readp "contentHeight") @old-height)
+                       (str "Narrower frame rewraps text: " @old-height " -> " (readp "contentHeight")
+                            " at width " (readp "width")))
                 (let [viewport (q/child-target (id "scroll") "contentItem")]
                   (q/set-property! viewport "contentY" 200)
                   (pointer! (id "scroll") 4 30.0 40.0)

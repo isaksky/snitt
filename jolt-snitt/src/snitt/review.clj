@@ -16,7 +16,7 @@
    :end (/ (double (max 0 duration)) 1000.0) :playhead 0.0
    :interacting false :resume false :priming false :primed false
    :preparing false :dismiss-after-cancel false :playing false
-   :media (value/enum "NoMedia") :error "" :busy false
+   :media-duration 0 :media (value/enum "NoMedia") :error "" :busy false
    :problem "" :progress 0.0 :thumbnails []})
 (defn editable? [s busy?]
   (and (pos? (:duration s)) (not busy?) (not (:preparing s))))
@@ -49,8 +49,9 @@
     (let [playhead (min (:end s) (+ (:playhead s) (* seconds rate)))]
       (assoc s :playhead playhead :playing (< playhead (:end s))))))
 (defn fmt [seconds]
-  (let [tenths (long (Math/round (* 10 (max 0 seconds))))]
-    (str (quot tenths 600) ":" (format "%02d.%01d" (mod (quot tenths 10) 60) (mod tenths 10)))))
+  (let [centiseconds (long (Math/round (* 100 (max 0 seconds))))]
+    (format "%02d:%02d.%02d" (quot centiseconds 6000)
+            (mod (quot centiseconds 100) 60) (mod centiseconds 100))))
 
 (defn- surface [owner]
   (when-let [window @(:window owner)]
@@ -162,69 +163,23 @@
                                                 (long (Math/round (* 1000 end)))]))))))
         nil))))
 
-(defn- thumbnail [source i]
-  [:image {:key i :id (str "review-thumb-" i)
-           :source (value/url (or source "")) :hexpand true
-           :preferred-height 58 :fill-mode "crop" :cache false}])
 (defn view [owner]
-  (let [{:keys [duration start end playhead playing priming preparing error
+  (let [{:keys [duration start end playhead playing priming preparing error media media-duration
                 busy problem progress thumbnails]} @(:state owner)
         editable (editable? @(:state owner) busy)
-        thumbs thumbnails
         {:keys [shortcuts hints]} @settings/published
-        play-hint (get hints "reviewPlayPause" "")]
-    [:vbox {:id "review-root" :hexpand true :vexpand true :padding 24 :spacing 12}
-     [:label {:label "Review recording" :font-size 24 :font-weight 600}]
+        play-hint (get hints "reviewPlayPause" "")
+        play-label (if (or priming (= media (value/enum "LoadingMedia"))) "Loading…"
+                     (if playing "Pause" "Play"))]
+    [:vbox {:id "review-root" :hexpand true :vexpand true :padding 24 :spacing 14}
+     [:label {:label "Review recording" :font-size 24 :font-weight 600 :color "#f0f3f7" :hexpand true}]
      [:label {:label "Drag the white handle to seek, or the blue handles to trim."
-              :color "#aab3c0"}]
-     [:video-player {:id "review-video" :hexpand true :vexpand true
-                     :on-first-frame #(finish-priming! owner)}]
-     [:label {:id "review-time" :label (str (fmt playhead) " / " (fmt duration))
-              :hexpand true :text-alignment (value/enum "AlignHCenter")}]
-     [:hbox {:hexpand true}
-      [:spacer {:hexpand true}]
-      [:button {:id "review-play" :label (if priming "Loading…" (if playing "Pause" "Play"))
-                :sensitive editable
-                :tooltip (str "Play or pause" (when (seq play-hint) (str " (" play-hint ")")))
-                :on-click #(command! owner :play-pause)}]
-      [:spacer {:hexpand true}]]
-     [:hbox {:id "review-filmstrip" :hexpand true :preferred-height 58 :spacing 0}
-      (for [i (range 12)] (thumbnail (nth thumbs i nil) i))]
-     [:label {:label "Playback position" :color "#dfe5ed"}]
-     [:slider {:id "review-seek" :hexpand true :from start :to (max end (+ start 0.001))
-               :value playhead :accessible-name "Playback position" :sensitive editable
-               :on-change #(seek! owner %)
-               :on-interacting-change #(interacting! owner %)}]
-     [:hbox {:hexpand true :spacing 10}
-      [:label {:label (str "From " (fmt start)) :color "#91bff0"}]
-      [:slider {:id "review-start" :hexpand true :from 0 :to (max 0.001 (- end (minimum-range duration)))
-                :value start :accessible-name "Trim start" :sensitive editable
-                :handle-color "#91bff0" :on-change #(handle! owner :start %)
-                :on-interacting-change #(interacting! owner %)}]
-      [:slider {:id "review-end" :hexpand true :from (min duration (+ start (minimum-range duration)))
-                :to (max duration 0.001) :value end :accessible-name "Trim end"
-                :handle-color "#91bff0" :sensitive editable
-                :on-change #(handle! owner :end %)
-                :on-interacting-change #(interacting! owner %)}]
-      [:label {:label (str "To " (fmt end)) :color "#91bff0"}]]
-     (when (or (seq problem) (seq error) busy)
-       [:label {:label (if (seq problem) problem
-                          (if (seq error) error
-                            (str "Exporting trimmed recording… "
-                                 (long (Math/round (* 100 (max 0 progress)))) "%")))
-                :color (if (or (seq problem) (seq error)) "#f0b5b5" "#aab3c0")}])
-     [:hbox {:hexpand true :spacing 10}
-      (when (trimmed? @(:state owner))
-        [:button {:id "review-keep" :label "Keep original"
-                  :sensitive (not (or busy preparing))
-                  :on-click #(command! owner :keep)}])
-      [:spacer {:hexpand true}]
-      (when (or busy preparing)
-        [:button {:id "review-cancel-export" :label "Cancel export"
-                  :on-click #(command! owner :cancel)}])
-      [:button {:id "review-save" :label (if (trimmed? @(:state owner)) "Save trim" "Keep original")
-                :sensitive (if (trimmed? @(:state owner)) editable (not (or busy preparing)))
-                :on-click #(command! owner (if (trimmed? @(:state owner)) :export :keep))}]]
+              :color "#aab3c0" :wrap (value/enum "WordWrap") :hexpand true}]
+     [:vbox {:id "review-preview" :hexpand true :vexpand true :color "#07090b" :radius 10 :padding 4}
+      [:overlay {:hexpand true :vexpand true}
+       [:video-player {:id "review-video" :anchor "fill" :on-first-frame #(finish-priming! owner)}]
+       [:center {:visible (boolean (seq error))}
+        [:label {:id "review-playback-error" :label error :color "#f0b5b5"}]]
      (for [[action id command args] [["reviewPlayPause" "review-space" :play-pause []]
                                      ["reviewSeekBackward" "review-left" :seek [-1]]
                                      ["reviewSeekForward" "review-right" :seek [1]]
@@ -235,7 +190,45 @@
                                      ["reviewCancel" "review-escape" :cancel []]]]
        [:shortcut {:key id :id id :sequences (get shortcuts action [])
                    :enabled (if (= command :cancel) true editable)
-                   :on-activate #(apply command! owner command args)}])]))
+                   :on-activate #(apply command! owner command args)}])]]
+     [:playback-controls {:id "review-playback-controls" :hexpand true
+                          :elapsed (fmt playhead) :total (fmt duration) :label play-label
+                          :icon (str "qrc:/icons/" (if (and playing (not priming)) "pause" "play") ".svg")
+                          :can-play (and editable (pos? media-duration) (not priming))
+                          :tooltip (str play-label (when (seq play-hint) (str " (" play-hint ")")))
+                          :on-play #(command! owner :play-pause)}]
+     [:trim-bar {:id "review-trim" :hexpand true :preferred-height 108 :sensitive editable
+                 :duration duration :start start :end end :playhead playhead
+                 :thumb-count 12 :thumbnails thumbnails
+                 :start-label (fmt start) :end-label (fmt end)
+                 :on-seek #(seek! owner %)
+                 :on-start #(handle! owner :start %)
+                 :on-end #(handle! owner :end %)
+                 :on-interacting-change #(interacting! owner %)}]
+     [:hbox {:hexpand true}
+      [:label {:label (str "From " (fmt start)) :color "#91bff0"}]
+      [:spacer {:hexpand true}]
+      [:label {:label (str "To " (fmt end)) :color "#91bff0"}]]
+     (when (or (seq problem) busy)
+       [:label {:label (if (seq problem) problem
+                          (str "Exporting trimmed recording…"
+                               (when (>= progress 0) (str " " (long (Math/round (* 100 progress))) "%"))))
+                :hexpand true :wrap (value/enum "WordWrap")
+                :color (if (seq problem) "#f0b5b5" "#aab3c0")}])
+     [:hbox {:hexpand true :spacing 10}
+      (when (trimmed? @(:state owner))
+        [:action-button {:id "review-keep" :label "Keep original"
+                         :sensitive (not (or busy preparing))
+                         :on-click #(command! owner :keep)}])
+      [:spacer {:hexpand true}]
+      (when (or busy preparing)
+        [:action-button {:id "review-cancel-export" :label "Cancel export"
+                         :on-click #(command! owner :cancel)}])
+      [:action-button {:id "review-save" :label (if (trimmed? @(:state owner)) "Save trim" "Keep original")
+                       :appearance "primary" :font-size 14 :font-weight 600 :natural-height true
+                       :sensitive (if (trimmed? @(:state owner)) editable (not (or busy preparing)))
+                       :on-click #(command! owner (if (trimmed? @(:state owner)) :export :keep))}]]
+]))
 
 (defn- refresh-trim! [owner]
   (when-not @(:closed owner)
@@ -268,6 +261,8 @@
       (let [window (qt/open-window! #(view owner) :title "Snitt — Review recording"
                                     :width 960 :height 690
                                     :on-close (fn [_] (command! owner :close) false))]
+        (q/set-property! window "minimumWidth" 680)
+        (q/set-property! window "minimumHeight" 520)
         (reset! (:window owner) window)
         (let [video (surface owner)]
           (media/source! video (trim/property trim "source"))
@@ -278,7 +273,8 @@
                                 (when (and (not= % (value/url ""))
                                            (:primed @(:state owner)))
                                   (swap! (:state owner) assoc :primed false :priming false)))]
-                   [:duration #(do (invoke-trim! owner "setDuration(qlonglong)" [%])
+                   [:duration #(do (swap! (:state owner) assoc :media-duration %)
+                                   (invoke-trim! owner "setDuration(qlonglong)" [%])
                                    (swap! (:state owner) set-duration %))]
                    [:media #(do (swap! (:state owner) assoc :media %)
                                 (when (contains? #{(value/enum "LoadedMedia")

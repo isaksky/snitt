@@ -56,7 +56,7 @@
 
 ;; Shared text and accessibility contract; enum values use value/enum.
 (def ^:private typography
-  {:font-family ["font.family" :string ""]
+  {:font-family ["requestedFontFamily" :string ""]
    :font-size ["font.pixelSize" :number 14]
    :font-weight ["font.weight" :number 400]
    :font-italic ["font.italic" :bool false]})
@@ -83,6 +83,10 @@
           :background-source ["backgroundSource" :string ""]}))
 
 (defonce ^:private registry (atom {}))
+
+(def ^:private box-style
+  {:color ["color" :color "transparent"] :radius ["radius" :number 0]
+   :border-color ["border.color" :color "transparent"] :border-width ["border.width" :number 0]})
 
 (defn register!
   "Register a tag before starting a session. :source is an absolute QML URL
@@ -122,13 +126,21 @@
   tag)
 
 (doseq [[tag props events children relay]
-        [[:vbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
-         [:hbox (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
+        [[:vbox (assoc (merge common padding box-style) :spacing ["spacing" :number 0]) {} "content" ""]
+         [:hbox (merge common padding box-style
+                       {:spacing ["spacing" :number 0]
+                        :selected-segment ["selectedSegment" :number -1]
+                        :segment-count ["segmentCount" :number 2]
+                        :segment-color ["segmentColor" :color "transparent"]}) {} "content" ""]
+         [:toolbar (assoc common :hint-minimum-width ["hintMinimumWidth" :number 180]) {} :self ""]
+         [:center common {} :self ""]
          [:flow (assoc (merge common padding) :spacing ["spacing" :number 0]) {} "content" ""]
          [:pointer-area (merge common geometry
                                {:buttons ["acceptedButtons" :value (value/flags "LeftButton")]
                                 :hover ["hoverEnabled" :bool false]
                                 :prevent-stealing ["preventStealing" :bool false]
+                                :tooltip ["tooltip" :string ""]
+                                :resize-grip ["resizeGrip" :bool false]
                                 :cursor ["cursorShape" :value (value/enum "ArrowCursor")]})
           {:on-pointer-press :pointer :on-pointer-move :pointer
            :on-pointer-release :pointer :on-pointer-cancel :pointer
@@ -149,7 +161,9 @@
                          :cache ["imageCache" :bool true]})
           {:on-status :string :on-loaded :none :on-error :string} :none "relay"]
          [:label (merge common typography accessible text-layout
-                        {:label ["text" :string ""] :color ["color" :color "#ffffff"]}) {} :none ""]
+                        {:label ["text" :string ""] :color ["color" :color "#ffffff"]
+                         :tooltip-on-press ["tooltipOnPress" :bool false]
+                         :fixed-height ["explicitHeight" :number -1] :padding-right ["rightPadding" :number 0]}) {} :none ""]
          [:scroll (merge common geometry
                          {:padding ["padding" :number 0]
                           :content-width ["explicitContentWidth" :number -1]
@@ -160,6 +174,7 @@
                             {:tab-focus ["activeFocusOnTab" :bool true]
                              :text ["text" :string ""]
                              :padding ["padding" :number 6]
+                             :plain ["plain" :bool false]
                              :color ["color" :color "#ffffff"]
                              :selection-color ["selectionColor" :color "#3465a4"]
                              :selected-text-color ["selectedTextColor" :color "#ffffff"]
@@ -170,9 +185,60 @@
          [:entry (merge common {:tab-focus ["activeFocusOnTab" :bool true] :text ["text" :string ""] :placeholder ["hint" :string ""]})
           {:on-change :string :on-activate :none} :none "relay"]
          [:button actions
+          {:on-click :none} :none "relay"]
+         [:action-button (merge (dissoc common :tab-focus) typography accessible
+                                {:label ["text" :string ""] :checked ["checked" :bool false]
+                                 :highlighted ["highlighted" :bool false]
+                                 :font-size ["font.pixelSize" :number 13]
+                                 :font-weight ["font.weight" :number 500]
+                                 :icon ["iconSource" :string ""] :icon-only ["iconOnly" :bool false]
+                                 :preserve-icon-colors ["preserveIconColors" :bool false]
+                                 :appearance ["appearance" :string "action"]
+                                 :mode-color ["modeColor" :color "transparent"]
+                                 :underline-shortcut ["underlineShortcut" :bool false]
+                                 :shortcut-label ["shortcutLabel" :bool false]
+                                 :natural-height ["naturalHeight" :bool false]
+                                 :focus-policy ["focusPolicy" :value (value/enum "NoFocus")]})
           {:on-click :none} :none "relay"]]]
   (register! tag {:source (str "qrc:/glimmer-qt/" (name tag) ".qml")
                   :props props :events events :children children :relay relay}))
+
+(register! :selector-toolbar
+  {:source "qrc:/glimmer-qt/selector-toolbar.qml" :relay "relay" :children :none
+   :props (merge common {:x ["x" :number 0] :y ["y" :number 0]
+                         :width ["width" :number 960] :height ["height" :number 60]
+                         :screen-width ["screenWidth" :number 960]
+                         :mode ["mode" :string "single"] :selection-count ["selectionCount" :number 0]
+                         :hints ["hints" :value {}] :shortcuts ["shortcuts" :value {}]})
+   :events {:on-action :string}})
+
+(register! :selection-decoration
+  {:source "qrc:/glimmer-qt/selection-decoration.qml" :relay "relay" :children :none
+   :props (merge common {:width ["width" :number 960] :height ["height" :number 600]
+                         :regions ["regions" :value []] :dragging ["dragging" :bool false]
+                         :drag-area ["dragArea" :value (value/rect-f 0 0 0 0)]
+                         :dimensions ["dimensions" :string ""] :notice ["notice" :string ""]})
+   :events {:on-remove :number}})
+
+(register! :recording-indicator
+  {:source "qrc:/glimmer-qt/recording-indicator.qml" :children :none
+   :props (merge common {:completing ["completing" :bool false]}) :events {}})
+
+(register! :playback-controls
+  {:source "qrc:/glimmer-qt/playback-controls.qml" :relay "relay" :children :none
+   :props (merge common {:elapsed ["elapsed" :string ""] :total ["total" :string ""]
+                         :label ["label" :string "Play"] :tooltip ["tooltip" :string ""]
+                         :icon ["iconSource" :string ""] :can-play ["canPlay" :bool true]})
+   :events {:on-play :none}})
+
+(register! :trim-bar
+  {:source "qrc:/glimmer-qt/trim-bar.qml" :relay "relay" :children :none
+   :props (merge common {:duration ["durationSec" :number 0] :start ["startSec" :number 0]
+                         :end ["endSec" :number 0] :playhead ["playheadSec" :number 0]
+                         :thumb-count ["thumbCount" :number 12]
+                         :thumbnails ["thumbnails" :value []]
+                         :start-label ["startLabel" :string ""] :end-label ["endLabel" :string ""]})
+   :events {:on-seek :number :on-start :number :on-end :number :on-interacting-change :bool}})
 
 (register! :slider
   {:source "qrc:/glimmer-qt/slider.qml" :relay "relay"
@@ -216,15 +282,18 @@
 (register! :dialog
   {:source "qrc:/glimmer-qt/dialog.qml" :relay "relay" :children "content"
    :props {:id ["objectName" :string ""] :title ["title" :string ""]
-           :modal ["modal" :bool true] :dialog-width ["dialogWidth" :number 400]}
+           :modal ["modal" :bool true] :dialog-width ["dialogWidth" :number 400]
+           :center-target ["centerTarget" :value nil]
+           :fit-window ["fitWindow" :bool false] :animated ["animated" :bool false]
+           :appearance ["appearance" :string "default"] :spacing ["contentSpacing" :number 12]}
    :events {:on-accepted :none :on-rejected :none :on-visible-change :none}})
 
 (register! :file-chooser
   {:source "qrc:/glimmer-qt/file-chooser.qml" :relay "relay"
    :props {:id ["objectName" :string ""] :title ["title" :string "Open image"]
            :filters ["nameFilters" :value ["Images (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)"]]
-           :folder ["currentFolder" :value (value/url "file:///")]
-           :selected-url ["selectedFile" :value (value/url "file:///")]}
+           :folder ["currentFolder" :value (value/url "")]
+           :selected-url ["selectedFile" :value (value/url "")]}
    :events {:on-accepted :string :on-rejected :none :on-visible-change :none}})
 
 (defn- registration [tag]
@@ -442,7 +511,7 @@
 
 (defn- placement! [tag child]
   (validate-placement! tag (:props (live-widget child)))
-  (when (#{:item :overlay :rectangle :spacer :pointer-area :image :scroll} (:tag (live-widget child)))
+  (when (#{:item :overlay :rectangle :spacer :pointer-area :image :scroll :video-player} (:tag (live-widget child)))
     (q/set-property! child "positionManaged" (boolean (#{:window :hbox :vbox :flow} tag)))
     (q/set-property! child "sizeManaged" (boolean (#{:window :hbox :vbox} tag)))))
 

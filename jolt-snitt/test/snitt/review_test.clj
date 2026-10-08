@@ -15,7 +15,13 @@
 
 (ffi/defcfn click-native "gqt_test_click" [:uint64] :int :blocking)
 (ffi/defcfn key-native "gqt_test_key" [:uint64 :int :int] :int :blocking)
+(ffi/defcfn pointer-native "gqt_test_pointer" [:uint64 :int :double :double] :int :blocking)
 (ffi/defcfn slider-native "gqt_test_slider_input" [:uint64 :int :double] :int :blocking)
+
+(deftest reference-time-format
+  (is (= "00:00.00" (review/fmt 0)))
+  (is (= "01:00.00" (review/fmt 59.999)))
+  (is (= "00:12.34" (review/fmt 12.34))))
 
 (deftest timeline-policy
   (let [short (review/initial 80)
@@ -102,15 +108,18 @@
                   (review/handle! owner :start 0)
                   (review/handle! owner :end (:duration @(:state owner)))
                   (review/seek! owner 0)
-                  (continue))))))))))
+                  (qt/later! 120 continue))))))))))
 
 (defn check-load-failure! [owner trim video clip missing]
-  (wait-for! "filmstrip thumbnail"
-    #(seq (first (trim/property trim "thumbnails")))
+  (wait-for! "filmstrip thumbnail projection"
+    #(let [timeline (qt/find-by-id @(:window owner) "review-trim")
+           thumbnails (vec (trim/property trim "thumbnails"))]
+       (and (seq (first thumbnails))
+            (= thumbnails (q/read-property timeline "thumbnails"))))
     #(do
-       (let [image (qt/find-by-id @(:window owner) "review-thumb-0")]
-         (check! (= (value/url (first (trim/property trim "thumbnails")))
-                    (q/read-property image "imageSource"))
+       (let [timeline (qt/find-by-id @(:window owner) "review-trim")]
+         (check! (= (vec (trim/property trim "thumbnails"))
+                    (q/read-property timeline "thumbnails"))
                  "Glimmer filmstrip follows the native thumbnail"))
        (media/source! video (value/local-file missing))
        (wait-for! "playback failure" #(seq (:error @(:state owner)))
@@ -178,14 +187,18 @@
                                "Review screenshot saved"))
                      (check-live-shortcuts! owner window services
                       (fn []
-                     (let [start (qt/find-by-id window "review-start")
-                           end (qt/find-by-id window "review-end")
-                           seek (qt/find-by-id window "review-seek")]
-                       (doseq [action [0 1 2]]
-                         (check! (= 1 (slider-native start action 0.25)) "Actual start handle input"))
+                     (let [timeline (qt/find-by-id window "review-trim")
+                           input (q/child-target timeline "timelineInput")
+                           seek (q/child-target timeline "seekSlider")
+                           width (q/read-property timeline "width")]
+                       (check! (== 108 (q/read-property timeline "height")) "Original integrated timeline height")
+                       (check! (= 1 (pointer-native input 0 7.0 32.0)) "Press start grip")
+                       (check! (= 1 (pointer-native input 1 (* width 0.25) 32.0)) "Drag start grip")
+                       (check! (= 1 (pointer-native input 2 (* width 0.25) 32.0)) "Release start grip")
                        (check! (> (:start @(:state owner)) 0.04) "Start handle moved")
-                       (doseq [action [0 1 2]]
-                         (check! (= 1 (slider-native end action 0.75)) "Actual end handle input"))
+                       (check! (= 1 (pointer-native input 0 (- width 7) 32.0)) "Press end grip")
+                       (check! (= 1 (pointer-native input 1 (* width 0.75) 32.0)) "Drag end grip")
+                       (check! (= 1 (pointer-native input 2 (* width 0.75) 32.0)) "Release end grip")
                        (check! (< (:end @(:state owner)) (:duration @(:state owner)))
                                "End handle moved")
                        (doseq [action [0 1 2]]
@@ -196,7 +209,7 @@
                        (review/handle! owner :start 0)
                        (review/handle! owner :end (:duration @(:state owner)))
                        (review/seek! owner 0))
-                     (check! (= 1 (click-native (qt/find-by-id window "review-play")))
+                     (check! (= 1 (click-native (q/child-target (qt/find-by-id window "review-playback-controls") "playButton")))
                              "Actual play button click")
                      (wait-for! "elapsed playhead"
                        #(> (:playhead @(:state owner))

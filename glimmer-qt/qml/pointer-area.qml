@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 
 Geometry {
     id: root
@@ -8,6 +9,20 @@ Geometry {
     property alias hoverEnabled: input.hoverEnabled
     property alias preventStealing: input.preventStealing
     property alias cursorShape: input.cursorShape
+    property string tooltip: ""
+    property bool resizeGrip: false
+    ToolTip.visible: input.pressed && tooltip.length > 0
+    ToolTip.text: tooltip
+    Rectangle {
+        visible: root.resizeGrip
+        anchors.centerIn: parent
+        width: 6
+        height: 24
+        radius: 3
+        color: input.pressed || input.containsMouse ? "#91bff0" : "#dfe5ed"
+        border.color: "#111317"
+        border.width: 1
+    }
     // MouseArea owns the exclusive grab after an accepted press. Children can
     // be composed above it; unaccepted presses/wheels follow Qt propagation.
     MouseArea {

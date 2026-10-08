@@ -75,6 +75,8 @@
         output-file (System/getenv "SNITT_JOLT_SAVED_PATH")]
     (reset! initial-canvas canvas)
     (check! (qt/window-alive? window) "Jolt owns a live editor window")
+    (check! (= "Snitt — Capture 1" (q/read-property window "title"))
+            "Unnamed editor uses the reference capture title")
     (check! (every? q/alive? [canvas root settings backend (:handle trim)])
             "Canvas and services share the Qt session")
     (check! (.startsWith (q/read-property settings "settingsFile") directory)
@@ -142,7 +144,7 @@
           (spit output-file path)))
       (fn []
         (spit (str directory "/corrupt.png") "This is not a PNG")
-        (check! (not (enabled? "open")) "Open control follows image context")
+        (check! (nil? (id "open")) "Populated editor omits the empty-state Open action")
         (check! (not (app/dispatch! (:context @app/runtime) "openImage"))
                 "Direct command cannot bypass disabled image context")
         (check! (not (native/load-image! canvas (str directory "/corrupt.png")))
@@ -152,8 +154,8 @@
         (check! (q/read-property canvas "canUndo") "Failed load preserves history")
         (check! (str/includes? (:status @app/state) "Could not open")
                 "Failed load displays an actionable error")
-        (check! (str/includes? (q/read-property (id "status") "text") "Could not open")
-                "Failed load error reaches visible status label")
+        (check! (str/includes? (q/read-property (id "annotation-hint") "text") "Could not open")
+                "Failed load error reaches the reference toolbar notice")
         (let [blocked (str directory "/blocked-save")]
           (spit blocked "occupied")
           (q/set-property! canvas "saveRoot" blocked)
@@ -163,8 +165,8 @@
         (check! (q/read-property canvas "canUndo") "Failed save preserves history")
         (check! (str/includes? (:status @app/state) "Could not")
                 "Failed save displays an actionable error")
-        (check! (str/includes? (q/read-property (id "status") "text") "Could not")
-                "Failed save error reaches visible status label")
+        (check! (str/includes? (q/read-property (id "annotation-hint") "text") "Could not")
+                "Failed save error reaches the reference toolbar notice")
         (q/set-property! canvas "saveRoot"
                          (q/read-property settings "picturesRoot"))
         (with-redefs [native/copy! (fn [_] false)]
@@ -173,19 +175,25 @@
         (check! (q/read-property canvas "canUndo") "Failed copy preserves history")
         (check! (str/includes? (:status @app/state) "Could not copy")
                 "Failed copy displays retry guidance")
-        (check! (str/includes? (q/read-property (id "status") "text") "Could not copy")
-                "Failed copy error reaches visible status label")
+        (check! (str/includes? (q/read-property (id "annotation-hint") "text") "Could not copy")
+                "Failed copy error reaches the reference toolbar notice")
         (check! (= @initial-canvas (app/canvas))
                 "Error rerender keeps the canvas and document")
         (with-redefs [app/reveal-saved! (fn [_ _] false)]
-          (click! "save"))
-        (check! (q/read-property canvas "hasImage") "Reveal failure keeps the editor")
-        (check! (q/read-property canvas "canUndo") "Reveal failure keeps document history")
-        (check! (str/includes? (:status @app/state) "Screenshot saved at ")
-                "Reveal failure reports the saved path")
+          (click! "save")))
+      (fn []
+        (check! (not (q/read-property canvas "hasImage")) "Saved image is cleared before reveal failure")
+        (check! (not (q/read-property canvas "canUndo")) "Reveal failure shows the original empty-editor error state")
+        (check! (str/starts-with? (:saved-path @app/state) directory)
+                "Reveal failure preserves the saved path for the dialog")
         (check! (widget/dialog-visible? (id "reveal-dialog"))
                 "Reveal failure opens recoverable dialog")
         (widget/accept-dialog! (id "reveal-dialog"))
+        ;; The reference clears a successfully saved document even if revealing
+        ;; its file fails. Start a fresh document for the session isolation checks.
+        (check! (native/load-image! canvas image) "Fresh document opens after reveal failure")
+        (native/draw! canvas {:kind :annotation :tool "rect"
+                             :start [100 100] :end [180 180] :stroke-width 4})
         (let [manager (:manager @app/runtime)
               second-id (sessions/open-image! manager (str "file://" image) "second.png")
               second (sessions/session manager second-id)
@@ -272,7 +280,7 @@
           (check! (q/read-property canvas "canUndo") "Surviving editor can redo its edit"))
         (qt/later! 120
           (fn []
-            (check! (str/includes? (q/read-property (id "rect") "text") "F6")
+            (check! (= "F6" (q/read-property (id "shortcut-rect") "text"))
                     "Live shortcut hint reaches first editor toolbar")
             (when-let [icon (:tray @app/runtime)]
               (when (q/alive? icon)

@@ -129,6 +129,7 @@
 (ffi/defcfn live-count "gqt_live_count" [] :int)
 (ffi/defcfn owned-count "gqt_owned_count" [] :int)
 (defchecked emit-signal "gqt_emit" [:uint64 :string] :int)
+(defchecked window-snapshot "gqt_window_snapshot" [:uint64 :string] :int)
 (defchecked save-window "gqt_save_window" [:uint64 :string] :int)
 (defchecked request-close "gqt_request_close" [:uint64] :int)
 (defchecked destroy-native "gqt_destroy_native" [:uint64] :int)

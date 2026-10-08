@@ -4,8 +4,21 @@ import QtQuick.Layouts
 
 TextArea {
     id: control
+    property string requestedFontFamily: ""
+    Binding { target: control; property: "font.family"; when: control.requestedFontFamily.length > 0; value: control.requestedFontFamily }
     required property QtObject relay
     property string accessibleName: ""
+    property bool plain: false
+    Binding { target: control; property: "topInset"; when: control.plain; value: 0 }
+    Binding { target: control; property: "bottomInset"; when: control.plain; value: 0 }
+    Binding { target: control; property: "leftInset"; when: control.plain; value: 0 }
+    Binding { target: control; property: "rightInset"; when: control.plain; value: 0 }
+    Binding { target: control; property: "topPadding"; when: control.plain; value: 0 }
+    Binding { target: control; property: "bottomPadding"; when: control.plain; value: 0 }
+    Binding { target: control; property: "leftPadding"; when: control.plain; value: 0 }
+    Binding { target: control; property: "rightPadding"; when: control.plain; value: 0 }
+    Binding { target: control; property: "implicitHeight"; when: control.plain; value: control.contentHeight }
+    background.visible: !plain
     Accessible.name: accessibleName
     textFormat: TextEdit.PlainText
     wrapMode: TextEdit.Wrap

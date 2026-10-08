@@ -205,6 +205,31 @@
             (when on-publish (on-publish next))
             true))))))
 
+(defn- initialize! [{:keys [root settings]}]
+  (let [mac? (q/read-property root "macOS")
+        path (q/read-property settings "settingsFile")
+        defaults (candidate settings mac? "")
+        parsed (try {:candidate (candidate settings mac? (slurp path))}
+                    (catch Throwable error {:candidate defaults :error (ex-message error)}))
+        wanted (first (get-in parsed [:candidate :configured "globalCapture"]))
+        activated? (object/invoke! root "activateGlobalShortcut(QString)" [wanted])
+        failure (when-not activated? (object/invoke! root "hotkeyError()" []))
+        next (if activated? (:candidate parsed) defaults)
+        message (if activated? (:error parsed)
+                  (str "The configured capture shortcut (" (get-in parsed [:candidate :hints "globalCapture"])
+                       ") could not be registered: " failure
+                       ". Snitt restored its default shortcut; correct Shortcuts/globalCapture in " path "."))]
+    (when-not activated?
+      (object/invoke! root "activateGlobalShortcut(QString)"
+                      [(first (get-in defaults [:configured "globalCapture"]))]))
+    (when-not (object/invoke! settings "applyExternal(QVariantMap)" [(native-values next)])
+      (invalid! "Could not publish the initial settings snapshot."))
+    (reset! published next)
+    (when-let [publish (:on-publish @controller)] (publish next))
+    (when (seq message)
+      (object/invoke! settings "externalError(QString)" [message])
+      (when-let [report (:on-error @controller)] (report message)))))
+
 (defn register! [services]
   (when-not @controller (reset! controller {:services []}))
   (swap! controller update :services conj services)
@@ -215,13 +240,10 @@
                      #(when (= (:root services) (:root (first (live-services))))
                         (when-let [capture (:on-capture @controller)] (capture))))
   (if-let [current @published]
-    (do
-      (when-not (object/invoke! (:root services) "activateGlobalShortcut(QString)"
-                                [(first (get-in current [:configured "globalCapture"]))])
-        (invalid! (str "Could not reactivate Shortcuts/globalCapture: "
-                       (object/invoke! (:root services) "hotkeyError()" []))))
-      (object/invoke! (:settings services) "applyExternal(QVariantMap)" [(native-values current)]))
-    (reload!))
+    ;; One host owns the native shortcut. New editors inherit its usable
+    ;; settings even when the OS could not register that shortcut at startup.
+    (object/invoke! (:settings services) "applyExternal(QVariantMap)" [(native-values current)])
+    (initialize! services))
   services)
 
 (defn configure! [& {:keys [on-publish on-error on-capture]}]

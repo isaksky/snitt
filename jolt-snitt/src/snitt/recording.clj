@@ -38,10 +38,10 @@
         [state []]))))
 
 (defn presentation [{:keys [phase elapsed canceling protected]}]
-  {:label (case phase :preparing "Starting…" :ready "Ready"
-                :recording (str "Recording · " (quot elapsed 60) ":"
+  {:label (case phase :preparing "Starting…"
+                (:ready :recording) (str "Recording · " (quot elapsed 60) ":"
                                 (when (< (mod elapsed 60) 10) "0") (mod elapsed 60))
-                :finishing (if canceling "Canceling…" "Saving…")
+                :finishing "Saving…"
                 :saved "Saved" :canceled "Canceled" :failed "Failed")
    :stop-enabled (contains? #{:ready :recording} phase)
    :cancel-enabled (contains? #{:preparing :ready :recording} phase)
@@ -52,14 +52,16 @@
 (declare dispatch!)
 (defn controls [owner]
   (let [{:keys [label stop-enabled cancel-enabled]} (presentation @(:state owner))]
-    [:rectangle {:hexpand true :vexpand true :color "#ee1b1e23" :radius 12
-                 :border-color "#6994bf" :border-width 1}
-     [:hbox {:id "recording-controls" :padding 8 :spacing 8}
-     [:label {:id "recording-label" :label label :hexpand true}]
-     [:button {:id "recording-stop" :label "Stop" :sensitive stop-enabled
-               :on-click #(dispatch! owner :stop)}]
-     [:button {:id "recording-cancel" :label "Cancel" :sensitive cancel-enabled
-               :on-click #(dispatch! owner :cancel)}]]]))
+    [:hbox {:id "recording-controls" :hexpand true :vexpand true :color "#ee1b1e23" :radius 12
+            :border-color "#6994bf" :border-width 1 :padding-left 12 :padding-right 8 :spacing 6}
+      [:label {:id "recording-label" :label label :hexpand true
+               :color "#f0f3f7" :font-size 13 :font-weight 600}]
+      [:action-button {:id "recording-cancel" :label "Cancel" :sensitive cancel-enabled
+                       :accessible-name "Cancel recording" :on-click #(dispatch! owner :cancel)}]
+      [:action-button {:id "recording-stop" :label "Stop" :sensitive stop-enabled
+                       :accessible-name "Stop and save recording" :appearance "primary"
+                       :font-size 14 :font-weight 600 :natural-height true
+                       :on-click #(dispatch! owner :stop)}]]))
 
 (defn close-windows! [owner]
   (doseq [window (vals @(:windows owner))]
@@ -116,7 +118,9 @@
                                           (<= y (second region) (+ y h -1)))) (qt/screens)))
                      (first (qt/screens)))
           window! (fn [kind [x y width height] view transparent]
-                    (let [window (qt/open-window! view :title (str "Snitt — " (name kind))
+                    (let [window (qt/open-window! view :title (case kind :outline "Snitt — Recording region"
+                                                               :indicator "Snitt — Preparing recording"
+                                                               :controls "Snitt — Recording")
                                                   :x x :y y :width width :height height :screen screen
                                                   :tool true :frameless true :topmost true
                                                   :input-transparent transparent :transparent-background true
@@ -130,11 +134,8 @@
                                    [:rectangle {:anchor "fill" :color "transparent"
                                                 :border-color "#ef4444" :border-width 3}]]) true)
           indicator (window! :indicator indicator
-                             (fn [] [:rectangle {:hexpand true :vexpand true :color "#d91b1e23" :radius 90}
-                                     [:vbox {}
-                                      [:label {:label (if (= :ready (:phase @(:state owner))) "Ready" "Preparing")
-                                              :color "#f0f3f7" :font-size 22 :hexpand true
-                                              :text-alignment (value/enum "AlignHCenter")}]]]) true)
+                             (fn [] [:recording-indicator {:hexpand true :vexpand true
+                                                          :completing (= :ready (:phase @(:state owner)))}]) true)
           controls (window! :controls controls #(snitt.recording/controls owner) false)
           generation (:generation @(:state owner))]
       (if (invoke! owner "prepareRecorder(int,QObject*,QObject*,QObject*)"

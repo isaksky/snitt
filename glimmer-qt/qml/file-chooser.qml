@@ -14,8 +14,8 @@ Item {
     function open() {
         if (pending || !control.Window.window) return
         previousFocus = control.Window.window.activeFocusItem
-        chooser.currentFolder = currentFolder
-        chooser.selectedFile = selectedFile
+        if (currentFolder.toString().length > 0) chooser.currentFolder = currentFolder
+        if (selectedFile.toString().length > 0) chooser.selectedFile = selectedFile
         pending = true
         chooser.open()
     }

@@ -18,7 +18,8 @@ python3 - "$SNITT_JOLT_DATA_DIR" "$SNITT_JOLT_RECORDING_PATH" <<'PYTEST'
 import json, pathlib, subprocess, sys
 root, receipt = map(pathlib.Path, sys.argv[1:])
 path = pathlib.Path(receipt.read_text())
-assert [item.resolve() for item in root.rglob("*.mp4")] == [path.resolve()], "Canceled recording left output behind"
+outputs = [item.resolve() for item in root.rglob("*.mp4")]
+assert outputs == [path.resolve()], f"Unexpected recording outputs: {outputs}; saved {path.resolve()}"
 info = json.loads(subprocess.check_output([
     "ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height",
     "-show_entries", "format=duration", "-of", "json", str(path)], text=True))

@@ -33,7 +33,8 @@
               (* (q/read-property canvas "imageHeight") scale)) 2) (* y scale))]))
 (defn later [steps]
   (when-let [step (first steps)]
-    (qt/later! 150 #(do (step) (later (rest steps))))))
+    ;; Reference dialogs animate for 220ms; the next action starts after close.
+    (qt/later! 300 #(do (step) (later (rest steps))))))
 (defn layout [] (:arrangement @app/state))
 
 (defn exercise! [paths wide-paths]
@@ -70,15 +71,19 @@
         (document/edit! canvas {:kind :text :start [24 24] :end [114 64]
                                 :text "Edit" :font-size 20})
         (check! (q/read-property canvas "canUndo") "Annotation enters Jolt history")
-        (click! "return-arrange"))
+        (widget/focus! (id "ink-good"))
+        (app/dispatch! context "returnArrange"))
       (fn []
         (check! (widget/dialog-visible? (id "rearrange-dialog")) "Edits require confirmation")
         (check! (= :annotate (:phase (layout))) "Dialog does not discard edits")
-        (click! "keep-editing"))
+        (click! "keep-editing")
+        (check! (not (app/dispatch! context "returnArrange"))
+                "Commands stay suppressed throughout the closing animation"))
       (fn []
         (check! (= :annotate (:phase (layout))) "Cancel keeps annotation phase")
         (check! (q/read-property canvas "canUndo") "Cancel keeps edits")
-        (click! "return-arrange"))
+        (check! (q/read-property canvas "activeFocus") "Cancel restores canvas focus, including after toolbar focus")
+        (app/dispatch! context "returnArrange"))
       (fn []
         (click! "discard-edits"))
       (fn []

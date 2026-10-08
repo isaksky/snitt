@@ -89,7 +89,8 @@
                   "Ordered selections span captured displays")
           (qt/later! 150
             (fn []
-              (let [arrange (qt/find-by-id (first @(:windows picker)) "picker-arrange-0")]
+              (let [toolbar (qt/find-by-id (first @(:windows picker)) "picker-toolbar-0")
+                    arrange (q/child-target toolbar "arrangeButton")]
                 (check! (some? arrange) "Arrange action is visible")
                 (check! (= 1 (click! arrange)) "Real Arrange click reaches Jolt"))
               (qt/later! 200 #(finish-multiple! manager id count scales))))))

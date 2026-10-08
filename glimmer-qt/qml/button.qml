@@ -5,6 +5,8 @@ import QtQuick.Layouts
 
 Button {
     id: control
+    property string requestedFontFamily: ""
+    Binding { target: control; property: "font.family"; when: control.requestedFontFamily.length > 0; value: control.requestedFontFamily }
     required property QtObject relay
     property string accessibleName: ""
     property string tooltip: ""

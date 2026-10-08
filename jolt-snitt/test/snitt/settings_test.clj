@@ -45,7 +45,29 @@
   (reset! done? true)
   (qt/quit!))
 
+(defn startup-fallbacks! []
+  (let [service (native/create-services!)
+        file (q/read-property (:settings service) "settingsFile")
+        original (slurp file)]
+    (doseq [[source expected] [[(str/replace original "good=#22c55e" "good=invalid") "Colors/good"]
+                               [(-> original
+                                    (str/replace "globalCapture=Ctrl+Print" "globalCapture=F24")
+                                    (str/replace "good=#22c55e" "good=#317ab5")) "could not be registered"]]]
+      (settings/configure! :on-error #(swap! notices conj %))
+      (spit file source)
+      (settings/register! service)
+      (check! (= "#22c55e" (:good-color @settings/published)) "Invalid startup restores default colors")
+      (check! (seq (get-in @settings/published [:shortcuts "openImage"])) "Startup failure retains editor shortcuts")
+      (check! (str/includes? (error service) expected) "Startup failure exposes reference notice")
+      (let [editor (settings/register! (native/create-services!))]
+        (check! (= (color service) (color editor)) "New editor inherits startup fallback")
+        (widget/dispose! (:root editor))))
+    (spit file original)
+    (widget/dispose! (:root service))
+    (settings/configure! :on-error #(swap! notices conj %))))
+
 (defn exercise! []
+  (startup-fallbacks!)
   (reset! service-a (settings/register! (native/create-services!)))
   (reset! path (q/read-property (:settings @service-a) "settingsFile"))
   (reset! initial (content))

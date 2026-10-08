@@ -1,8 +1,9 @@
 import QtQuick
 import QtQuick.Layouts
 
-Item {
+Rectangle {
     id: root
+    color: "transparent"
     property alias content: content
     property alias spacing: content.spacing
     property real padding: 0
@@ -18,9 +19,9 @@ Item {
     implicitHeight: content.implicitHeight + insetTop + insetBottom
     ColumnLayout {
         id: content
-        x: root.insetLeft
-        y: root.insetTop
-        width: Math.max(0, root.width - root.insetLeft - root.insetRight)
-        height: Math.max(0, root.height - root.insetTop - root.insetBottom)
+        x: root ? root.insetLeft : 0
+        y: root ? root.insetTop : 0
+        width: root ? Math.max(0, root.width - root.insetLeft - root.insetRight) : 0
+        height: root ? Math.max(0, root.height - root.insetTop - root.insetBottom) : 0
     }
 }

@@ -11,7 +11,7 @@
             [snitt.recording :as recording]))
 
 (defn manager [create & {:keys [start-capture]}]
-  {:state (atom {:next-id 0 :order [] :sessions {} :last-active nil
+  {:state (atom {:next-id 0 :next-capture-number 0 :order [] :sessions {} :last-active nil
                  :capture nil :capture-loaded false :capture-finished false
                  :hidden [] :restore-focus nil :picker nil :capture-mode nil})
    :create create :start-capture start-capture})
@@ -39,13 +39,10 @@
   (recording/busy? (:recording (session manager id))))
 
 (defn- report-error! [manager id message]
-  (let [{:keys [capture restore-focus last-active order]} (snapshot manager)
-        target-id (if (= capture id)
-                    (or restore-focus last-active
-                        (last (remove #{id} order)) id)
-                    id)]
-    (when-let [report (:on-error (session manager target-id))]
-      (report target-id message))))
+  ;; The reference shows capture failures in that capture's empty editor. Keep
+  ;; the other editors intact and restore them when the capture retires.
+  (when-let [report (:on-error (session manager id))]
+    (report id message)))
 
 (defn- capture-result! [manager id]
   (when (= id (:capture (snapshot manager)))
@@ -152,7 +149,12 @@
                         (close! manager id))))))))
 
 (defn create! [manager label]
-  (let [id (:next-id (swap! (:state manager) update :next-id inc))
+  (let [numbered? (not (seq label))
+        state (swap! (:state manager)
+                     #(cond-> (update % :next-id inc)
+                        numbered? (update :next-capture-number inc)))
+        id (:next-id state)
+        label (if numbered? (str "Capture " (:next-capture-number state)) label)
         result (assoc ((:create manager) id label #(close! manager id)) :id id)]
     (try
       (swap! (:state manager)
@@ -203,7 +205,8 @@
              :capture-finished false :hidden [] :restore-focus nil
              :picker nil :capture-mode nil)
       (restore-hidden! manager hidden nil)
-      (if (and captured (current? manager id))
+      (if (and (current? manager id)
+               (or captured (q/read-property (:window (session manager id)) "visible")))
         (activate! manager id)
         (do (close! manager id)
             (restore-hidden! manager [] restore-focus))))))

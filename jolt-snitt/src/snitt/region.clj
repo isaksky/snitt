@@ -92,14 +92,14 @@
   {:x x :y y :width width :height height})
 
 (defn- selection-image [source screen area id]
+  ;; Quick rounds the far scissor edges outward. End beneath the centered
+  ;; opaque border so a fractional selection cannot expose an exterior pixel.
   (let [{:keys [x y width height]} (area-rect area)]
-    [:rectangle {:key id :id id :x x :y y :width width :height height
-                 :clip true :color "transparent" :z 2}
+    [:overlay {:key id :id id :x x :y y :width (max 0 (- width 1))
+               :height (max 0 (- height 1)) :z 2 :clip true}
      [:image {:x (- x) :y (- y) :width (get screen "width")
               :height (get screen "height") :source (value/url source)
-              :fill-mode "stretch" :asynchronous false}]
-     [:rectangle {:anchor "fill" :color "transparent"
-                  :border-color "#91bff0" :border-width 2 :z 1}]]))
+              :fill-mode "stretch" :asynchronous false}]]))
 
 (defn view [picker screen on-action]
   (let [{:keys [mode regions drag notice]} @(:state picker)
@@ -110,13 +110,7 @@
                            (- (first (:end drag)) (first (:start drag)))
                            (- (second (:end drag)) (second (:start drag)))] screen))
         [px py pw ph] (when area (pixel-rect area screen))
-        compact? (< width 650)
-        mode-button (fn [id label target shortcut]
-                      [:button {:key id :id id :label (if compact? (subs label 0 1) label)
-                                :tooltip (str label " (" (hint shortcut) ")")
-                                :checkable true :checked (= mode target)
-                                :sensitive (or (not= target :multiple) (not= mode :video))
-                                :on-click #(on-action :mode target)}])]
+        panel-width (min 960 (max 1 (- width 24)))]
     [:overlay {:id (str "picker-root-" (get screen "index"))
                :hexpand true :vexpand true :clip true}
      [:image {:id (str "picker-background-" (get screen "index")) :anchor "fill"
@@ -129,46 +123,24 @@
                      :on-pointer-move #(on-action :move screen %)
                      :on-pointer-release #(on-action :release screen %)
                      :on-pointer-cancel #(on-action :cancel-drag screen %)}]
-     (for [[index region] (map-indexed vector regions)
-           :when (= (get screen "index") (:screen region))]
-       (let [[x y _ _] (:area region)]
-         [:overlay {:key (:token region) :anchor "fill"}
-          (selection-image source screen (:area region) (str "picker-region-" (:token region)))
-          [:rectangle {:x x :y y :width 28 :height 28 :color "#91bff0" :z 3}
-           [:label {:label (str (inc index)) :color "#15283d" :font-size 16}]]]))
-     [:overlay {:key "drag-visual" :anchor "fill" :visible (boolean (and area (pos? pw) (pos? ph)))}
-      (selection-image source screen (or area [0 0 0 0]) "picker-drag")
-      [:rectangle {:x (bound (- (+ (first (or area [0 0 0 0])) (nth (or area [0 0 0 0]) 2)) 110)
-                             0 (- width 110))
-                   :y (bound (+ (second (or area [0 0 0 0])) (nth (or area [0 0 0 0]) 3) 8)
-                             0 (- height 28))
-                   :width 110 :height 28 :z 3 :color "#1b1e23" :radius 5}
-       [:label {:color "white" :label (str (or pw 0) " × " (or ph 0) " px")}]]]
-     [:rectangle {:x 12 :y 24 :width (max 1 (- width 24)) :height 60 :z 5
-                  :radius 12 :color "#be1b1e23" :border-color "#414751" :border-width 1}
-      [:hbox {:padding 8 :spacing 6}
-       (mode-button (str "picker-single-" (get screen "index")) "Region" :single "regionSingle")
-       (mode-button (str "picker-multiple-" (get screen "index")) "Multi" :multiple "regionMultiple")
-       (mode-button (str "picker-video-" (get screen "index")) "Video" :video "regionVideo")
-       [:label {:label (case mode :video "Drag to record." :multiple "Drag to add regions; click one to remove." "Drag to capture.")
-                :color "#b9c1cd" :hexpand true :visible (not compact?)}]
-       (when (and (= mode :multiple) (seq regions))
-         [:label {:label (if compact? (str (count regions))
-                             (str (count regions) (if (= 1 (count regions)) " region" " regions")))
-                  :color "#b9c1cd"}])
-       (when (and (= mode :multiple) (seq regions))
-         [:button {:id (str "picker-arrange-" (get screen "index"))
-                   :label (if compact? "✓" "Arrange")
-                   :tooltip (str "Continue to Arrange (" (hint "regionArrange") ")")
-                   :on-click #(on-action :accept)}])
-       [:button {:id (str "picker-cancel-" (get screen "index"))
-                 :label (if compact? "Esc" "Cancel")
-                 :tooltip (str "Cancel selection (" (hint "regionCancel") ")")
-                 :on-click #(on-action :cancel)}]]]
-     (when (seq notice)
-       [:rectangle {:x 12 :y 92 :width (max 1 (- width 24)) :height 36 :z 5
-                    :color "#1b1e23"}
-        [:label {:label notice :color "#f1d4a2"}]])
+     (for [region regions :when (= (get screen "index") (:screen region))]
+       (selection-image source screen (:area region) (str "picker-region-" (:token region))))
+     (when area (selection-image source screen area "picker-drag"))
+     [:selection-decoration {:id (str "picker-decoration-" (get screen "index")) :width width :height height :z 5
+                             :regions (mapv (fn [[index region]]
+                                              (let [[x y w h] (:area region)]
+                                                {"x" x "y" y "width" w "height" h
+                                                 "number" (inc index) "token" (:token region)}))
+                                            (filter (fn [[_ region]] (= (get screen "index") (:screen region)))
+                                                    (map-indexed vector regions)))
+                             :dragging (boolean area) :drag-area (apply value/rect-f (or area [0 0 0 0]))
+                             :dimensions (str (or pw 0) " × " (or ph 0) " px") :notice notice
+                             :on-remove #(on-action :remove (long %))}]
+     [:selector-toolbar {:id (str "picker-toolbar-" (get screen "index"))
+                         :x (quot (- width panel-width) 2) :y 24 :width panel-width :height 60 :z 6
+                         :screen-width width :mode (name mode) :selection-count (count regions)
+                         :hints (:hints @settings/published) :shortcuts (:shortcuts @settings/published)
+                         :on-action #(on-action (keyword %))}]
      (for [[action id enabled?] [["regionCancel" :cancel true]
                                  ["regionSingle" :single true]
                                  ["regionMultiple" :multiple (not= mode :video)]
@@ -223,13 +195,16 @@
     :cancel-drag (swap! (:state picker) cancel-drag)
     :cancel (run-effect! picker {:action :cancel})
     :mode (let [target (first args)
-                target (if (and (= target :video) (= :video (:mode @(:state picker)))) :single target)
+                target (if (and (= target :multiple) (= :video (:mode @(:state picker)))) :video target)
                 removed (atom [])]
             (swap! (:state picker) (fn [state]
                                      (let [[next tokens] (change-mode state target)]
                                        (reset! removed tokens) next)))
             (doseq [token @removed] (native! picker "pickerRemove(int)" [token]))
-            (native! picker "pickerSetMode(bool)" [(= target :video)]))
+            (native! picker "pickerSetMode(bool)" [(= target :video)])
+            (doseq [window @(:windows picker) :when (qt/window-alive? window)]
+              (q/set-property! window "title" (if (= target :video)
+                                                "Snitt — Select a recording region" "Snitt — Select a region"))))
     :single (dispatch! picker :mode :single)
     :multiple (dispatch! picker :mode :multiple)
     :video (dispatch! picker :mode :video)
@@ -255,7 +230,7 @@
           (when-not placement
             (throw (ex-info "Selected display changed during capture" {:screen screen})))
           (let [window (qt/open-window! #(view picker screen (fn [& action] (apply dispatch! picker action)))
-                                        :title "Snitt — Select a region"
+                                        :title (if video "Snitt — Select a recording region" "Snitt — Select a region")
                                         :width (get screen "width") :height (get screen "height")
                                         :screen placement :x (get screen "x") :y (get screen "y")
                                         :tool true :frameless true :topmost true

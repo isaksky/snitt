@@ -5,6 +5,10 @@ CONFIG += c++17 shared release unversioned_libname unversioned_soname
 CONFIG -= lib_bundle
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 macx: QMAKE_SONAME_PREFIX = @rpath
+macx {
+    OBJECTIVE_SOURCES += macos_window.mm
+    LIBS += -framework AppKit
+}
 DEFINES += GQT_BUILD
 SOURCES += bridge.cpp
 RESOURCES += resources.qrc

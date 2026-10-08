@@ -20,7 +20,7 @@
     (is (= :recording (:phase running)))
     (doseq [phase [:preparing :ready :recording :finishing :saved :canceled :failed]]
       (let [view (recording/presentation (assoc s :phase phase))]
-        (is (= ({:preparing "Starting…" :ready "Ready" :recording "Recording · 0:00"
+        (is (= ({:preparing "Starting…" :ready "Recording · 0:00" :recording "Recording · 0:00"
                  :finishing "Saving…" :saved "Saved" :canceled "Canceled" :failed "Failed"} phase)
                (:label view)))
         (is (= (contains? #{:ready :recording} phase) (:stop-enabled view)))
@@ -70,8 +70,9 @@
      (fn []
        (if (= "protection-failure" (System/getenv "SNITT_JOLT_FAKE_RECORDER"))
          (do
-           (check! (nil? (sessions/session manager id)) "Protection failure retires session")
-           (check! (:error? @(:state (:context (sessions/session manager 1)))) "Protection failure reported")
+           (check! (sessions/session manager id) "Protection failure retains its error editor")
+           (check! (:error? @(:state (:context (sessions/session manager id)))) "Protection failure reported")
+           (sessions/close! manager id)
            (success! manager))
          (let [o (owner manager id)
                root (:root o)
@@ -95,7 +96,10 @@
               (signal! manager id id "canceled" "")
               (later!
                (fn []
-                 (check! (nil? (sessions/session manager id)) "Failure retires capture")
+                 (check! (sessions/session manager id) "Failure retains its error editor")
+                 (check! (widget/dialog-visible? (qt/find-by-id (:window (sessions/session manager id)) "capture-error-dialog"))
+                         "Recording failure opens the capture error dialog")
+                 (sessions/close! manager id)
                  (let [next-id (source! manager)]
                    (later!
                     (fn []

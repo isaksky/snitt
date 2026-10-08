@@ -1,0 +1,279 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+// A thumbnail filmstrip with two draggable handles and a scrubbable playhead.
+// All times are in seconds.
+Item {
+    id: root
+    required property QtObject relay
+    readonly property Item firstThumbnail: thumbs.itemAt(0)
+    property alias seekSlider: seekSlider
+    property alias timelineInput: timelineMouse
+    implicitHeight: 100
+    property string startLabel: ""
+    property string endLabel: ""
+    onInteractingChanged: relay.dispatch(root, "on-interacting-change", String(interacting))
+
+    property real durationSec: 0
+    property real startSec: 0
+    property real endSec: 0
+    property real playheadSec: 0
+    property int thumbCount: 0
+    property var thumbnails: []
+
+    // True while the user is dragging anything, so the player won't fight the UI.
+    readonly property bool interacting: timelineMouse.pressed || seekSlider.pressed
+    readonly property int activeMode: seekSlider.pressed ? 3 : timelineMouse.mode
+    readonly property bool trimmingRange: activeMode === 1 || activeMode === 2
+
+    readonly property real handleW: 14
+    readonly property real seekHandleW: 18
+    readonly property real trackX: handleW
+    readonly property real trackW: width - 2 * handleW
+    readonly property real trimY: 24
+    property color accent: "#91bff0"
+    readonly property color film: "#1c1c1e"
+    readonly property real activeTime: activeMode === 1 ? startSec : endSec
+    readonly property real activeHandleX: activeMode === 1
+        ? xForTime(startSec) - handleW / 2
+        : xForTime(endSec) + handleW / 2
+
+    // Values are projections from Jolt; gestures emit intent only.
+
+    function xForTime(t) {
+        if (durationSec <= 0)
+            return trackX;
+        return trackX + (t / durationSec) * trackW;
+    }
+    function timeForX(x) {
+        if (trackW <= 0 || durationSec <= 0)
+            return 0;
+        var f = (x - trackX) / trackW;
+        return Math.max(0, Math.min(1, f)) * durationSec;
+    }
+
+    function seekTo(seconds) {
+        relay.dispatch(root, "on-seek", String(seconds));
+    }
+
+    Slider {
+        id: seekSlider
+        objectName: "review-seek"
+        x: root.xForTime(root.startSec) - root.seekHandleW / 2
+        width: Math.max(0, root.xForTime(root.endSec) - root.xForTime(root.startSec)) + root.seekHandleW
+        height: root.trimY
+        padding: 0
+        from: root.startSec
+        to: Math.max(root.endSec, root.startSec + 0.001)
+        value: root.playheadSec
+        enabled: root.durationSec > 0
+        Accessible.name: "Playback position"
+        onMoved: root.seekTo(value)
+        background: Rectangle {
+            x: root.seekHandleW / 2
+            y: (seekSlider.height - height) / 2
+            width: seekSlider.width - root.seekHandleW
+            height: 2
+            color: "#454d59"
+        }
+        handle: Rectangle {
+            objectName: "review-seek-handle"
+            x: seekSlider.visualPosition * (seekSlider.availableWidth - width)
+            y: (seekSlider.height - height) / 2
+            width: root.seekHandleW; height: width
+            radius: 9
+            color: seekSlider.pressed ? root.accent : "white"
+            border.color: "#111317"
+            border.width: 2
+        }
+    }
+
+    // ---- filmstrip ----
+    Rectangle {
+        id: track
+        x: root.trackX
+        y: root.trimY + 4
+        width: root.trackW
+        height: root.height - root.trimY - 8
+        radius: 6
+        color: root.film
+        clip: true
+
+        Row {
+            anchors.fill: parent
+            Repeater {
+                id: thumbs
+                model: root.thumbCount
+                Image {
+                    objectName: "review-thumb-" + index
+                    width: track.width / Math.max(root.thumbCount, 1)
+                    height: track.height
+                    // Bound the decoded texture to the strip height. The filmstrip
+                    // has a fixed height, so this never thrashes on resize.
+                    sourceSize.height: track.height
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    cache: false
+                    source: index < root.thumbnails.length ? root.thumbnails[index] : ""
+                }
+            }
+        }
+    }
+
+    // ---- dim outside the selection ----
+    Rectangle {
+        x: track.x
+        y: track.y
+        width: Math.max(0, root.xForTime(root.startSec) - track.x)
+        height: track.height
+        color: "#00000099"
+    }
+    Rectangle {
+        x: root.xForTime(root.endSec)
+        y: track.y
+        width: Math.max(0, track.x + track.width - root.xForTime(root.endSec))
+        height: track.height
+        color: "#00000099"
+    }
+
+    // ---- selected range frame ----
+    Rectangle {
+        x: root.xForTime(root.startSec) - root.handleW
+        y: root.trimY
+        width: (root.xForTime(root.endSec) - root.xForTime(root.startSec)) + 2 * root.handleW
+        height: root.height - root.trimY
+        radius: 8
+        color: "transparent"
+        border.color: root.accent
+        border.width: 3
+    }
+
+    // ---- left/right handles ----
+    Component {
+        id: handle
+        Rectangle {
+            radius: 5
+            color: root.accent
+            Rectangle {  // grip line
+                anchors.centerIn: parent
+                width: 2
+                height: 16
+                radius: 1
+                color: root.film
+            }
+        }
+    }
+    Loader {
+        sourceComponent: handle
+        x: root.xForTime(root.startSec) - root.handleW
+        y: root.trimY
+        width: root.handleW
+        height: root.height - root.trimY
+    }
+    Loader {
+        sourceComponent: handle
+        x: root.xForTime(root.endSec)
+        y: root.trimY
+        width: root.handleW
+        height: root.height - root.trimY
+    }
+
+    // ---- playhead ----
+    Rectangle {
+        visible: root.durationSec > 0
+        x: root.xForTime(root.playheadSec) - 1
+        y: track.y
+        width: 2
+        height: track.height
+        color: "white"
+    }
+
+    // ---- floating time bubble while adjusting trim handles ----
+    Rectangle {
+        id: timeBubble
+        visible: root.trimmingRange
+        width: 82
+        height: 32
+        radius: 7
+        x: Math.max(0, Math.min(root.width - width, root.activeHandleX - width / 2))
+        y: -42
+        color: "#2c2c2f"
+
+        Text {
+            anchors.centerIn: parent
+            text: root.activeMode === 1 ? root.startLabel : root.endLabel
+            color: "white"
+            font.pixelSize: 15
+            font.weight: Font.DemiBold
+        }
+    }
+
+    Rectangle {
+        visible: root.trimmingRange
+        x: root.activeHandleX - width / 2
+        y: timeBubble.y + timeBubble.height
+        width: 2
+        height: Math.max(0, track.y - y)
+        radius: 1
+        color: "white"
+    }
+
+    // ---- interaction: one MouseArea, hit-test on press (mirrors the C++ logic) ----
+    MouseArea {
+        id: timelineMouse
+        objectName: "review-timeline-input"
+        x: 0; y: root.trimY
+        width: root.width; height: root.height - root.trimY
+        hoverEnabled: true
+        property int mode: 0  // 0 none, 1 start, 2 end, 3 playhead
+
+        function hitTest(x) {
+            var x0 = root.xForTime(root.startSec);
+            var x1 = root.xForTime(root.endSec);
+            if (Math.abs(x - (x0 - root.handleW / 2)) <= root.handleW)
+                return 1;
+            if (Math.abs(x - (x1 + root.handleW / 2)) <= root.handleW)
+                return 2;
+            if (x >= x0 && x <= x1)
+                return 3;
+            return 0;
+        }
+
+        cursorShape: Qt.ArrowCursor
+
+        onPositionChanged: function (mouse) {
+            if (root.durationSec <= 0)
+                return;
+            if (mode === 0) {
+                var h = hitTest(mouse.x);
+                cursorShape = (h === 1 || h === 2) ? Qt.SizeHorCursor
+                    : h === 3 ? Qt.PointingHandCursor : Qt.ArrowCursor;
+                return;
+            }
+            var t = root.timeForX(mouse.x);
+            var minGap = Math.min(0.1, root.durationSec);
+            if (mode === 1) {
+                relay.dispatch(root, "on-start", String(t));
+            } else if (mode === 2) {
+                relay.dispatch(root, "on-end", String(t));
+            } else {
+                root.seekTo(t);
+            }
+        }
+
+        onPressed: function (mouse) {
+            if (root.durationSec <= 0)
+                return;
+            mode = hitTest(mouse.x);
+            if (mode === 3) {
+                root.seekTo(root.timeForX(mouse.x));
+            } else if (mode === 0) mouse.accepted = false;
+        }
+
+        onReleased: {
+            mode = 0;
+        }
+        onCanceled: mode = 0
+    }
+}

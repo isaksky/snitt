@@ -130,21 +130,26 @@
                    ["Allow Snitt in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen Snitt."]))
         (fn []
           (check! (nil? (capture-id manager)) "Permission failure clears capture")
-          (check! (= 2 (count (sessions/sessions manager))) "Permission failure restores editors")
-          (check! (:error? @(:state (:context (sessions/session manager second-id))))
-                  "Permission message reaches prior editor")
+          (check! (= 3 (count (sessions/sessions manager))) "Permission failure restores prior editors and retains its error editor")
+          (check! (:error? @(:state (:context (sessions/session manager @current))))
+                  "Permission message stays with its capture editor")
+          (check! (widget/dialog-visible? (qt/find-by-id (:window (sessions/session manager @current)) "capture-error-dialog"))
+                  "Permission failure shows the original modal dialog")
+          (sessions/close! manager @current)
           (reset! current (sessions/capture! manager false false))
           (invoke! manager @current "failCaptureForTest(QString)"
                    ["Could not capture a screen. Check screen recording permission and that the desktop is unlocked."]))
         (fn []
           (check! (nil? (capture-id manager)) "Unavailable screen clears capture")
+          (sessions/close! manager @current)
           (reset! current (sessions/capture! manager false false))
           (invoke! manager @current "failCaptureForTest(QString)"
                    ["Could not start the macOS screenshot tool."]))
         (fn []
           (check! (nil? (capture-id manager)) "Native failure clears capture")
-          (check! (= 2 (count (sessions/sessions manager)))
-                  "Failure leaves existing editors usable")
+          (check! (= 3 (count (sessions/sessions manager)))
+                  "Failure retains its error editor alongside existing editors")
+          (sessions/close! manager @current)
           (check! (q/read-property first-canvas "hasImage") "First document remains usable")
           (check! (q/read-property second-canvas "hasImage") "Second document remains usable")
           (doseq [id [first-id second-id]] (sessions/close! manager id))
