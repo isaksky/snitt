@@ -74,6 +74,7 @@
       (geometry/image-geometry
        {:width (q/read-property area "width")
         :height (q/read-property area "height")
+        :pixel-ratio (q/read-property handle "previewPixelRatio")
         :image-width (q/read-property handle "imageWidth")
         :image-height (q/read-property handle "imageHeight")}))))
 
@@ -112,9 +113,39 @@
     (native/region-at (canvas context) (geometry/image-point image x y))
     -1))
 
+(defn- fit-editor! [context generation pass]
+  (when-let [handle (canvas context)]
+    (when (and (= generation (:generation (document/snapshot handle)))
+               (q/read-property handle "hasImage"))
+      (let [window @(:window context)
+            area (item context "snitt-pointer")
+            display (object/invoke! handle "previewDisplay()" [])]
+        (when (and area (seq display))
+          (let [placement (geometry/editor-window
+                           {:available (:value (get display "available"))
+                            :pixel-ratio (get display "pixel-ratio")
+                            :image-width (q/read-property handle "imageWidth")
+                            :image-height (q/read-property handle "imageHeight")
+                            :chrome-width (- (q/read-property window "width") (q/read-property area "width"))
+                            :chrome-height (- (q/read-property window "height") (q/read-property area "height"))})]
+            (doseq [[property key] [["minimumWidth" :minimum-width] ["minimumHeight" :minimum-height]
+                                    ["width" :width] ["height" :height] ["x" :x] ["y" :y]]]
+              (q/set-property! window property (get placement key)))
+            ;; Width can wrap the toolbar; measure again once Qt lays it out.
+            (when (< pass 2)
+              (qt/later! window 30 #(fit-editor! context generation (inc pass))))))))))
+
+(defn- fit-new-source! [context handle]
+  (let [generation (:generation (document/snapshot handle))]
+    (when (not= generation (:fitted-generation @(:state context)))
+      (swap! (:state context) assoc :fitted-generation generation)
+      ;; Capture routing moves the window to its source display before this runs.
+      (qt/later! @(:window context) 0 #(fit-editor! context generation 0)))))
+
 (defn- refresh! [context]
   (when-let [handle (canvas context)]
     (let [has-image? (q/read-property handle "hasImage")]
+      (when has-image? (fit-new-source! context handle))
       (reset! (:interaction context)
               (geometry/image-changed @(:interaction context)
                                       (q/read-property handle "imageWidth")
@@ -197,14 +228,12 @@
 (defn- draft-geometry [context]
   (when-let [{:keys [x y width]} (:draft @(:state context))]
     (let [handle (canvas context)
-          image-width (q/read-property handle "imageWidth")
           image-height (q/read-property handle "imageHeight")
           scale (q/read-property handle "imageScale")
-          canvas-width (:canvas-width @(:state context))
-          canvas-height (:canvas-height @(:state context))
+          image (current-geometry context)
           size (q/read-property handle "textSize")]
-      {:x (+ (/ (- canvas-width (* image-width scale)) 2) (* x scale))
-       :y (+ (/ (- canvas-height (* image-height scale)) 2) (* y scale))
+      {:x (+ (:x image) (* x scale))
+       :y (+ (:y image) (* y scale))
        :width (* width scale)
        :height (min (max (* size 1.5 scale) (:draft-content-height @(:state context)))
                     (* (- image-height y) scale))
@@ -512,6 +541,8 @@
        [:snitt/canvas {:id "snitt-canvas" :width canvas-width :height canvas-height :tool tool
                        :qt/subscriptions
                        {:image {:signal "imageChanged()" :handler #(refresh! context)}
+                        :display {:signal "previewDisplayChanged()"
+                                  :handler #(do (sync-geometry! context) (refresh-context! context))}
                         :arrangement {:signal "arrangementChanged()" :handler #(refresh-context! context)}
                         :size {:signal "sizeChanged()" :handler #(refresh-context! context)}
                         :ink {:signal "inkChanged()" :handler #(refresh-context! context)}
@@ -560,7 +591,8 @@
                         :on-pointer-cancel #(resize-text! context % :release)}])]
      (when has-image?
        (ui/footer {:arranging? arranging? :notice notice :hints hints
-                   :scale (q/read-property handle "imageScale")
+                   :scale (* (q/read-property handle "imageScale")
+                             (q/read-property handle "previewPixelRatio"))
                    :width (q/read-property handle "imageWidth") :height (q/read-property handle "imageHeight")}))
      [:file-chooser {:key "open-file" :id "open-file" :title "Open a screenshot" :on-accepted #(accept-image! context %)
                      :on-rejected #(swap! (:state context) assoc :modal? false)
@@ -639,7 +671,7 @@
                                     :width 1100 :height 760 :visible false
                                     :on-close (fn [_] (on-close) false))]
         (q/set-property! window "minimumWidth" 860)
-        (q/set-property! window "minimumHeight" 560)
+        (q/set-property! window "minimumHeight" 360)
         (reset! (:window context) window)
         (let [canvas (canvas context)]
           (document/create! canvas)

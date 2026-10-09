@@ -50,8 +50,9 @@
           (check! (native/load-image! reference path) "Reference image reloads")
           (q/set-property! migrated "tool" tool)
           (q/set-property! reference "tool" tool)
-          (let [image (geometry/image-geometry {:width size :height size
-                                                :image-width 800 :image-height 800})
+          (let [;; Exercise explicit magnification independently of automatic preview fitting.
+                image {:x 16.0 :y 16.0 :width (* 800.0 zoom) :height (* 800.0 zoom)
+                       :scale (double zoom) :image-width 800 :image-height 800}
                 state (first (geometry/select-tool (geometry/initial-state) tool))
                 [x1 y1] (geometry/view-point image start)
                 [x2 y2] (geometry/view-point image end)

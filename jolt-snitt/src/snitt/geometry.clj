@@ -1,15 +1,37 @@
 (ns snitt.geometry
   "Pure image-space geometry and annotation gesture decisions.")
 
-(defn image-geometry [{:keys [width height image-width image-height]}]
+(defn image-geometry [{:keys [width height image-width image-height pixel-ratio]
+                       :or {pixel-ratio 1.0}}]
   (when (and (pos? image-width) (pos? image-height))
-    (let [scale (max 0.001 (min (/ (- width 32.0) image-width)
+    (let [scale (max 0.001 (min (/ 1.0 pixel-ratio)
+                                (/ (- width 32.0) image-width)
                                 (/ (- height 32.0) image-height)))
           w (* image-width scale)
-          h (* image-height scale)]
-      {:x (/ (- width w) 2.0) :y (/ (- height h) 2.0)
+          h (* image-height scale)
+          ;; Keep native-size pixels on the display grid, even for odd crops.
+          align #(/ (Math/round (* % pixel-ratio)) pixel-ratio)]
+      {:x (align (/ (- width w) 2.0)) :y (align (/ (- height h) 2.0))
        :width w :height h :scale scale
        :image-width image-width :image-height image-height})))
+
+(defn editor-window
+  "Fit native-size image pixels plus measured UI chrome inside the current display.
+  The remaining space is used only when the image cannot fit at native scale."
+  [{:keys [available pixel-ratio image-width image-height chrome-width chrome-height]}]
+  (let [[sx sy sw sh] available
+        max-width (max 1 (- sw 32))
+        max-height (max 1 (- sh 48))
+        minimum-width (min 860 max-width)
+        minimum-height (min 360 max-height)
+        width (long (min max-width (max minimum-width
+                                        (Math/ceil (+ (/ image-width pixel-ratio) 32 chrome-width)))))
+        height (long (min max-height (max minimum-height
+                                          (Math/ceil (+ (/ image-height pixel-ratio) 32 chrome-height)))))]
+    {:x (+ sx 16 (quot (- max-width width) 2))
+     :y (+ sy 32 (quot (- max-height height) 2))
+     :width width :height height
+     :minimum-width minimum-width :minimum-height minimum-height}))
 
 (defn contains-point? [{:keys [x y width height]} px py]
   (and (<= x px (+ x width)) (<= y py (+ y height))))

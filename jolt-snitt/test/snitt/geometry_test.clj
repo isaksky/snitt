@@ -3,9 +3,8 @@
             [snitt.geometry :as g]))
 
 (defn- geometry [zoom]
-  (g/image-geometry {:width (+ 32 (* 80 zoom))
-                     :height (+ 32 (* 60 zoom))
-                     :image-width 80 :image-height 60}))
+  {:x 16.0 :y 16.0 :width (* 80.0 zoom) :height (* 60.0 zoom)
+   :scale (double zoom) :image-width 80 :image-height 60})
 
 (defn- trace [tool zoom start end]
   (let [image (geometry zoom)
@@ -28,6 +27,34 @@
                                   (+ (:y image) (:height image))))))
   (is (= 0.001 (:scale (g/image-geometry {:width 0 :height 0
                                            :image-width 80 :image-height 60})))))
+
+(deftest native-preview-and-display-alignment
+  (doseq [dpr [1.0 1.25 1.5 2.0 3.0]]
+    (let [image (g/image-geometry {:width 1101 :height 761 :image-width 401 :image-height 301
+                                  :pixel-ratio dpr})]
+      (is (== 1.0 (* dpr (:scale image))))
+      (doseq [axis [:x :y]]
+        (is (< (abs (- (* dpr (axis image)) (Math/round (* dpr (axis image))))) 0.00001)))))
+  (let [image (g/image-geometry {:width 832 :height 632 :image-width 3200 :image-height 2400
+                                :pixel-ratio 2.0})]
+    (is (= 0.25 (:scale image)))
+    (is (= [16.0 16.0] ((juxt :x :y) image)))))
+
+(deftest window-fits-image-and-toolbar-within-display
+  (let [options {:available [0 25 1920 1055] :pixel-ratio 2.0 :chrome-width 0 :chrome-height 180
+                 :image-width 2400 :image-height 1400}
+        fit (g/editor-window options)]
+    (is (= [1232 912] ((juxt :width :height) fit)))
+    (is (= [860 360] ((juxt :width :height)
+                    (g/editor-window (assoc options :image-width 100 :image-height 100)))))
+    (is (= [1888 1007] ((juxt :width :height)
+                      (g/editor-window (assoc options :image-width 8000 :image-height 8000)))))
+    (is (= 40 (- (:height (g/editor-window (update options :chrome-height + 40))) (:height fit))))
+    (is (= [-1584 -868] ((juxt :x :y)
+                         (g/editor-window (assoc options :available [-1600 -900 1200 800]
+                                                        :image-width 8000 :image-height 8000)))))
+    (is (= [608 432 608 360] ((juxt :width :height :minimum-width :minimum-height)
+                             (g/editor-window (assoc options :available [0 0 640 480])))))))
 
 (deftest reference-gesture-commands
   (doseq [zoom [0.5 1 3 5]]

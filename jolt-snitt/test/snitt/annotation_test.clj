@@ -74,7 +74,7 @@
     (check! (= 1100 (q/read-property window "width")) "Reference editor width")
     (check! (= 760 (q/read-property window "height")) "Reference editor height")
     (check! (= 860 (q/read-property window "minimumWidth")) "Reference minimum width")
-    (check! (= 560 (q/read-property window "minimumHeight")) "Reference minimum height")
+    (check! (= 360 (q/read-property window "minimumHeight")) "Compact editor minimum height")
     (check! (= 26 (p "rect" "icon.width")) "Original icon dimensions")
     (check! (= 12 (p "shortcut-rect" "font.pixelSize")) "Original caption dimensions")
     (check! (== 168 (p "mode-segmented-control" "width")) "Original segmented control width")
@@ -201,9 +201,15 @@
   (try
     (qt/run-application!
      #(do (app/start! :image (System/getenv "SNITT_JOLT_IMAGE"))
-          (qt/later! 300 #(exercise! (:window @app/runtime)
-                                     (System/getenv "SNITT_JOLT_IMAGE")
-                                     (System/getenv "SNITT_JOLT_CAPTURE_DIR"))))
+          (qt/later! 300
+            (fn [] (let [window (:window @app/runtime)]
+               ;; Explicit wide/narrow fixtures; new sources normally size to the screen.
+               (q/set-property! window "minimumWidth" 860)
+               (q/set-property! window "minimumHeight" 360)
+               (q/set-property! window "width" 1100)
+               (q/set-property! window "height" 760)
+               (qt/later! 100 #(exercise! window (System/getenv "SNITT_JOLT_IMAGE")
+                                                (System/getenv "SNITT_JOLT_CAPTURE_DIR")))))))
      :app-id "snitt-jolt-annotation-test" :keep-alive true :auto-quit-ms 10000)
     (check! @complete? "Annotation interaction sequence completed")
     (println "PASS:" @checks "annotation input, draft, layout, accessibility and 2× captures")

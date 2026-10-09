@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$ROOT/build-native" "CONFIG+=property_tests" >/dev/null
+QMAKE="$(cat "$ROOT/../glimmer-qt/build/qmake-path")"
+export QT_PLUGIN_PATH="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+export QML_IMPORT_PATH="$("$QMAKE" -query QT_INSTALL_QML)"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen:configfile=$ROOT/../tests/editor-screens.json}"
+export JOLT_AOT_CACHE=0 SNITT_JOLT_FAKE_HOTKEY=1
+SNITT_JOLT_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/snitt-preview.XXXXXX")"
+export SNITT_JOLT_DATA_DIR
+trap 'rm -rf "$SNITT_JOLT_DATA_DIR"' EXIT HUP INT TERM
+cd "$ROOT"
+"${JOLT:-jolt}" -M:geometry
+for ratio in 1 1.5 2; do
+    export QT_SCALE_FACTOR="$ratio"
+    SNITT_PREVIEW_DIR="$ROOT/../build/jolt-snitt/preview-${ratio}x"
+    export SNITT_PREVIEW_DIR
+    mkdir -p "$SNITT_PREVIEW_DIR"
+    python3 "$ROOT/test/preview_pixels.py" generate "$SNITT_PREVIEW_DIR"
+    "${JOLT:-jolt}" -M:preview
+    python3 "$ROOT/test/preview_pixels.py" verify "$SNITT_PREVIEW_DIR"
+done

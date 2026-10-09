@@ -162,4 +162,4 @@
    [:label {:id "preview-status" :label (str "Preview " (Math/round (* scale 100)) "% · Image " width " × " height " px")
             :color "#8f99a8" :font-size 12
             :tooltip-on-press true
-            :tooltip "Preview zoom only; unannotated exports keep the image's natural pixel size"}]])
+            :tooltip "100% shows one image pixel per display pixel; larger images fit the viewing area"}]])

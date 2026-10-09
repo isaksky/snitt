@@ -4,6 +4,8 @@
 #include <QDateTime>
 #include <QMimeData>
 #include <QPainter>
+#include <QQuickWindow>
+#include <QScreen>
 #include <QSet>
 #include <QUuid>
 #include <QVariantMap>
@@ -17,8 +19,30 @@
 // No native undo history or command-order decisions live here.
 class DocumentCanvas final : public EditorCanvas {
     Q_OBJECT
+    Q_PROPERTY(qreal previewPixelRatio READ previewPixelRatio NOTIFY previewDisplayChanged)
 public:
+    qreal previewPixelRatio() const {
+        return window() ? window()->effectiveDevicePixelRatio() : 1.0;
+    }
+    Q_INVOKABLE QVariantMap previewDisplay() const {
+        if (!window() || !window()->screen()) return {};
+        return {{"available", window()->screen()->availableGeometry()},
+                {"pixel-ratio", previewPixelRatio()}};
+    }
+    void paint(QPainter *painter) override {
+        // PaintedItem rounds its backing texture to whole pixels, then stretches
+        // the painter to that size. At fractional DPR this slightly changes both
+        // axes and resamples even a 100% screenshot. Keep the actual display scale.
+        const QTransform device = painter->deviceTransform();
+        painter->save();
+        painter->scale(previewPixelRatio() / device.m11(), previewPixelRatio() / device.m22());
+        EditorCanvas::paint(painter);
+        painter->restore();
+    }
     DocumentCanvas() {
+        // QPainter already renders at the display's pixel density. Filtering
+        // that texture again softens native pixels at fractional display scales.
+        setSmooth(false);
         connect(this, &EditorCanvas::imageChanged, this, [this] {
             if (m_enabled && m_serial != documentProjection().resetSerial()) {
                 m_serial = documentProjection().resetSerial();
@@ -180,7 +204,14 @@ public:
         if (qEnvironmentVariable("SNITT_JOLT_DOCUMENT_TEST") == "1") m_failNext = true;
     }
 signals:
+    void previewDisplayChanged();
     void documentSourceChanged();
+protected:
+    void itemChange(ItemChange change, const ItemChangeData &data) override {
+        EditorCanvas::itemChange(change, data);
+        if (change == ItemSceneChange || change == ItemDevicePixelRatioHasChanged)
+            emit previewDisplayChanged();
+    }
 private:
     QImage exportedImage(double scale) const {
         if (!std::isfinite(scale) || scale < 1.0 || scale > 3.0) return {};
