@@ -1,4 +1,5 @@
 """Generated media only: verify Jolt process ownership and retained packet data."""
+import contextlib
 import hashlib
 import json
 import os
@@ -49,12 +50,14 @@ with tempfile.TemporaryDirectory(prefix='snitt-jolt-trim-') as directory:
         original = probe(path)
         # A held POSIX descriptor must retain the original inode across replace;
         # failing/canceled operations must leave both descriptor and path intact.
-        with path.open('rb') as opened:
+        # Windows cannot replace a file another process holds without delete sharing.
+        with (path.open('rb') if os.name == 'posix' else contextlib.nullcontext()) as opened:
             result = subprocess.run([os.environ.get('JOLT', 'jolt'), '-M:trim', str(path), mode,
                                      str(start), str(end)], capture_output=True, text=True)
             if result.returncode:
                 raise RuntimeError(result.stdout + result.stderr)
-            assert hashlib.sha256(opened.read()).hexdigest() == before
+            if opened:
+                assert hashlib.sha256(opened.read()).hexdigest() == before
         print(next(line for line in result.stdout.splitlines() if line.startswith('PASS:')))
         assert not list(root.glob('.snitt-trim-*'))
         assert not list(root.glob('.snitt-original-*'))
@@ -90,4 +93,5 @@ with tempfile.TemporaryDirectory(prefix='snitt-jolt-trim-') as directory:
     run(regular, 'thumbnails')
     run(held, 'thumbnails')
     run(short, 'thumbnails')
-print('PASS: packets/audio/timing, POSIX held file descriptors, failures and temporary cleanup')
+held = 'POSIX held file descriptors, ' if os.name == 'posix' else ''
+print(f'PASS: packets/audio/timing, {held}failures and temporary cleanup')

@@ -1,5 +1,5 @@
 (ns snitt.desktop-test
-  "Short macOS desktop check for the real Snitt tray and background lifetime."
+  "Short desktop check for the real Snitt tray and background lifetime."
   (:require [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.tray :as tray]
@@ -20,7 +20,7 @@
             (fn []
               (let [{:keys [manager tray show-action quit-action]} @app/runtime]
                 (check! (and tray (q/alive? tray) (q/read-property tray "visible"))
-                        "macOS desktop did not show the Snitt tray")
+                        "Desktop did not show the Snitt tray")
                 (check! (empty? (sessions/sessions manager))
                         "Background launch must have no editor")
                 (tray/dispatch! show-action "tray-triggered" "")
@@ -36,5 +36,5 @@
                 (tray/dispatch! quit-action "tray-triggered" "")))))
        :app-id "snitt-jolt-development" :keep-alive true :auto-quit-ms 5000)
       (check! @completed? "Desktop check did not complete")
-      (println "PASS: macOS tray show/quit and background lifetime")
+      (println "PASS: desktop tray show/quit and background lifetime")
       (finally (settings/clear!) (reset! app/runtime nil) (shutdown-agents)))))

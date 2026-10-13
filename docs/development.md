@@ -102,7 +102,9 @@ it excludes the SDK's GPL-configured FFmpeg DLLs. The first runtime build takes
 several minutes; subsequent builds reuse it. The package includes the exact
 FFmpeg source and build instructions. It produces
 `build/release/snitt_0.1.0_windows_amd64.zip` and its SHA-256 checksum file.
-Pass `-Version` to package a different release version.
+Pass `-Version` to package a different release version, and `-Jolt` to package
+the Jolt application instead of the retained Qt application. The Jolt Windows
+scripts are described in [Jolt development](../jolt-snitt/DEVELOPMENT.md#windows).
 
 MSYS2 UCRT64 dependencies:
 
@@ -126,9 +128,10 @@ The recording tests and optional pre-cutover startup comparison use FFmpeg and
 FFprobe to decode or compare clips; those developer tools are not macOS
 application runtime dependencies.
 
-The Windows build scripts and CI configuration still compile the retained Qt
-application while Jolt validation on Windows is deferred. Do not use that target
-as evidence for the macOS Jolt app.
+`bin\build.ps1`, CI, and the default Windows package still build the retained Qt
+application; do not use that target as evidence for the Jolt app. Run
+`.\jolt-snitt\test.ps1` (and `-Desktop` in a signed-in session) for the Jolt app
+on Windows.
 
 See the [code map](code-map.md), [release guide](releasing.md), and
 [Windows multimedia runtime guide](windows-multimedia-runtime.md).

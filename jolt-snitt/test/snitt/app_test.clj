@@ -18,6 +18,10 @@
 (def checks (atom 0))
 (def completed? (atom false))
 (def saved-path (atom nil))
+
+(defn file-url [path]
+  (let [path (str/replace path "\\" "/")]
+    (str "file://" (when-not (str/starts-with? path "/") "/") path)))
 (def initial-canvas (atom nil))
 (def capture-starts (atom []))
 
@@ -71,7 +75,8 @@
   (let [{:keys [window services]} @app/runtime
         canvas (app/canvas)
         {:keys [root settings backend trim]} services
-        directory (System/getenv "SNITT_JOLT_DATA_DIR")
+        ;; Qt reports paths with forward slashes on every platform.
+        directory (str/replace (System/getenv "SNITT_JOLT_DATA_DIR") "\\" "/")
         output-file (System/getenv "SNITT_JOLT_SAVED_PATH")]
     (reset! initial-canvas canvas)
     (check! (qt/window-alive? window) "Jolt owns a live editor window")
@@ -124,7 +129,10 @@
         (check! (not (q/read-property canvas "canUndo")) "Keyboard Undo removes annotation")
         (check! (enabled? "redo") "Undo notification enables Redo")
         (check! (not (enabled? "undo")) "Undo button disables at start of history")
-        (key! window 90 100663296))
+        ;; Default Redo: Command+Shift+Z on macOS, Ctrl+Y elsewhere.
+        (if (q/read-property root "macOS")
+          (key! window 90 100663296)
+          (key! window 89 67108864)))
       (fn []
         (check! (q/read-property canvas "canUndo") "Keyboard Redo restores annotation")
         (check! (enabled? "undo") "Redo enables Undo")
@@ -195,7 +203,7 @@
         (native/draw! canvas {:kind :annotation :tool "rect"
                              :start [100 100] :end [180 180] :stroke-width 4})
         (let [manager (:manager @app/runtime)
-              second-id (sessions/open-image! manager (str "file://" image) "second.png")
+              second-id (sessions/open-image! manager (file-url image) "second.png")
               second (sessions/session manager second-id)
               second-canvas (app/canvas (:context second))]
           (check! (= 2 (count (sessions/sessions manager))) "Two Jolt editor sessions coexist")
@@ -288,7 +296,7 @@
                                       (get-in @settings/published [:hints "globalCapture"]))
                         "Tray hint follows the published shortcut")))
             (let [manager (:manager @app/runtime)
-                  copy-id (sessions/open-image! manager (str "file://" image) "copy-close.png")
+                  copy-id (sessions/open-image! manager (file-url image) "copy-close.png")
                   copy-window (:window (sessions/session manager copy-id))]
               (qt/later! 120
                 (fn []
@@ -297,7 +305,7 @@
                           "macOS Command-C alias closes the copied editor")
                   (check! (q/read-property canvas "hasImage")
                           "Copy closes only the targeted session")
-                  (let [save-id (sessions/open-image! manager (str "file://" image) "save-close.png")
+                  (let [save-id (sessions/open-image! manager (file-url image) "save-close.png")
                         save-window (:window (sessions/session manager save-id))]
                     (qt/later! 120
                       (fn []

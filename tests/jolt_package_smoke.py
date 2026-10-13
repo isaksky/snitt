@@ -1,25 +1,56 @@
 #!/usr/bin/env python3
-"""Check the relocated production bundle and measure startup resources."""
+"""Check the relocated production bundle and measure startup resources.
+
+On Windows, run this in an unlocked, signed-in desktop session."""
 
 import argparse
 import os
 from pathlib import Path
+import shutil
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ARCHIVE = ROOT / "build/release/snitt_0.2.0_macos_arm64.zip"
+WINDOWS = sys.platform == "win32"
+ARCHIVE = ROOT / ("build/release/snitt_0.2.0_windows_amd64.zip" if WINDOWS
+                  else "build/release/snitt_0.2.0_macos_arm64.zip")
+
+
+def system_environment():
+    """Only the operating system's own directories, so the bundle must be self-contained."""
+    if not WINDOWS:
+        return {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": "/tmp"}
+    system = os.environ["SystemRoot"]
+    names = ("SystemRoot", "SystemDrive", "WINDIR", "TEMP", "TMP", "USERPROFILE",
+             "LOCALAPPDATA", "APPDATA", "USERNAME", "COMPUTERNAME")
+    result = {name: os.environ[name] for name in names if name in os.environ}
+    result["PATH"] = os.pathsep.join([str(Path(system) / "System32"), system])
+    return result
+
+
+def resident_kib(pid):
+    if not WINDOWS:
+        return int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)], text=True).strip())
+    # The launcher waits on the Jolt runtime; measure that child.
+    script = (f"(Get-CimInstance Win32_Process -Filter 'ParentProcessId={pid}' | "
+              "ForEach-Object { (Get-Process -Id $_.ProcessId).WorkingSet64 } | Measure-Object -Sum).Sum")
+    return int(subprocess.check_output(["powershell", "-NoProfile", "-Command", script],
+                                       text=True).strip()) // 1024
+
+
+def runtime_children(pid):
+    script = f"@(Get-CimInstance Win32_Process -Filter 'ParentProcessId={pid}').Count"
+    return int(subprocess.check_output(["powershell", "-NoProfile", "-Command", script], text=True).strip())
 
 
 def environment(home, jolt=False):
-    result = ({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"} if jolt else os.environ.copy())
-    result.update({"HOME": str(home), "QT_QPA_PLATFORM": "cocoa"})
-    if jolt:
-        result["TMPDIR"] = "/tmp"
+    result = system_environment() if jolt else os.environ.copy()
+    result.update({"HOME": str(home), "QT_QPA_PLATFORM": "windows" if WINDOWS else "cocoa"})
     if jolt:
         result["SNITT_JOLT_FAKE_HOTKEY"] = "1"
         result["SNITT_JOLT_IPC_ID"] = str(home)
@@ -35,15 +66,25 @@ def environment(home, jolt=False):
     return result
 
 
+def launcher(bundle):
+    return bundle / "snitt.exe" if WINDOWS else bundle / "Contents/MacOS/snitt"
+
+
 def exercise(bundle, home, jolt=False, through_path=False):
-    executable = bundle / "Contents/MacOS/snitt"
+    executable = launcher(bundle)
     env = environment(home, jolt)
     if through_path:
-        cli = home / "bin"
-        cli.mkdir()
-        (cli / "snitt").symlink_to(executable)
-        env["PATH"] = str(cli) + os.pathsep + env["PATH"]
-        executable = "snitt"
+        if WINDOWS:
+            # Scoop shims and PATH entries name the launcher, never the runtime.
+            # CreateProcess searches this process's PATH, so resolve the name here.
+            env["PATH"] = str(bundle) + os.pathsep + env["PATH"]
+            executable = shutil.which("snitt", path=env["PATH"])
+        else:
+            cli = home / "bin"
+            cli.mkdir()
+            (cli / "snitt").symlink_to(executable)
+            env["PATH"] = str(cli) + os.pathsep + env["PATH"]
+            executable = "snitt"
         subprocess.run([executable, "--quit"], cwd=home, env=env, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
     log = home / "launch.log"
@@ -69,8 +110,7 @@ def exercise(bundle, home, jolt=False, through_path=False):
                            check=True, stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL, timeout=5)
             time.sleep(0.4)
-            rss = int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(owner.pid)],
-                                              text=True).strip())
+            rss = resident_kib(owner.pid)
             subprocess.run([str(executable), "--quit"], cwd=home, env=env,
                            check=True, stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL, timeout=5)
@@ -87,21 +127,50 @@ def exercise(bundle, home, jolt=False, through_path=False):
                     owner.wait()
 
 
+def launcher_owns_runtime(bundle, home):
+    """Ending the Windows launcher must also end its Jolt runtime."""
+    env = environment(home, True)
+    owner = subprocess.Popen([str(launcher(bundle)), "--background"], cwd=home, env=env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 20
+    while not (home / "settings.ini").is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if runtime_children(owner.pid) != 1:
+        owner.kill()
+        raise RuntimeError("Launcher did not start exactly one Jolt runtime")
+    runtime = subprocess.check_output(["powershell", "-NoProfile", "-Command",
+        f"(Get-CimInstance Win32_Process -Filter 'ParentProcessId={owner.pid}').ProcessId"], text=True).strip()
+    owner.kill()
+    owner.wait(timeout=5)
+    for _ in range(50):
+        alive = subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Process -Id {runtime}"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        if not alive:
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Jolt runtime outlived its launcher")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, default=ARCHIVE)
     parser.add_argument("--legacy-bundle", type=Path,
                         help="Optional pre-cutover C++ bundle for a local comparison")
     args = parser.parse_args()
-    if sys.platform != "darwin":
-        raise RuntimeError("macOS is required")
+    if sys.platform not in ("darwin", "win32"):
+        raise RuntimeError("macOS or Windows is required")
     if not args.archive.is_file():
         raise RuntimeError(f"Package the app first: {args.archive}")
     with tempfile.TemporaryDirectory(prefix="snitt-package-smoke-") as directory:
         root = Path(directory)
-        relocated = root / "relocated/Snitt.app"
-        relocated.parent.mkdir()
-        subprocess.run(["ditto", "-x", "-k", str(args.archive), str(relocated.parent)], check=True)
+        if WINDOWS:
+            relocated = root / "relocated"
+            with zipfile.ZipFile(args.archive) as archive:
+                archive.extractall(relocated)
+        else:
+            relocated = root / "relocated/Snitt.app"
+            relocated.parent.mkdir()
+            subprocess.run(["ditto", "-x", "-k", str(args.archive), str(relocated.parent)], check=True)
         image = root / "source.png"
         subprocess.run([sys.executable, str(ROOT / "jolt-snitt/test/image_pixels.py"),
                         "generate", str(image)], check=True)
@@ -110,7 +179,7 @@ def main():
         smoke_env = environment(smoke_home, True)
         smoke_env["SNITT_JOLT_DATA_DIR"] = str(smoke_home)
         smoke_env["SNITT_JOLT_IMAGE"] = str(image)
-        subprocess.run([str(relocated / "Contents/MacOS/snitt"), "--smoke-test"],
+        subprocess.run([str(launcher(relocated)), "--smoke-test"],
                        cwd=smoke_home, env=smoke_env, check=True, timeout=30)
         saved = list((smoke_home / "pictures").rglob("*.png"))
         if len(saved) != 1 or saved[0].stat().st_size == 0:
@@ -128,6 +197,10 @@ def main():
                 runs.append(exercise(bundle, home, jolt, through_path=jolt and index == 1))
             print(f"{label}: ready median {statistics.median(t for t, _ in runs):.3f}s; "
                   f"RSS median {statistics.median(r for _, r in runs) / 1024:.1f} MiB")
+        if WINDOWS:
+            ended = root / "launcher-ended"
+            ended.mkdir()
+            launcher_owns_runtime(relocated, ended)
         print("PASS: relocated Jolt smoke, direct/PATH launch, forwarding, show, quit and repeated teardown")
 
 

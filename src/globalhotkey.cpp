@@ -168,25 +168,42 @@ quint32 GlobalHotkey::nativeRegistrationId() const {
 }
 QKeySequence GlobalHotkey::shortcut() const { return m_state->sequence; }
 
-bool GlobalHotkey::setShortcut(const QKeySequence &sequence, QString *error) {
+bool GlobalHotkey::supports(const QKeySequence &sequence, QString *error) {
     if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown) {
         if (error) *error = QStringLiteral("Choose one supported key with at least one modifier.");
         return false;
     }
-    if (m_state->sequence == sequence && m_state->primary) return true;
     const Qt::KeyboardModifiers modifiers = sequence[0].keyboardModifiers();
     if (!(modifiers & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))
         || (modifiers & (Qt::KeypadModifier | Qt::GroupSwitchModifier))) {
         if (error) *error = QStringLiteral("A system-wide shortcut needs a modifier and cannot use keypad or group-switch modifiers.");
         return false;
     }
-
 #ifdef Q_OS_WIN
-    const UINT key = windowsKey(sequence[0].key());
-    if (!key) {
+    if (!windowsKey(sequence[0].key())) {
         if (error) *error = QStringLiteral("That key is not supported for a Windows system-wide shortcut.");
         return false;
     }
+    return true;
+#elif defined(Q_OS_MACOS)
+    if (macKey(sequence[0].key()) == UINT32_MAX) {
+        if (error) *error = QStringLiteral("That key is not supported for a macOS system-wide shortcut.");
+        return false;
+    }
+    return true;
+#else
+    if (error) *error = QStringLiteral("System-wide shortcuts are supported on macOS and Windows only.");
+    return false;
+#endif
+}
+
+bool GlobalHotkey::setShortcut(const QKeySequence &sequence, QString *error) {
+    if (!supports(sequence, error)) return false;
+    if (m_state->sequence == sequence && m_state->primary) return true;
+    const Qt::KeyboardModifiers modifiers = sequence[0].keyboardModifiers();
+
+#ifdef Q_OS_WIN
+    const UINT key = windowsKey(sequence[0].key());
     const quint32 newId = allocateRegistrationId();
     if (!RegisterHotKey(nullptr, newId, windowsModifiers(modifiers), key)) {
         m_state->error = GetLastError();
@@ -203,10 +220,6 @@ bool GlobalHotkey::setShortcut(const QKeySequence &sequence, QString *error) {
     return true;
 #elif defined(Q_OS_MACOS)
     const UInt32 key = macKey(sequence[0].key());
-    if (key == UINT32_MAX) {
-        if (error) *error = QStringLiteral("That key is not supported for a macOS system-wide shortcut.");
-        return false;
-    }
     if (!m_state->handler) {
         if (error) *error = QStringLiteral("Could not install the macOS keyboard event handler.");
         return false;
@@ -230,7 +243,6 @@ bool GlobalHotkey::setShortcut(const QKeySequence &sequence, QString *error) {
     return true;
 #else
     Q_UNUSED(modifiers)
-    if (error) *error = QStringLiteral("System-wide shortcuts are supported on macOS and Windows only.");
     return false;
 #endif
 }

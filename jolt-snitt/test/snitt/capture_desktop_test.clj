@@ -48,7 +48,7 @@
   (check! (nil? (:capture (sessions/snapshot manager))) "Cancel ends actual capture")
   (check! (nil? (sessions/session manager id)) "Canceled editor disposed")
   (check! (= 0 (qt/window-count)) "All monitor overlays disposed")
-  (println "PASS: actual macOS Glimmer capture; displays" count "scales" scales)
+  (println "PASS: actual desktop Glimmer capture; displays" count "scales" scales)
   (when (= count 1)
     (println "UNAVAILABLE: actual multi-monitor validation needs another connected display"))
   (when-not (some #(< 1 %) scales)
@@ -132,7 +132,7 @@
         displays (object/invoke! host "captureDisplaysForTest()" [])
         count (count displays)
         scales (mapv #(get % "scale") displays)]
-    (check! (pos? count) "Actual macOS desktop has a display")
+    (check! (pos? count) "Actual desktop has a display")
     (start-single! manager 0 count scales)))
 
 (defn -main [& _]

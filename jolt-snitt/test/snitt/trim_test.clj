@@ -1,5 +1,6 @@
 (ns snitt.trim-test
-  (:require [clojure.test :refer [deftest is run-tests]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is run-tests]]
             [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
@@ -22,6 +23,19 @@
 
 (def completed (atom false))
 (defn check! [v message] (when-not v (throw (ex-info message {}))))
+
+;; Fault-injection programs: a silent success, a failure exit, and a long run.
+(defn helper [kind]
+  (if (str/includes? (System/getProperty "os.name") "Windows")
+    (let [system (str (System/getenv "SystemRoot") "\\System32\\")]
+      (case kind
+        :true [(str system "cmd.exe") ["/c" "exit 0"]]
+        :false [(str system "cmd.exe") ["/c" "exit 1"]]
+        :sleep [(str system "PING.EXE") ["-n" "31" "127.0.0.1"]]))
+    (case kind
+      :true ["/usr/bin/true" []]
+      :false ["/usr/bin/false" []]
+      :sleep ["/bin/sleep" ["30"]])))
 (defn wait! [label pred action n]
   (qt/later! 20
     #(cond (pred) (action)
@@ -51,19 +65,19 @@
           (object/invoke! target signature [(first args) (str path ".locked")])
           (and (= signature "start(QString,int,QString,QStringList)")
                (= (first args) "probe") (= @fault "probe-failure"))
-          (object/invoke! target signature [(nth args 0) (nth args 1) "/usr/bin/true" []])
+          (object/invoke! target signature (into [(nth args 0) (nth args 1)] (helper :true)))
           (and (= signature "start(QString,int,QString,QStringList)")
                (= (first args) "export") (= @fault "process-failure"))
           (object/invoke! target signature [(nth args 0) (nth args 1) "/missing/snitt-ffmpeg" []])
           (and (= signature "start(QString,int,QString,QStringList)")
                (= (first args) "export") (= @fault "exit-failure"))
-          (object/invoke! target signature [(nth args 0) (nth args 1) "/usr/bin/false" []])
+          (object/invoke! target signature (into [(nth args 0) (nth args 1)] (helper :false)))
           (and (= signature "start(QString,int,QString,QStringList)")
                (= (first args) "probe") (= @fault "probe-start-failure"))
           (object/invoke! target signature [(nth args 0) (nth args 1) "/missing/snitt-ffprobe" []])
           (and (= signature "start(QString,int,QString,QStringList)")
                (= (first args) "export") (contains? #{"cancel-running" "dispose"} @fault))
-          (object/invoke! target signature [(nth args 0) (nth args 1) "/bin/sleep" ["30"]])
+          (object/invoke! target signature (into [(nth args 0) (nth args 1)] (helper :sleep)))
           :else (object/invoke! target signature args))))
     (object/subscribe! root handle "finalized(QString)" (fn [_] (reset! finalized true)))
     (object/subscribe! root handle "changed()"

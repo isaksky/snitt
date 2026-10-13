@@ -8,6 +8,7 @@
 - [jolt-snitt/src/snitt/trim.clj](../jolt-snitt/src/snitt/trim.clj): review and trim orchestration.
 - [jolt-snitt/native/snitt_jolt.cpp](../jolt-snitt/native/snitt_jolt.cpp): narrow native services and image handle bridge.
 - [jolt-snitt/native/package_launcher.c](../jolt-snitt/native/package_launcher.c): packaged Jolt entry point and bundled Qt paths.
+- [jolt-snitt/native/package_launcher_windows.c](../jolt-snitt/native/package_launcher_windows.c): windowless Windows launcher that supervises the Jolt runtime.
 - [src/globalhotkey.cpp](../src/globalhotkey.cpp): native Windows/macOS global hotkey registration.
 - [src/backend.cpp](../src/backend.cpp): platform screenshot and recorder adapters.
 - [src/macrecorder.mm](../src/macrecorder.mm): native macOS ScreenCaptureKit recording.

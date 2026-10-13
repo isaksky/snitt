@@ -74,5 +74,5 @@
     (check! @completed "Real recording sequence completed")
     (check! (zero? (widget/live-count)) "Widgets released")
     (check! (zero? (q/owned-count)) "Native objects released")
-    (println "PASS: real ScreenCaptureKit recording, ready/stop/save/review and startup cancellation")
+    (println "PASS: real desktop recording, ready/stop/save/review and startup cancellation")
     (finally (reset! app/runtime nil) (shutdown-agents))))

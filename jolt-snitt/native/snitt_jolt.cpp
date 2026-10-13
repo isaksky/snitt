@@ -382,7 +382,8 @@ public:
             if (!window) return false;
             window->winId(); // Create each native window before protection/start.
 #ifdef Q_OS_WIN
-            if (!m_backend->protectRecordingControls(window)) return false;
+            // A fake recorder captures nothing, and offscreen test windows have no HWND.
+            if (!fakeRecorder() && !m_backend->protectRecordingControls(window)) return false;
 #endif
         }
         if (qEnvironmentVariable("SNITT_JOLT_FAKE_RECORDER") == QStringLiteral("protection-failure")) return false;
@@ -574,16 +575,9 @@ public:
             m_hotkeyError.clear();
             const QString portable = m_settings->shortcutInfo(configured)
                 .value(QStringLiteral("portable")).toString();
-            const QKeySequence sequence = QKeySequence::fromString(portable, QKeySequence::PortableText);
-            if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown
-#ifdef Q_OS_MACOS
-                || (sequence[0].key() >= Qt::Key_F21 && sequence[0].key() <= Qt::Key_F35)
-#endif
-                ) {
-                m_hotkeyError = QStringLiteral("The test hotkey adapter rejects this native key.");
-                return false;
-            }
-            return true;
+            // Apply the native key policy without registering a system shortcut.
+            return GlobalHotkey::supports(QKeySequence::fromString(portable, QKeySequence::PortableText),
+                                          &m_hotkeyError);
         }
         if (!applicationHotkey) applicationHotkey = new GlobalHotkey(qApp);
         if (!m_hotkeyConnected) {

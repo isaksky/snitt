@@ -14,6 +14,8 @@ public:
     quint32 nativeRegistrationId() const;
     // Uses Qt modifier semantics, just like QShortcut and QKeySequence::NativeText.
     bool setShortcut(const QKeySequence &sequence, QString *error = nullptr);
+    // The key and modifier policy setShortcut applies before native registration.
+    static bool supports(const QKeySequence &sequence, QString *error = nullptr);
     QKeySequence shortcut() const;
     QString description() const;
     bool nativeEventFilter(const QByteArray &, void *, qintptr *) override;

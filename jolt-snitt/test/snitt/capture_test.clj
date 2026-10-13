@@ -1,5 +1,6 @@
 (ns snitt.capture-test
-  (:require [glimmer-qt.core :as qt]
+  (:require [clojure.string :as str]
+            [glimmer-qt.core :as qt]
             [glimmer-qt.ffi :as q]
             [glimmer-qt.object :as object]
             [glimmer-qt.widget :as widget]
@@ -27,6 +28,10 @@
 (defn invoke! [manager id signature args]
   (object/invoke! (services manager id) signature args))
 
+(defn file-url [path]
+  (let [path (str/replace path "\\" "/")]
+    (str "file://" (when-not (str/starts-with? path "/") "/") path)))
+
 (defn capture-id [manager]
   (:capture (sessions/snapshot manager)))
 
@@ -35,7 +40,7 @@
         first-id 1
         first-window (:window (sessions/session manager first-id))
         first-canvas (app/canvas (:context (sessions/session manager first-id)))
-        second-id (sessions/open-image! manager (str "file://" image) "other.png")
+        second-id (sessions/open-image! manager (file-url image) "other.png")
         second-window (:window (sessions/session manager second-id))
         second-canvas (app/canvas (:context (sessions/session manager second-id)))
         current (atom nil)]

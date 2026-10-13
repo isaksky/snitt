@@ -20,5 +20,5 @@
  :jolt/native [{:name "glimmer-qt"
                 :darwin ["libglimmer_qt.dylib"
                          "build/libglimmer_qt.dylib"]
-                :windows ["build/release/glimmer_qt.dll" "build/glimmer_qt.dll"]
+                :windows ["glimmer_qt.dll" "build/release/glimmer_qt.dll" "build/glimmer_qt.dll"]
                 :linux ["build/libglimmer_qt.so"]}]}

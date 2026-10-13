@@ -1,7 +1,9 @@
 param(
     [string]$QtBin = $env:SNITT_QT_BIN,
     [string]$Version = '0.2.0',
-    [string]$ReleaseDirectory
+    [string]$ReleaseDirectory,
+    # Package the Jolt application instead of the C++ reference build.
+    [switch]$Jolt
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -15,15 +17,30 @@ $runtime = Join-Path $root 'build\tools\windows-multimedia-runtime\stage'
 & $python "$PSScriptRoot\build-windows-multimedia-runtime.py" --qt-bin $QtBin
 if ($LASTEXITCODE -ne 0) { throw 'Private LGPL multimedia runtime build failed.' }
 $runtimeManifest = Get-Content (Join-Path $runtime 'manifest.json') -Raw | ConvertFrom-Json
-& "$PSScriptRoot\build.ps1" -QtBin $QtBin
+if ($Jolt) { & "$root\jolt-snitt\build-app.ps1" -Mode Release -QtBin $QtBin }
+else { & "$PSScriptRoot\build.ps1" -QtBin $QtBin }
 $env:PATH = "$QtBin;$env:PATH"
 $destination = Join-Path $root 'build\package\windows\snitt'
 if (Test-Path $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
 New-Item -ItemType Directory -Force $destination | Out-Null
-Copy-Item "$root\build\windows-app\snitt.exe" $destination
-& "$QtBin\windeployqt6.exe" --release --compiler-runtime --no-translations --no-ffmpeg --skip-plugin-types multimedia --qmldir "$root\src" --dir $destination --plugindir "$destination\plugins" --qml-deploy-dir "$destination\qml" "$destination\snitt.exe"
+if ($Jolt) {
+    # snitt.exe is a GUI launcher for the console-subsystem Jolt runtime.
+    Copy-Item "$root\build\jolt-snitt\snitt-jolt.exe", "$root\build\jolt-snitt\snitt_jolt.dll",
+        "$root\glimmer-qt\build\glimmer_qt.dll" $destination
+    & "$QtBin\gcc.exe" -O2 -municode -mwindows -o "$destination\snitt.exe" "$root\jolt-snitt\native\package_launcher_windows.c"
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
+    $qtBinaries = @("$destination\snitt_jolt.dll", "$destination\glimmer_qt.dll")
+    $qmlSources = @('--qmldir', "$root\glimmer-qt\qml", '--qmldir', "$root\src")
+} else {
+    Copy-Item "$root\build\windows-app\snitt.exe" $destination
+    $qtBinaries = @("$destination\snitt.exe")
+    $qmlSources = @('--qmldir', "$root\src")
+}
+& "$QtBin\windeployqt6.exe" --release --compiler-runtime --no-translations --no-ffmpeg --skip-plugin-types multimedia @qmlSources --dir $destination --plugindir "$destination\plugins" --qml-deploy-dir "$destination\qml" @qtBinaries
 if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
 if (!(Test-Path (Join-Path $destination 'plugins\imageformats\qsvg.dll'))) { throw 'Bundled SVG image plugin is missing.' }
+# Test fixtures share the Glimmer build directory; never ship their objects.
+if (Test-Path (Join-Path $destination 'Qt6Test.dll')) { throw 'A packaged library links Qt Test; rebuild without test configuration.' }
 foreach ($qmlFile in 'qmldir','quickmultimediaplugin.dll') {
     if (!(Test-Path (Join-Path $destination "qml\QtMultimedia\$qmlFile"))) {
         throw "Bundled QtMultimedia QML import is missing $qmlFile."
@@ -104,6 +121,15 @@ New-Item -ItemType Directory -Force (Join-Path $licenses 'lucide') | Out-Null
 Copy-Item "$root\src\icons\LICENSE" (Join-Path $licenses 'lucide\LICENSE')
 New-Item -ItemType Directory -Force (Join-Path $licenses 'omacut') | Out-Null
 Copy-Item "$root\src\OMACUT-LICENSE" (Join-Path $licenses 'omacut\LICENSE')
+if ($Jolt) {
+    $joltCommand = if ($env:JOLT) { $env:JOLT } else { 'jolt' }
+    $joltLicense = Join-Path (Split-Path (Get-Command $joltCommand -ErrorAction Stop).Source -Parent) 'LICENSE'
+    if (!(Test-Path $joltLicense)) { throw 'Selected Jolt distribution lacks its EPL license.' }
+    foreach ($component in @(@('jolt', $joltLicense), @('glimmer', "$root\glimmer-qt\vendor\glimmer\LICENSE"))) {
+        New-Item -ItemType Directory -Force (Join-Path $licenses $component[0]) | Out-Null
+        Copy-Item $component[1] (Join-Path $licenses "$($component[0])\LICENSE")
+    }
+}
 foreach ($required in 'qt6-base\LGPL-3.0-only.txt', 'qt6-base\GPL-3.0-only.txt', 'qt6-declarative\LGPL-3.0-only.txt', 'qt6-multimedia\LGPL-3.0-only.txt', 'qt6-multimedia\GPL-3.0-only.txt', 'gcc\COPYING.RUNTIME') {
     if (!(Test-Path (Join-Path $licenses $required))) { throw "Required runtime license is missing: $required" }
 }
@@ -159,6 +185,13 @@ The separate ffmpeg.exe command-line tool is not included in this archive.
 Recording and trimming need that executable installed through Scoop; its own
 distribution supplies its applicable licenses and notices.
 "@ | Set-Content "$destination\THIRD-PARTY-NOTICES.txt" -Encoding utf8
+if ($Jolt) {
+    @"
+
+The Jolt application runtime (snitt-jolt.exe) is under EPL-2.0; see licenses/jolt/LICENSE.
+The Glimmer UI library is under MIT; see licenses/glimmer/LICENSE.
+"@ | Add-Content "$destination\THIRD-PARTY-NOTICES.txt" -Encoding utf8
+}
 if (!$ReleaseDirectory) { $ReleaseDirectory = Join-Path $root 'build\release' }
 New-Item -ItemType Directory -Force $ReleaseDirectory | Out-Null
 $archiveName = "snitt_${Version}_windows_amd64.zip"

@@ -2,7 +2,8 @@
  :jolt/native [{:name "snitt-jolt"
                 :darwin ["libsnitt_jolt.dylib"
                          "../build/jolt-snitt/libsnitt_jolt.dylib"]
-                :windows ["../build/jolt-snitt/release/snitt_jolt.dll"
+                :windows ["snitt_jolt.dll"
+                          "../build/jolt-snitt/release/snitt_jolt.dll"
                           "../build/jolt-snitt/snitt_jolt.dll"]
                 :linux ["../build/jolt-snitt/libsnitt_jolt.so"]}]
  :deps {snitt/glimmer-qt {:local/root "../glimmer-qt"}}

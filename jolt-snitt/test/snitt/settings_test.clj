@@ -27,7 +27,9 @@
 (defn replace! [source]
   (let [temporary (str @path ".new")]
     (spit temporary source)
-    (check! (.renameTo (io/file temporary) (io/file @path)) "Atomic replacement succeeded")))
+    ;; The native helper replaces atomically; File.renameTo cannot overwrite on Windows.
+    (check! (empty? (object/invoke! (:handle (:trim @service-a)) "replace(QString,QString)" [temporary @path]))
+            "Atomic replacement succeeded")))
 (defn later! [delay f] (qt/later! delay f))
 (defn await! [message ready? continuation]
   (let [deadline (+ (System/currentTimeMillis) 5000)]
@@ -94,8 +96,9 @@
     (check! (= (color @service-a) (color @service-b)) "Color reaches all editor projections")
     (check! (= ["F6" "F7"] (get-in @settings/published [:shortcuts "toolPixelate"]))
             "Shortcut alternatives reach Jolt")
-    (check! (= ["Meta+Shift+C" "Ctrl+C"] (get-in @settings/published [:shortcuts "copyClose"]))
-            "macOS configured Control converts to Qt Meta; Copy alias remains")
+    (check! (= [(if (q/read-property (:root @service-a) "macOS") "Meta+Shift+C" "Ctrl+Shift+C") "Ctrl+C"]
+               (get-in @settings/published [:shortcuts "copyClose"]))
+            "Configured Control uses the platform Qt modifier; Copy alias remains")
     (check! (= "F6 / F7" (get-in @settings/published [:hints "toolPixelate"]))
             "Shortcut hint uses both alternatives")
     (check! (str/includes? (:pictures-root @settings/published) "Pictures, shared")
@@ -142,7 +145,7 @@
               (str "Diagnostic identifies " diagnostic))
       (check! (= "#317ab5" (:good-color @settings/published))
               "Malformed candidate keeps published snapshot"))
-    (let [native-failure (str/replace changed "globalCapture=Ctrl+Print" "globalCapture=Meta+F21")]
+    (let [native-failure (str/replace changed "globalCapture=Ctrl+Print" "globalCapture=Meta+F25")]
       (replace! native-failure)
       (check! (not (settings/reload!)) "Unsupported native global registration rolls back")
       (check! (str/includes? (error @service-a) "Shortcuts/globalCapture")

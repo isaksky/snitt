@@ -87,8 +87,7 @@ sequences and hints; removing or replacing a binding updates the mounted shortcu
 and its label. Run `jolt -M:commands` from `jolt-snitt/` for the pure context tests;
 `./jolt-snitt/test-app` also runs these and drives representative keys through Qt.
 
-Only local macOS validation is in scope for this development launcher. Windows
-build and execution remain deferred.
+Windows uses PowerShell counterparts of these scripts; see [Windows](#windows).
 
 ## Production macOS package
 
@@ -161,3 +160,39 @@ Run `./jolt-snitt/test-trim` for generated audio/video, reordered-frame and shor
 clips, packet/timing checks, thumbnail windows and EOF fallback, cancellation,
 process/probe/replacement failures, retry, teardown, and macOS held-file behavior.
 `./jolt-snitt/test-review` exercises the review UI against the same Jolt owner.
+
+## Windows
+
+Install the Jolt v0.8.16 Windows release (`jolt.exe` on PATH, or `JOLT` set to
+its path) and the MSYS2 UCRT64 Qt 6.11 toolchain from the main development guide.
+From PowerShell, `.\jolt-snitt\run.ps1 [image-path | --show | --background | --quit]`
+builds both native libraries with `build-native.ps1` and starts the development
+app. `.\jolt-snitt\build-app.ps1 [-Mode Dev|Release|All]` writes
+`build\jolt-snitt\snitt-jolt-dev.exe` and `snitt-jolt.exe`; the release build
+omits `--signable`, which serves macOS code signing and needs Chez headers.
+
+Windows has no rpath, so `windows-env.ps1` puts the Glimmer build and the Qt SDK
+on PATH before `jolt.exe` loads `snitt_jolt.dll`. Each `:windows` native list
+starts with the bare DLL name because a Jolt 0.8.16 built executable stops at its
+first candidate that fails to load; the bare name resolves beside the executable
+or on PATH, while `jolt -M:…` still falls back to the build paths.
+
+`.\jolt-snitt\test.ps1` runs the offscreen suites of `test-app` and the other
+`test-*` scripts, including both built executables, process forwarding over the
+named-pipe endpoint, and the trim fixtures. It needs FFmpeg/FFprobe on PATH and
+uses the toolchain's `python3.exe`. In an unlocked, signed-in desktop session,
+`.\jolt-snitt\test.ps1 -Desktop` checks the real tray, region capture,
+FFmpeg recording with capture exclusion, and review playback/trim. An SSH or
+service session cannot prove these.
+
+`.\bin\package-windows.ps1 -Jolt` packages the Jolt application in place of the
+retained C++ build, with the same Qt deployment, private playback runtime,
+dependency checks and installers. Its `snitt.exe` is built from
+`native/package_launcher_windows.c`: Jolt emits a console-subsystem executable,
+so this GUI launcher starts `snitt-jolt.exe` without a console window, sets the
+production identity and bundled Qt paths, and keeps running as the `snitt`
+process the installers stop with `--quit`. A job object ends the runtime if the
+launcher is terminated. It never forwards a hidden show state, because Windows
+would apply it to the first editor or picker window. After packaging, run
+`python tests\jolt_package_smoke.py` from an unlocked desktop session; it uses a
+system-only PATH to prove the archive is self-contained.
