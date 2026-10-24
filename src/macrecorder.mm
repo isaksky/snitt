@@ -198,8 +198,11 @@ void MacRecorder::nativePrepared(quint64 generation, void *contentPointer, const
     SCStreamConfiguration *configuration = [SCStreamConfiguration new];
     configuration.sourceRect = sourceRect;
     const double scale = filter.pointPixelScale;
-    configuration.width = qMax(2, int(std::ceil(sourceRect.size.width * scale / 2.0) * 2));
-    configuration.height = qMax(2, int(std::ceil(sourceRect.size.height * scale / 2.0) * 2));
+    // Normalized coordinates can reconstruct 240 pixels as 240.00000000000003.
+    // Round to a physical pixel before padding to even H.264 dimensions, so
+    // floating-point noise does not introduce an unwanted two-pixel resize.
+    configuration.width = qMax(2, ((qRound(sourceRect.size.width * scale) + 1) / 2) * 2);
+    configuration.height = qMax(2, ((qRound(sourceRect.size.height * scale) + 1) / 2) * 2);
     configuration.minimumFrameInterval = CMTimeMake(1, 30);
     configuration.queueDepth = 3;
     configuration.showsCursor = YES;

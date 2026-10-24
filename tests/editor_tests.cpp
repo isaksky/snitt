@@ -2291,6 +2291,12 @@ void EditorTests::qmlRecordingControls() {
     const auto dimensions = QString::fromUtf8(probe.readAllStandardOutput()).trimmed().split('x');
     QCOMPARE(dimensions.size(), 2);
     const int width = dimensions[0].toInt(), height = dimensions[1].toInt();
+#ifdef Q_OS_MACOS
+    const qreal scale = QGuiApplication::primaryScreen()->devicePixelRatio();
+    const QSize capturePixels = backend.recordingRegion().size() * scale;
+    QCOMPARE(width, ((capturePixels.width() + 1) / 2) * 2);
+    QCOMPARE(height, ((capturePixels.height() + 1) / 2) * 2);
+#endif
     QProcess decoder;
     decoder.start(recording::toolPath("ffmpeg"), {"-v", "error", "-i", path, "-frames:v", "5",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"});
