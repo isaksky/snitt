@@ -1,6 +1,7 @@
 #include "backend.h"
 #include <QFile>
 #include <QFileInfo>
+#include <QImageWriter>
 #include <QTimer>
 #include <QUuid>
 #include <QGuiApplication>
@@ -177,6 +178,38 @@ QRect Backend::indicatorGeometry(const QRect &region, const QRect &screen, const
     return indicator;
 }
 
+bool Backend::prepareCaptureFile(QString &problem) {
+    // QTemporaryDir::isValid() only reports whether creation succeeded. A
+    // system temp cleaner can remove it while the resident app is running,
+    // including while a region selector is open. Renew it before each write.
+    if (!m_temp.isValid() || !QDir(m_temp.path()).exists())
+        m_temp = QTemporaryDir();
+    if (!m_temp.isValid()) {
+        problem = QStringLiteral("Could not create a temporary capture folder in %1: %2")
+            .arg(QDir::toNativeSeparators(QDir::tempPath()), m_temp.errorString());
+        return false;
+    }
+    m_output = m_temp.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png");
+    return true;
+}
+
+bool Backend::writeCapture(const QImage &image, QString &problem) const {
+    const auto fail = [&](const QString &reason) {
+        problem = QStringLiteral("Could not save the captured region.\n%1\n%2")
+            .arg(QDir::toNativeSeparators(m_output), reason);
+        return false;
+    };
+    QFile file(m_output);
+    if (!file.open(QIODevice::WriteOnly)) return fail(file.errorString());
+    QImageWriter writer(&file, "PNG");
+    if (!writer.write(image))
+        return fail(file.error() != QFileDevice::NoError ? file.errorString() : writer.errorString());
+    if (!file.flush()) return fail(file.errorString());
+    // Close the writer and file before captured() loads it and finish() removes
+    // it, particularly on Windows where an open handle can prevent deletion.
+    return true;
+}
+
 void Backend::capture(bool multiple, bool video) {
     if (m_capturing || recording() || !m_trim.path().isEmpty()) return;
 #ifdef Q_OS_MACOS
@@ -187,14 +220,14 @@ void Backend::capture(bool multiple, bool video) {
         return;
     }
 #endif
-    if (!m_temp.isValid()) {
-        emit error(QStringLiteral("Could not create a temporary capture file."));
+    QString problem;
+    if (!prepareCaptureFile(problem)) {
+        emit error(problem);
         emit captureFinished(false);
         return;
     }
     m_capturing = true;
     emit capturingChanged();
-    m_output = m_temp.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png");
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     m_video = video;
     m_multiple = multiple && !video;
@@ -223,6 +256,12 @@ void Backend::capture(bool multiple, bool video) {
 void Backend::captureNextScreen() {
     if (!m_capturing) return;
     if (m_screenIndex >= m_screens.size()) { showSelectors(); return; }
+    QString problem;
+    if (!prepareCaptureFile(problem)) {
+        emit error(problem);
+        finish();
+        return;
+    }
     const QRect area = m_screens[m_screenIndex].geometry;
     const QString bounds = QStringLiteral("%1,%2,%3,%4")
         .arg(area.x()).arg(area.y()).arg(area.width()).arg(area.height());
@@ -240,8 +279,9 @@ void Backend::showSelectors() {
         connect(selector, &RegionSelector::canceled, this, [this] { finish(); });
         connect(selector, &RegionSelector::selected, this, [this, selector](const QImage &image) {
             if (!m_capturing) return;
-            if (!image.save(m_output, "PNG")) {
-                emit error(QStringLiteral("Could not save the captured region."));
+            QString problem;
+            if (!prepareCaptureFile(problem) || !writeCapture(image, problem)) {
+                emit error(problem);
                 finish();
                 return;
             }

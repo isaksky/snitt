@@ -73,6 +73,8 @@ signals:
 private:
     friend class EditorTests;
     bool windowsExclusionSupported() const;
+    bool prepareCaptureFile(QString &problem);
+    bool writeCapture(const QImage &image, QString &problem) const;
     void finish(bool captured = false);
     void showSelectors();
     void captureNextScreen();

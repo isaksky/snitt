@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QDate>
 #include <QFile>
+#include <QImageWriter>
 #include <QSaveFile>
 #include <QSettings>
 #include <QCryptographicHash>
@@ -92,7 +93,10 @@ private slots:
     void settingsRegionToolbarHintsLive();
     void gridArrangementPreservesPixels();
     void desktopMultipleCapture();
+    void captureAfterTemporaryCleanup();
+    void captureWriteDiagnostics();
     void windowsHotkeyRegistration();
+    void windowsDesktopCapture_data();
     void windowsDesktopCapture();
     void windowsCaptureLatency();
     void windowsClipboardContention();
@@ -2945,10 +2949,93 @@ void EditorTests::desktopMultipleCapture() {
 #endif
 }
 
+void EditorTests::captureAfterTemporaryCleanup() {
+    Backend backend(&isolatedSettings());
+    QSignalSpy errors(&backend, &Backend::error);
+    QSignalSpy finished(&backend, &Backend::captureFinished);
+    QImage captured;
+    connect(&backend, &Backend::captured, this, [&captured](const QUrl &url) {
+        captured.load(url.toLocalFile());
+    });
+    const QImage source = pattern().convertToFormat(QImage::Format_ARGB32);
+    // Simulate a temp cleaner while the resident app's selector is open.
+    // Reuse the backend to ensure recovery does not require restarting Snitt.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        backend.m_capturing = true;
+        backend.m_output = backend.m_temp.filePath("cleanup-test.png");
+        backend.m_screens = {{QRect(0, 0, 800, 600), source}};
+        backend.showSelectors();
+        QCOMPARE(backend.m_selectors.size(), 1);
+        QVERIFY(QDir(backend.m_temp.path()).removeRecursively());
+        QVERIFY(backend.m_temp.isValid()); // This only remembers creation success.
+        emit backend.m_selectors.first()->selected(source);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(finished.size(), attempt + 1);
+        QVERIFY(finished.last().first().toBool());
+        QCOMPARE(captured, source);
+        QVERIFY(!backend.capturing());
+        QVERIFY(!QFileInfo::exists(backend.m_output));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+}
+
+void EditorTests::captureWriteDiagnostics() {
+    Backend backend(&isolatedSettings());
+    const QImage source = pattern().convertToFormat(QImage::Format_ARGB32);
+    // Use real filesystem failures that work without changing permissions,
+    // including when the Windows test account is an administrator.
+    for (const QString &path : {backend.m_temp.path(), backend.m_temp.filePath("missing/capture.png")}) {
+        backend.m_output = path;
+        QFile probe(path);
+        QVERIFY(!probe.open(QIODevice::WriteOnly));
+        QString problem;
+        QVERIFY(!backend.writeCapture(source, problem));
+        QVERIFY2(problem.contains(QDir::toNativeSeparators(path)), qPrintable(problem));
+        QVERIFY2(problem.contains(probe.errorString()), qPrintable(problem));
+    }
+
+    QSignalSpy errors(&backend, &Backend::error);
+    QSignalSpy finished(&backend, &Backend::captureFinished);
+    QSignalSpy captured(&backend, &Backend::captured);
+    // An invalid cropped image must report the encoder's reason through the
+    // normal capture error signal, clean up its partial file, and allow retry.
+    QImageWriter probe;
+    QVERIFY(!probe.write(QImage()));
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        backend.m_capturing = true;
+        backend.m_screens = {{QRect(0, 0, 800, 600), source}};
+        backend.showSelectors();
+        QCOMPARE(backend.m_selectors.size(), 1);
+        emit backend.m_selectors.first()->selected(attempt == 0 ? QImage() : source);
+        QCOMPARE(errors.size(), 1);
+        if (attempt == 0) {
+            const QString problem = errors.first().first().toString();
+            QVERIFY2(problem.contains(probe.errorString()), qPrintable(problem));
+            QVERIFY2(problem.contains(QDir::toNativeSeparators(backend.m_output)), qPrintable(problem));
+        }
+        QCOMPARE(finished.size(), attempt + 1);
+        QCOMPARE(finished.last().first().toBool(), attempt != 0);
+        QCOMPARE(captured.size(), attempt);
+        QVERIFY(!backend.capturing());
+        QVERIFY(!QFileInfo::exists(backend.m_output));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+}
+
+void EditorTests::windowsDesktopCapture_data() {
+    QTest::addColumn<bool>("cleanupBeforeCapture");
+    QTest::addColumn<bool>("cleanupDuringSelection");
+    QTest::newRow("normal") << false << false;
+    QTest::newRow("cleanup-before-capture") << true << false;
+    QTest::newRow("cleanup-during-selection") << false << true;
+}
+
 void EditorTests::windowsDesktopCapture() {
 #ifdef Q_OS_WIN
     if (qEnvironmentVariableIsEmpty("SNITT_INTERACTIVE_TESTS"))
         QSKIP("Real screen capture requires an interactive Windows desktop");
+    QFETCH(bool, cleanupBeforeCapture);
+    QFETCH(bool, cleanupDuringSelection);
     QWidget marker;
     marker.setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     marker.setGeometry(QGuiApplication::primaryScreen()->geometry().adjusted(80, 80, -80, -80));
@@ -2959,6 +3046,8 @@ void EditorTests::windowsDesktopCapture() {
     QVERIFY(QTest::qWaitForWindowExposed(&marker));
     QTest::qWait(300);
     Backend backend(&isolatedSettings());
+    if (cleanupBeforeCapture) QVERIFY(QDir(backend.m_temp.path()).removeRecursively());
+    QSignalSpy errors(&backend, &Backend::error);
     QSignalSpy finished(&backend, &Backend::captureFinished);
     QImage captured;
     connect(&backend, &Backend::captured, this, [&captured](const QUrl &url) { captured.load(url.toLocalFile()); });
@@ -2982,10 +3071,12 @@ void EditorTests::windowsDesktopCapture() {
         return false;
     };
     QTRY_VERIFY(findSelector());
+    if (cleanupDuringSelection) QVERIFY(QDir(backend.m_temp.path()).removeRecursively());
     const QPoint center = selector->rect().center();
     QTest::mousePress(selector, Qt::LeftButton, Qt::NoModifier, center - QPoint(40, 30));
     QTest::mouseRelease(selector, Qt::LeftButton, Qt::NoModifier, center + QPoint(40, 30));
     QTRY_COMPARE(finished.size(), 1);
+    QCOMPARE(errors.size(), 0);
     QVERIFY(finished.first().first().toBool());
     QVERIFY(!captured.isNull());
     QCOMPARE(captured.pixelColor(captured.width() / 2, captured.height() / 2), QColor("#123456"));

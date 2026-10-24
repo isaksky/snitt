@@ -741,7 +741,7 @@ ApplicationWindow {
             Label {
                 text: captureErrorDialog.message
                 color: "#dfe5ed"
-                wrapMode: Text.WordWrap
+                wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
             RowLayout {
