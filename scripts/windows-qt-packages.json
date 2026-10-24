@@ -1,0 +1,34 @@
+[
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-base-6.11.2-2-any.pkg.tar.zst",
+    "sha256": "ccc98698391f78419de72640175508a68b7ba9e25a43a54e01a05b51079ad6a2"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-declarative-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "e6f303088cf9c33c45404c3c7331fd40c785248ae5eba1fbd97d4b6daf506335"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-multimedia-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "486937a67b998b0ae0c7a825ead82e1b43c791355c8eb500daf9746593bba9b1"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-multimedia-ffmpeg-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "88b299a18a2e4f00fc11a4eb548c27c365e19196108bc6dc633fc326e1887147"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-quicktimeline-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "44094942d4f90a41073392f21b7e9f829fba1243bcb54a6404872a72a884b1d3"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-shadertools-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "7e8cfdd3de21800217fd32d63b4820261bdfa37217ace6de549a490619c1c72e"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-svg-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "964fee6a84ed92b474e345f1dfe8269b2f600eb62e5a7fc353be214a5b4c3996"
+  },
+  {
+    "file": "mingw-w64-ucrt-x86_64-qt6-tools-6.11.2-1-any.pkg.tar.zst",
+    "sha256": "b927a1b0d7a06fa5f5c39c9869434293d06cf58fa18b1ac2320202f9582c48fe"
+  }
+]

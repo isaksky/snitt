@@ -48,6 +48,10 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-qt6-quicktimeline
             mingw-w64-ucrt-x86_64-qt6-multimedia-ffmpeg
+      - name: Install pinned Qt packages
+        env:
+          MSYS_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./bin/setup-windows-qt.ps1 -MsysRoot $env:MSYS_ROOT
       - name: Select and record SDK
         env:
           MSYS_ROOT: ${{ steps.msys2.outputs.msys2-location }}

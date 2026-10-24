@@ -168,11 +168,13 @@ The macOS job uses `SNITT_SIGN_IDENTITY=-` for ad-hoc bundle signatures. It need
 no signing certificate, signing secrets, keychain setup, or notarization account.
 Normal local development installation retains its existing signing behavior.
 
-MSYS2 is a rolling distribution. The workflow records installed package versions
-and refuses an unexpected Qt/FFmpeg ABI rather than silently changing the release
-runtime. If its repositories move beyond the supported SDK, deliberately update
-and validate the runtime pins locally before using the newer SDK. The workflow
-is not a fully reproducible snapshot of every transitive SDK package.
+MSYS2 is a rolling distribution. After installing SDK dependencies, the workflow
+installs the Qt package revisions listed in `scripts/windows-qt-packages.json`
+from the MSYS2 archive, checking their SHA-256 hashes and package signatures.
+It records installed versions and refuses an unexpected Qt/FFmpeg ABI. Deliberately
+update and validate those pins before using a newer Qt SDK. Other dependencies
+still come from the rolling repository, so this is not a fully reproducible
+snapshot of every transitive SDK package.
 
 ### First setup and release
 
