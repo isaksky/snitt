@@ -11,8 +11,10 @@ ApplicationWindow {
     id: win
     width: 1100
     height: 760
-    minimumWidth: 860
-    minimumHeight: 560
+    property rect editorBounds: backend.availableEditorBounds(win)
+    property int fitPasses: 0
+    minimumWidth: Math.min(860, editorBounds.width || 860)
+    minimumHeight: Math.min(360, editorBounds.height || 360)
     visible: false
     property var sessionManager: null
     property string sessionLabel: ""
@@ -129,6 +131,28 @@ ApplicationWindow {
     function showEditor() {
         if (win.visibility === Window.Minimized) win.showNormal()
         win.show(); win.raise(); win.requestActivate()
+    }
+    function fitEditorToImage() {
+        if (!canvas.hasImage || visibility === Window.Maximized || visibility === Window.FullScreen) return
+        editorBounds = backend.availableEditorBounds(win)
+        const bounds = editorBounds
+        if (bounds.width <= 0 || bounds.height <= 0) return
+        const desired = canvas.nativeCanvasSize()
+        width = Math.min(bounds.width, Math.max(minimumWidth, desired.width))
+        // The toolbar may wrap at the new width. Measure it before fitting the height.
+        editorHeader.ensurePolished()
+        const fittedHeight = Math.min(bounds.height, Math.max(minimumHeight,
+                                      Math.ceil(desired.height + header.height + footer.height)))
+        win.setGeometry(bounds.x + Math.floor((bounds.width - width) / 2),
+                        bounds.y + Math.floor((bounds.height - fittedHeight) / 2),
+                        width, fittedHeight)
+    }
+    onAfterAnimating: {
+        if (fitPasses > 0) {
+            --fitPasses
+            fitEditorToImage()
+            if (fitPasses > 0) win.update()
+        }
     }
     function loadImage(file) { commitText(); canvas.load(file); showEditor() }
     function openImage(file) {
@@ -1332,6 +1356,8 @@ ApplicationWindow {
         saveRoot: appSettings.picturesRoot
         anchors.fill: parent
         focus: true
+        // The first frame uses the capture's screen, the second the reflowed toolbar.
+        onWindowFitRequested: win.fitPasses = 2
         onError: message => win.showError(message)
         onTextRequested: (x, y) => {
             win.textWidth = Math.min(360, canvas.imageWidth)
@@ -1504,12 +1530,12 @@ ApplicationWindow {
                 Layout.fillWidth: true
             }
             Label {
-                text: "Preview " + Math.round(canvas.imageScale * 100) + "% · Image "
+                text: "Preview " + Math.round(canvas.imageScale * canvas.previewPixelRatio * 100) + "% · Image "
                     + canvas.imageWidth + " × " + canvas.imageHeight + " px"
                 color: "#8f99a8"
                 font.pixelSize: 12
                 ToolTip.visible: previewPressHandler.pressed
-                ToolTip.text: "Preview zoom only; unannotated exports keep the image's natural pixel size"
+                ToolTip.text: "100% shows one image pixel per display pixel. Larger images fit the viewing area."
                 TapHandler { id: previewPressHandler }
             }
         }

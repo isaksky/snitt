@@ -6,24 +6,51 @@
 #include <QImageReader>
 #include "screenshotsave.h"
 #include <QPainter>
+#include <QQuickWindow>
+#include <algorithm>
 #include <cmath>
+
+// Total logical padding on each axis around the screenshot.
+static constexpr int previewPadding = 32;
 
 EditorCanvas::EditorCanvas(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setAntialiasing(true);
+    setSmooth(false);
     setClip(true);
 }
 
 QString EditorCanvas::annotationFontFamily() const { return annotationfont::family(); }
 
+qreal EditorCanvas::previewPixelRatio() const {
+    return window() ? window()->effectiveDevicePixelRatio() : 1.0;
+}
+
+QSize EditorCanvas::nativeCanvasSize() const {
+    return {qCeil(imageWidth() / previewPixelRatio()) + previewPadding,
+            qCeil(imageHeight() / previewPixelRatio()) + previewPadding};
+}
+
 qreal EditorCanvas::imageScale() const {
     if (!hasImage()) return 1;
-    return qMax(0.001, qMin((width() - 32) / imageWidth(), (height() - 32) / imageHeight()));
+    return qMax(0.001, std::min({1.0 / previewPixelRatio(),
+                                (width() - previewPadding) / imageWidth(),
+                                (height() - previewPadding) / imageHeight()}));
 }
 
 QRectF EditorCanvas::imageRect() const {
     if (!hasImage()) return {};
     const QSizeF size(imageWidth() * imageScale(), imageHeight() * imageScale());
-    return QRectF(QPointF((width() - size.width()) / 2, (height() - size.height()) / 2), size);
+    const qreal ratio = previewPixelRatio();
+    return QRectF(QPointF(qRound((width() - size.width()) * ratio / 2) / ratio,
+                          qRound((height() - size.height()) * ratio / 2) / ratio), size);
+}
+
+void EditorCanvas::itemChange(ItemChange change, const ItemChangeData &data) {
+    QQuickPaintedItem::itemChange(change, data);
+    if (change == ItemSceneChange || change == ItemDevicePixelRatioHasChanged) {
+        emit imageRectChanged();
+        update();
+    }
 }
 
 void EditorCanvas::geometryChange(const QRectF &next, const QRectF &previous) {
@@ -109,12 +136,18 @@ void EditorCanvas::adjustToolSize(qreal wheelDelta) {
 
 void EditorCanvas::paint(QPainter *p) {
     if (!hasImage()) return;
+    // PaintedItem rounds its backing texture to whole pixels at fractional DPR.
+    // Undo the resulting stretch so native-size screenshots stay pixel aligned.
+    if (window()) {
+        const QTransform backing = p->deviceTransform();
+        p->scale(previewPixelRatio() / backing.m11(), previewPixelRatio() / backing.m22());
+    }
     p->setRenderHint(QPainter::SmoothPixmapTransform);
     p->translate(imageRect().topLeft());
     p->scale(imageScale(), imageScale());
     p->setClipRect(QRectF(0, 0, imageWidth(), imageHeight()));
     // Replay retained geometry at preview resolution so a committed stroke uses
-    // the same raster resolution as the live drag, including enlarged previews.
+    // the same raster resolution as the live drag.
     const QTransform device = p->deviceTransform();
     const qreal previewScale = std::hypot(device.m11(), device.m12());
     m_document.paint(*p, previewScale);
@@ -191,6 +224,7 @@ bool EditorCanvas::load(const QUrl &url) {
     m_document.reset(image);
     clearRegions();
     changed();
+    emit windowFitRequested();
     return true;
 }
 
@@ -203,6 +237,7 @@ bool EditorCanvas::paste() {
     m_document.reset(image);
     clearRegions();
     changed();
+    emit windowFitRequested();
     return true;
 }
 
@@ -313,7 +348,7 @@ int EditorCanvas::regionAt(const QPointF &point) const {
     return -1;
 }
 
-bool EditorCanvas::composeRegions() {
+bool EditorCanvas::composeRegions(bool newSource) {
     if (m_regions.isEmpty()) return false;
     const int cols = qMin(m_columns, int(m_regions.size()));
     const int rows = (m_regions.size() + cols - 1) / cols;
@@ -349,8 +384,10 @@ bool EditorCanvas::composeRegions() {
     }
     painter.end();
     m_regionRects = areas;
+    const bool sizeChanged = image.size() != m_document.image().size();
     m_document.reset(image);
     changed(); emit arrangementChanged();
+    if (newSource || sizeChanged) emit windowFitRequested();
     return true;
 }
 
@@ -369,7 +406,7 @@ bool EditorCanvas::loadRegions(const QVariantList &images) {
     const auto previous = m_regions;
     const int previousColumns = m_columns;
     m_regions = regions; m_columns = 2;
-    if (!composeRegions()) { m_regions = previous; m_columns = previousColumns; return false; }
+    if (!composeRegions(/*newSource=*/true)) { m_regions = previous; m_columns = previousColumns; return false; }
     m_arranging = true; m_selectedRegion = 0;
     emit arrangementChanged(); update();
     return true;

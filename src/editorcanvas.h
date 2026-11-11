@@ -13,6 +13,7 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY imageChanged)
     Q_PROPERTY(QRectF imageRect READ imageRect NOTIFY imageRectChanged)
     Q_PROPERTY(qreal imageScale READ imageScale NOTIFY imageRectChanged)
+    Q_PROPERTY(qreal previewPixelRatio READ previewPixelRatio NOTIFY imageRectChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
     Q_PROPERTY(QString colorMode READ colorMode NOTIFY inkChanged)
@@ -39,6 +40,8 @@ public:
     bool canRedo() const { return m_document.canRedo(); }
     QRectF imageRect() const;
     qreal imageScale() const;
+    qreal previewPixelRatio() const;
+    Q_INVOKABLE QSize nativeCanvasSize() const;
     QString tool() const { return m_tool; }
     void setTool(const QString &tool);
     QColor ink() const { return m_ink; }
@@ -84,6 +87,7 @@ public:
     Q_INVOKABLE void adjustToolSize(qreal wheelDelta);
     Q_INVOKABLE void addText(qreal x, qreal y, qreal width, qreal height, const QString &text, int fontSize = 24);
 signals:
+    void windowFitRequested();
     void imageChanged();
     void imageRectChanged();
     void toolChanged();
@@ -93,12 +97,13 @@ signals:
     void textRequested(qreal x, qreal y);
     void arrangementChanged();
 protected:
+    void itemChange(ItemChange change, const ItemChangeData &data) override;
     void geometryChange(const QRectF &next, const QRectF &previous) override;
 private:
     QImage exportImage() const;
     QPointF imagePoint(qreal x, qreal y) const;
     void changed();
-    bool composeRegions();
+    bool composeRegions(bool newSource = false);
     void clearRegions();
     int regionAt(const QPointF &point) const;
     ImageDocument m_document;

@@ -353,10 +353,19 @@ void Backend::updateSelections() {
     }
 }
 
-QRect Backend::editorGeometry(const QRect &available, const QSize &size) {
+static QRect editorBounds(const QRect &available) {
     // Leave room for the native title bar and window borders. Coordinates are
     // logical desktop coordinates, including monitors above/left of primary.
-    const QRect bounds = available.adjusted(16, 32, -16, -16);
+    return available.adjusted(16, 32, -16, -16);
+}
+
+QRect Backend::availableEditorBounds(QObject *editor) const {
+    auto *window = qobject_cast<QWindow *>(editor);
+    return window && window->screen() ? editorBounds(window->screen()->availableGeometry()) : QRect();
+}
+
+QRect Backend::editorGeometry(const QRect &available, const QSize &size) {
+    const QRect bounds = editorBounds(available);
     const QSize fitted = size.boundedTo(bounds.size());
     return QRect(bounds.x() + (bounds.width() - fitted.width()) / 2,
                  bounds.y() + (bounds.height() - fitted.height()) / 2,

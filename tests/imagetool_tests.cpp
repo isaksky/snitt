@@ -94,7 +94,7 @@ void ImageToolTests::pixelateWheelPreviewAndExport() {
     const QString sourcePath = temporary.filePath("source.png");
     QVERIFY(original.save(sourcePath));
     EditorCanvas canvas;
-    canvas.setWidth(272); canvas.setHeight(212); // 3 preview pixels per image pixel.
+    canvas.setWidth(272); canvas.setHeight(212);
     QVERIFY(canvas.load(QUrl::fromLocalFile(sourcePath)));
     canvas.setTool("blur");
     QCOMPARE(canvas.pixelBlockSize(), 12);
@@ -192,9 +192,9 @@ void ImageToolTests::scaledGesturesAndClipboard() {
     const QString path = temporary.filePath("source.png");
     QVERIFY(original.save(path));
     EditorCanvas canvas;
-    canvas.setWidth(432); canvas.setHeight(332);
+    canvas.setWidth(72); canvas.setHeight(62);
     QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
-    QCOMPARE(canvas.imageScale(), 5.0);
+    QCOMPARE(canvas.imageScale(), 0.5);
     const auto viewPoint = [&canvas](QPointF source) {
         return canvas.imageRect().topLeft() + source * canvas.imageScale();
     };
@@ -223,7 +223,7 @@ void ImageToolTests::highlightsPreviewAndHistory() {
     const QString path = temporary.filePath("white.png");
     QVERIFY(white.save(path));
     EditorCanvas canvas;
-    canvas.setWidth(432); canvas.setHeight(332); // 5x fit preview.
+    canvas.setWidth(432); canvas.setHeight(332);
     QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
     canvas.setTool("highlight");
     canvas.setGoodColor(QColor("#386ab3"));
@@ -732,7 +732,7 @@ void ImageToolTests::eraseReplayKeepsExactSample() {
         const QString sourcePath = temporary.filePath("source.png");
         QVERIFY(source.save(sourcePath));
         EditorCanvas canvas;
-        canvas.setWidth(272); canvas.setHeight(212); // Three display pixels per image pixel.
+        canvas.setWidth(272); canvas.setHeight(212);
         QVERIFY(canvas.load(QUrl::fromLocalFile(sourcePath)));
         const auto point = [&](QPointF imagePoint) {
             return canvas.imageRect().topLeft() + imagePoint * canvas.imageScale();
@@ -772,7 +772,7 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
     const QString path = temporary.filePath("small.png");
     QVERIFY(white.save(path));
     for (const QString &tool : {QStringLiteral("arrow"), QStringLiteral("rect"), QStringLiteral("highlight")}) {
-      for (const qreal zoom : {2.5, 3.0}) {
+      for (const qreal zoom : {0.75, 1.0}) {
        for (const bool cutFirst : {false, true}) {
         for (const int displayScale : {1, 2}) {
             EditorCanvas canvas;
@@ -824,8 +824,7 @@ void ImageToolTests::annotationPreviewDoesNotSoftenOnRelease() {
 }
 
 void ImageToolTests::annotationPreviewAfterLargeCuts() {
-    // A tiny remainder of a large capture can have a much larger preview zoom
-    // than its export scale. Budget the rendered remainder, not the old capture.
+    // Rendering the cut remainder should match a fresh document of that size.
     QImage original(3840, 2160, QImage::Format_ARGB32_Premultiplied);
     original.fill(Qt::white);
     ImageDocument fullSize;

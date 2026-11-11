@@ -79,6 +79,7 @@ private slots:
     void qmlKeyboardCommands();
     void qmlDismissal();
     void captureEditorPlacement();
+    void nativePreviewPixels();
     void independentEditorSessions();
     void desktopMultipleEditors();
     void settingsCopySaveAliases();
@@ -388,19 +389,19 @@ void EditorTests::scaledGesturesAndClipboard() {
     const QString path = dir.filePath("test.png");
     QVERIFY(pattern().save(path));
     EditorCanvas canvas;
-    canvas.setWidth(432); canvas.setHeight(332);
+    canvas.setWidth(72); canvas.setHeight(62);
     QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
-    QCOMPARE(canvas.imageScale(), 5.0);
+    QCOMPARE(canvas.imageScale(), 0.5);
     canvas.setTool("cut");
-    canvas.begin(66, 66); canvas.end(116, 66); // source columns 10..20
+    canvas.begin(21, 21); canvas.end(26, 21); // source columns 10..20
     QCOMPARE(canvas.imageWidth(), 70);
     QCOMPARE(canvas.imageHeight(), 60);
     QVERIFY(canvas.copy());
     QCOMPARE(QGuiApplication::clipboard()->image().size(), QSize(70, 60));
     canvas.undo(); QCOMPARE(canvas.imageWidth(), 80);
-    canvas.begin(66, 66); canvas.move(116, 66); canvas.cancel(); canvas.end(116, 66);
+    canvas.begin(21, 21); canvas.move(26, 21); canvas.cancel(); canvas.end(26, 21);
     QCOMPARE(canvas.imageWidth(), 80);
-    canvas.begin(0, 0); canvas.end(116, 66); // outside image
+    canvas.begin(0, 0); canvas.end(26, 21); // outside image
     QCOMPARE(canvas.imageWidth(), 80);
     canvas.redo(); QCOMPARE(canvas.imageWidth(), 70);
     QVERIFY(canvas.paste());
@@ -722,7 +723,7 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     QCOMPARE(copyButton->property("text").toString(), QString("Copy"));
     QCOMPARE(modeHeading->property("text").toString(), QString("Color Mode"));
     QCOMPARE(finishHeading->property("text").toString(), QString("Finish (will close)"));
-    QCOMPARE(window->minimumWidth(), 860);
+    QCOMPARE(window->minimumWidth(), qMin(860, desktop.width() - 32));
 
     if (virtualDisplay || desktop.width() >= 1132)
         checkToolbar(1100, true, "annotation-combined-1100.png");
@@ -937,6 +938,7 @@ void EditorTests::qmlResizeTextDraft() {
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window));
     canvas->setTool("text");
+    QTRY_COMPARE(window->property("fitPasses").toInt(), 0);
     const QPointF origin = canvas->imageRect().topLeft() + QPointF(60, 40) * canvas->imageScale();
     canvas->begin(origin.x(), origin.y());
     const QString draft = "One two three four five six seven eight nine ten";
@@ -3234,30 +3236,54 @@ void EditorTests::captureEditorPlacement() {
             window->setScreen(screens.first());
             window->setPosition(screens.first()->availableGeometry().topLeft());
             window->resize(1100, 760);
-            const QSize expectedSize = Backend::editorGeometry(screen->availableGeometry(), window->size())
-                .size();
-            const QSize nativeMinimumSize = expectedSize.expandedTo(window->minimumSize());
+            const QRect bounds = screen->availableGeometry().adjusted(16, 32, -16, -16);
+            const QSize minimum = QSize(860, 360).boundedTo(bounds.size());
+            const QImage single = pattern().scaled(1281, 481);
             backend.m_capturing = true;
             backend.m_multiple = multiple;
             backend.m_output = backend.m_temp.filePath("placement.png");
-            backend.m_screens = {{screen->geometry(), pattern()}};
+            backend.m_screens = {{screen->geometry(), pattern().scaled(screen->size())}};
             backend.showSelectors();
             QCOMPARE(backend.m_selectors.size(), 1);
             RegionSelector *selector = backend.m_selectors.first();
             if (multiple) {
-                emit selector->regionAdded(QRectF(10, 10, 20, 20));
+                emit selector->regionAdded(QRectF(10, 10, 320, 160));
+                emit selector->regionAdded(QRectF(10, 180, 320, 160));
                 emit selector->accepted();
             } else {
-                emit selector->selected(pattern());
+                emit selector->selected(single);
             }
             QTRY_VERIFY(window->isVisible() && canvas->hasImage());
             QCOMPARE(backend.m_captureScreenGeometry, screen->geometry());
             QTRY_COMPARE(window->screen(), screen);
-            // Native window managers may enforce the editor's minimum size on
-            // a small display; offscreen can fit below that minimum.
-            QTRY_VERIFY(window->width() >= expectedSize.width() && window->width() <= nativeMinimumSize.width());
-            QTRY_VERIFY(window->height() >= expectedSize.height() && window->height() <= nativeMinimumSize.height());
-            QTRY_VERIFY(screen->availableGeometry().contains(window->geometry().center()));
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            QTRY_COMPARE(window->property("fitPasses").toInt(), 0);
+            const qreal ratio = window->effectiveDevicePixelRatio();
+            const auto checkFit = [&] {
+                const QSize native(qCeil(canvas->imageWidth() / ratio) + 32,
+                                   qCeil(canvas->imageHeight() / ratio + window->height() - canvas->height()) + 32);
+                QTRY_COMPARE(window->size(), native.expandedTo(minimum).boundedTo(bounds.size()));
+                if (native.width() <= bounds.width() && native.height() <= bounds.height())
+                    QCOMPARE(canvas->imageScale() * ratio, 1.0);
+                else
+                    QVERIFY(canvas->imageScale() * ratio < 1.0);
+            };
+            checkFit();
+            QCOMPARE(window->minimumSize(), minimum);
+            QVERIFY(bounds.contains(window->geometry()));
+            // Native frame offsets and desktop scaling affect the reported client origin.
+            const QPoint offset = window->geometry().center() - bounds.center();
+            QVERIFY(qAbs(offset.x()) <= window->frameMargins().left() + 1);
+            QVERIFY(qAbs(offset.y()) <= window->frameMargins().top() + 1);
+            if (multiple) {
+                canvas->setColumns(1);
+                QTRY_COMPARE(window->property("fitPasses").toInt(), 0);
+                checkFit();
+
+                // Reordering equal-size regions keeps the user's window geometry.
+                canvas->moveRegion(0, 1);
+                QCOMPARE(window->property("fitPasses").toInt(), 0);
+            }
             const QPoint position = window->position();
             window->hide();
             emit backend.captureFinished(false);
@@ -3277,6 +3303,29 @@ void EditorTests::captureEditorPlacement() {
     backend.positionEditorForCapture(window);
     QCOMPARE(window->screen(), QGuiApplication::primaryScreen());
     QVERIFY(QGuiApplication::primaryScreen()->availableGeometry().contains(window->geometry().center()));
+}
+
+void EditorTests::nativePreviewPixels() {
+    QImage source(81, 61, QImage::Format_RGB32);
+    for (int y = 0; y < source.height(); ++y)
+        for (int x = 0; x < source.width(); ++x)
+            source.setPixel(x, y, qRgb((x + y) % 2 * 255, x * 3, y * 4));
+    QTemporaryDir dir;
+    const QString path = dir.filePath("pattern.png");
+    QVERIFY(source.save(path));
+    QQuickWindow window;
+    window.resize(301, 201);
+    EditorCanvas canvas(window.contentItem());
+    canvas.setSize(window.size());
+    QVERIFY(canvas.load(QUrl::fromLocalFile(path)));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const qreal ratio = window.effectiveDevicePixelRatio();
+    QCOMPARE(canvas.imageScale() * ratio, 1.0);
+    const QPoint origin = (canvas.imageRect().topLeft() * ratio).toPoint();
+    QImage snapshot = window.grabWindow().convertToFormat(source.format());
+    snapshot.setDevicePixelRatio(1);
+    QCOMPARE(snapshot.copy(QRect(origin, source.size())), source);
 }
 
 void EditorTests::settingsCreateDefaultsAndPreserveEdits() {

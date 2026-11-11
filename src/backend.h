@@ -50,6 +50,7 @@ public:
     static QRect indicatorGeometry(const QRect &region, const QRect &screen, const QRect &available);
     static QRect controlsGeometry(const QRect &available);
     static QRect editorGeometry(const QRect &available, const QSize &size);
+    Q_INVOKABLE QRect availableEditorBounds(QObject *editor) const;
     Q_INVOKABLE void positionEditorForCapture(QObject *editor);
     Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
