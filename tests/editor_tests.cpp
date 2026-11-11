@@ -618,6 +618,9 @@ void EditorTests::qmlAnnotationToolbarResponsiveLayout() {
     canvas->setColumns(2);
     canvas->annotate();
     canvas->addText(4, 4, 60, 30, "Combined", 14);
+    // Let the new source finish fitting before exercising manual window sizes.
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTRY_COMPARE(window->property("fitPasses").toInt(), 0);
     const bool virtualDisplay = QGuiApplication::platformName() == "offscreen";
     const QRect desktop = QGuiApplication::primaryScreen()->availableGeometry();
     if (!virtualDisplay)
