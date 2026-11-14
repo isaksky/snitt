@@ -71,6 +71,9 @@ private slots:
     void invalidEditorPreferences();
     void editorStateDoesNotReloadConfiguration();
     void editorStateSaveFailureRecovers();
+    void editorStateSavesOnApplicationExit();
+    void editorStateSavesOnWindowClose_data();
+    void editorStateSavesOnWindowClose();
     void captureCursors();
     void cutsJoinExactPixels();
     void invalidCutsDoNotAlterHistory();
@@ -240,6 +243,7 @@ void EditorTests::rememberedEditorPreferences() {
     const auto paths = settingsPaths(dir.path());
     AppSettings settings(paths);
     QCOMPARE(settings.editorState(), editorPreferences::defaults());
+    const QString statePath = dir.filePath("config/state.ini");
     QFile configuration(paths.settingsFile);
     QVERIFY(configuration.open(QIODevice::ReadOnly));
     const QByteArray originalConfiguration = configuration.readAll();
@@ -268,6 +272,10 @@ void EditorTests::rememberedEditorPreferences() {
     const QVariantMap chosen{{"tool", "arrow"}, {"colorMode", "good"},
         {"strokeWidth", 6}, {"textSize", 26}, {"pixelBlockSize", 16}};
     QCOMPARE(settings.editorState(), chosen);
+    QTest::qWait(350);
+    QVERIFY(!QFileInfo::exists(statePath));
+    editors.windows().first()->hide();
+    QVERIFY(!QFileInfo::exists(statePath));
     editors.openImage(QUrl::fromLocalFile(largePath));
     auto *second = editors.windows().last()->findChild<EditorCanvas *>("canvas");
     QVERIFY(second);
@@ -294,6 +302,10 @@ void EditorTests::rememberedEditorPreferences() {
     small->setGoodColor(QColor("#123456"));
     small->clear();
     QCOMPARE(settings.editorState(), beforeTiny);
+    QVERIFY(!QFileInfo::exists(statePath));
+    // Closing an older window saves the latest shared choices, not its own.
+    QVERIFY(QMetaObject::invokeMethod(editors.windows().first(), "dismissEditor"));
+    QVERIFY(QFileInfo::exists(statePath));
     AppSettings restarted(paths);
     QCOMPARE(restarted.editorState(), beforeTiny);
     EditorSessions afterRestart(&engine, &restarted);
@@ -305,6 +317,14 @@ void EditorTests::rememberedEditorPreferences() {
     QCOMPARE(restored->strokeWidth(), 8);
     QCOMPARE(restored->textSize(), 26);
     QCOMPARE(restored->pixelBlockSize(), 16);
+    // Another close with no changes must not rewrite the file.
+    QFile stateFile(statePath);
+    QVERIFY(stateFile.open(QIODevice::ReadWrite));
+    QVERIFY(stateFile.setFileTime(QDateTime::fromSecsSinceEpoch(1000000000), QFileDevice::FileModificationTime));
+    stateFile.close();
+    const QDateTime savedTime = QFileInfo(statePath).lastModified();
+    QVERIFY(QMetaObject::invokeMethod(editors.windows().first(), "dismissEditor"));
+    QCOMPARE(QFileInfo(statePath).lastModified(), savedTime);
     QVERIFY(configuration.open(QIODevice::ReadOnly));
     QCOMPARE(configuration.readAll(), originalConfiguration);
 }
@@ -328,6 +348,7 @@ void EditorTests::invalidEditorPreferences() {
     settings.rememberEditorPreference("unknown", true);
     QCOMPARE(settings.editorState(), editorPreferences::defaults());
     settings.rememberEditorPreference("tool", "cut");
+    QVERIFY(settings.saveEditorState());
     AppSettings restarted(paths);
     QCOMPARE(restarted.editorState().value("tool").toString(), QString("cut"));
 }
@@ -340,6 +361,7 @@ void EditorTests::editorStateDoesNotReloadConfiguration() {
     QSignalSpy changed(&settings, &AppSettings::settingsChanged);
     QSignalSpy failed(&settings, &AppSettings::reloadFailed);
     settings.rememberEditorPreference("tool", "arrow");
+    QVERIFY(settings.saveEditorState());
     QTest::qWait(700); // Directory notification, debounce and polling fallback.
     QCOMPARE(reloaded.size(), 0);
     QCOMPARE(changed.size(), 0);
@@ -360,6 +382,7 @@ void EditorTests::editorStateDoesNotReloadConfiguration() {
     changed.clear();
     reloaded.clear();
     settings.rememberEditorPreference("colorMode", "good");
+    QVERIFY(settings.saveEditorState());
     QTest::qWait(700);
     QCOMPARE(failed.size(), 0);
     QCOMPARE(changed.size(), 0);
@@ -383,23 +406,98 @@ void EditorTests::editorStateSaveFailureRecovers() {
     QSignalSpy failed(&settings, &AppSettings::editorStateSaveFailed);
     QSignalSpy configFailed(&settings, &AppSettings::reloadFailed);
     settings.rememberEditorPreference("tool", "arrow");
+    QCOMPARE(failed.size(), 0);
+    QVERIFY(!settings.saveEditorState());
     QCOMPARE(failed.size(), 1);
     settings.rememberEditorPreference("colorMode", "good");
+    QVERIFY(!settings.saveEditorState());
     QCOMPARE(failed.size(), 1);
     QCOMPARE(configFailed.size(), 0);
     QCOMPARE(settings.editorState().value("tool").toString(), QString("arrow"));
     QCOMPARE(settings.editorState().value("colorMode").toString(), QString("good"));
 
     QVERIFY(QDir().rmdir(statePath));
-    settings.rememberEditorPreference("colorMode", "good");
+    QVERIFY(settings.saveEditorState());
     QCOMPARE(failed.size(), 1);
     AppSettings restarted(paths);
     QCOMPARE(restarted.editorState(), settings.editorState());
     QVERIFY(QFile::remove(statePath));
     QVERIFY(QDir().mkpath(statePath));
     settings.rememberEditorPreference("tool", "text");
+    QVERIFY(!settings.saveEditorState());
     QCOMPARE(failed.size(), 2); // A new failure after recovery gets one notice.
     QCOMPARE(configFailed.size(), 0);
+}
+
+void EditorTests::editorStateSavesOnApplicationExit() {
+    const QString probeDirectory = qEnvironmentVariable("SNITT_EDITOR_STATE_EXIT_PROBE");
+    if (!probeDirectory.isEmpty()) {
+        AppSettings settings(settingsPaths(probeDirectory));
+        settings.rememberEditorPreference("tool", "arrow");
+        settings.rememberEditorPreference("colorMode", "good");
+        QVERIFY(!QFileInfo::exists(QDir(probeDirectory).filePath("config/state.ini")));
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        QCOMPARE(qApp->exec(), 0); // Exercise the real aboutToQuit signal.
+        return;
+    }
+    QTemporaryDir directory;
+    QProcess child;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert("SNITT_EDITOR_STATE_EXIT_PROBE", directory.path());
+    environment.insert("QT_QPA_PLATFORM", "offscreen");
+    child.setProcessEnvironment(environment);
+    child.start(QCoreApplication::applicationFilePath(), {"editorStateSavesOnApplicationExit"});
+    QVERIFY(child.waitForFinished(15000));
+    const QByteArray output = child.readAllStandardOutput() + child.readAllStandardError();
+    QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+    QVERIFY2(child.exitCode() == 0, output.constData());
+    QVERIFY(QFileInfo::exists(directory.filePath("config/state.ini")));
+    AppSettings restarted(settingsPaths(directory.path()));
+    QCOMPARE(restarted.editorState().value("tool").toString(), QString("arrow"));
+    QCOMPARE(restarted.editorState().value("colorMode").toString(), QString("good"));
+}
+
+void EditorTests::editorStateSavesOnWindowClose_data() {
+    QTest::addColumn<QString>("action");
+    QTest::newRow("dismiss") << QString("dismissEditor");
+    QTest::newRow("copy") << QString("finish");
+    QTest::newRow("titlebar") << QString("close");
+}
+
+void EditorTests::editorStateSavesOnWindowClose() {
+    QFETCH(QString, action);
+    QTemporaryDir directory;
+    const auto paths = settingsPaths(directory.path());
+    AppSettings settings(paths);
+    Backend backend(&settings);
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appSettings", &settings);
+    engine.rootContext()->setContextProperty("initialImage", QUrl());
+    engine.rootContext()->setContextProperty("startInBackground", true);
+    engine.rootContext()->setContextProperty("showOnStart", false);
+    engine.load(QUrl("qrc:/Main.qml"));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(window);
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    const QString imagePath = directory.filePath("input.png");
+    QVERIFY(pattern().save(imagePath));
+    QVERIFY(canvas->load(QUrl::fromLocalFile(imagePath)));
+    window->show();
+    canvas->setTool("arrow");
+    canvas->setInkMode("good");
+    const QString statePath = directory.filePath("config/state.ini");
+    QVERIFY(!QFileInfo::exists(statePath));
+    if (action == "close") window->close();
+    else QVERIFY(QMetaObject::invokeMethod(window, action.toUtf8().constData()));
+    QVERIFY(!window->isVisible());
+    QVERIFY(QFileInfo::exists(statePath));
+    AppSettings restarted(paths);
+    QCOMPARE(restarted.editorState(), settings.editorState());
 }
 
 void EditorTests::captureCursors() {

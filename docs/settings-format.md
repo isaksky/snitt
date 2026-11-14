@@ -78,7 +78,11 @@ thickness, text size, and pixelation block size across screenshots and restarts.
 New editor windows start with those choices; existing windows retain their own
 choices. Sizes may be limited to fit a small image without changing the saved
 preference. Each explicit change updates only that preference, so an older
-window cannot overwrite unrelated choices made in another window.
+window cannot overwrite unrelated choices made in another window. Changes take
+effect in memory immediately and are saved when an editor closes or Snitt quits.
+Closing a window saves the latest shared choices, and skips writing if nothing
+has changed since the last successful save. Temporarily hiding an editor during
+capture does not save preferences. A crash before saving can lose recent choices.
 
 These choices are stored in `state.ini` beside `settings.ini`. Snitt writes only
 the state file when remembering choices, preserving your configuration and its

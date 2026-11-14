@@ -45,6 +45,7 @@ public:
     void attachGlobalHotkey(GlobalHotkey *hotkey);
     Q_INVOKABLE QVariantMap editorState() const { return m_editorState; }
     Q_INVOKABLE void rememberEditorPreference(const QString &key, const QVariant &value);
+    Q_INVOKABLE bool saveEditorState();
 signals:
     void settingsChanged();
     void errorChanged();
@@ -92,5 +93,6 @@ private:
     QString m_videosRoot;
     QString m_lastError;
     QVariantMap m_editorState;
+    bool m_editorStateDirty = false;
     bool m_editorStateSaveFailed = false;
 };

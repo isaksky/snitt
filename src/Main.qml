@@ -103,6 +103,7 @@ ApplicationWindow {
         if (canvas.copy()) {
             win.hide(); canvas.clear()
             if (sessionManager) sessionManager.closeEditor(win)
+            else appSettings.saveEditorState()
         }
     }
     function saveAndClose() {
@@ -117,6 +118,7 @@ ApplicationWindow {
             win.showEditor()
             captureErrorDialog.open()
         } else if (sessionManager) sessionManager.closeEditor(win)
+        else appSettings.saveEditorState()
     }
     function dismissEditor() {
         win.editingText = false
@@ -127,6 +129,7 @@ ApplicationWindow {
         win.hide()
         canvas.clear()
         if (sessionManager) sessionManager.closeEditor(win)
+        else appSettings.saveEditorState()
     }
     function showEditor() {
         if (win.visibility === Window.Minimized) win.showNormal()

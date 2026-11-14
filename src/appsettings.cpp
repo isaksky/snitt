@@ -177,6 +177,8 @@ AppSettings::AppSettings(const Paths &paths, QObject *parent) : QObject(parent),
     });
     m_filePollTimer.setInterval(300);
     connect(&m_filePollTimer, &QTimer::timeout, this, [this] { pollSettingsFile(); });
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+            this, &AppSettings::saveEditorState);
     initialize();
     m_filePollTimer.start();
 }
@@ -293,8 +295,13 @@ void AppSettings::loadEditorState() {
 
 void AppSettings::rememberEditorPreference(const QString &key, const QVariant &value) {
     const QVariant valid = editorPreferences::validated(key, value);
-    if (!valid.isValid() || (m_editorState.value(key) == valid && !m_editorStateSaveFailed)) return;
+    if (!valid.isValid() || m_editorState.value(key) == valid) return;
     m_editorState.insert(key, valid);
+    m_editorStateDirty = true;
+}
+
+bool AppSettings::saveEditorState() {
+    if (!m_editorStateDirty) return true;
     QSettings state(editorStateFile(), QSettings::IniFormat);
     // This is the shared, current snapshot, not a window's local preferences.
     // Include earlier failed writes when retrying after a transient failure.
@@ -302,10 +309,12 @@ void AppSettings::rememberEditorPreference(const QString &key, const QVariant &v
         state.setValue(QStringLiteral("Editor/") + it.key(), it.value());
     state.sync();
     const bool failed = state.status() != QSettings::NoError;
+    m_editorStateDirty = failed;
     if (failed && !m_editorStateSaveFailed)
         emit editorStateSaveFailed(QStringLiteral("Could not remember editor choices in %1. Changes are kept for this session.")
                                    .arg(QDir::toNativeSeparators(editorStateFile())));
     m_editorStateSaveFailed = failed;
+    return !failed;
 }
 
 bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {

@@ -175,6 +175,7 @@ void EditorSessions::closeEditor(QObject *window) {
 
 void EditorSessions::removeSession(Session *session) {
     if (!m_sessions.removeOne(session)) return;
+    m_settings->saveEditorState();
     if (m_lastActive == session) m_lastActive = nullptr;
     session->deleteLater();
 }
