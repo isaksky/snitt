@@ -190,7 +190,8 @@ snapshot of every transitive SDK package.
    in the disposable CI checkout; the tag's source tree is not rewritten.
 3. Download the resulting draft assets and run the local release checks listed
    in `.github/release-notes.md`. Replace that checklist with the release notes
-   and results. CI cannot certify the desktop/install tests on your behalf.
+   and results, retaining the macOS opening instructions. CI cannot certify the
+   desktop/install tests on your behalf.
 4. Publish the draft after validation. The package update workflow verifies that
    its asset URLs work anonymously and opens a PR. Test normal Scoop/Homebrew
    installation and upgrade from those URLs, then merge the PR to advertise the
@@ -253,7 +254,11 @@ publicly trusted signing identity. Installing a cask does not make the app
 notarized or exempt it from Gatekeeper. An unsigned or locally signed download
 can still need the user's explicit approval to open. Test and document the
 actual first-launch behavior; do not disable Gatekeeper or strip quarantine in
-the cask. See [Apple's guidance](https://support.apple.com/en-us/102445).
+the cask's install steps. The release notes and cask caveats document Apple's
+**Open Anyway** flow and an optional, user-run `xattr` command scoped to a trusted
+copy of `Snitt.app`. Keep that guidance in `.github/release-notes.md`, the cask
+generator in `scripts/release_metadata.py`, and the current `Casks/snitt.rb`.
+See [Apple's guidance](https://support.apple.com/en-us/102445).
 
 The official `homebrew/cask` repository requires assessable macOS executables
 to pass its Gatekeeper checks. The personal tap is the initial distribution
