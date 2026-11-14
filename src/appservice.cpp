@@ -70,6 +70,9 @@ AppService::AppService(QLocalServer *server, EditorSessions *editors, AppSetting
     connect(m_settings, &AppSettings::reloadFailed, this, [this](const QString &message) {
         m_tray.showMessage(QStringLiteral("Snitt settings not applied"), message, QSystemTrayIcon::Warning);
     });
+    connect(m_settings, &AppSettings::editorStateSaveFailed, this, [this](const QString &message) {
+        m_tray.showMessage(QStringLiteral("Could not remember editor choices"), message, QSystemTrayIcon::Warning);
+    });
     m_settings->attachGlobalHotkey(&m_hotkey);
     refreshShortcutText();
     m_tray.setContextMenu(&m_menu);

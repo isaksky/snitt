@@ -49,6 +49,7 @@ signals:
     void settingsChanged();
     void errorChanged();
     void reloadFailed(const QString &message);
+    void editorStateSaveFailed(const QString &message);
     void reloaded();
 private:
     struct Candidate {
@@ -66,6 +67,7 @@ private:
     void publish(const Candidate &candidate);
     void watchFiles();
     void pollSettingsFile();
+    bool observeSettingsFile();
     void scheduleReload();
     void setError(const QString &message);
     bool createGuideIfMissing(QString *error) const;
@@ -90,4 +92,5 @@ private:
     QString m_videosRoot;
     QString m_lastError;
     QVariantMap m_editorState;
+    bool m_editorStateSaveFailed = false;
 };

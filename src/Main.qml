@@ -198,6 +198,7 @@ ApplicationWindow {
     Connections {
         target: appSettings
         function onReloadFailed(message) { win.showError("Settings not applied: " + message) }
+        function onEditorStateSaveFailed(message) { win.showError(message) }
     }
 
     Window {

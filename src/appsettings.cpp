@@ -169,7 +169,12 @@ AppSettings::AppSettings(const Paths &paths, QObject *parent) : QObject(parent),
     m_reloadTimer.setInterval(220);
     connect(&m_reloadTimer, &QTimer::timeout, this, [this] { reloadNow(); });
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { scheduleReload(); });
-    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { scheduleReload(); });
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] {
+        // state.ini shares this directory. Reload configuration only when its
+        // bytes changed, while still re-arming watches after folder recreation.
+        pollSettingsFile();
+        watchFiles();
+    });
     m_filePollTimer.setInterval(300);
     connect(&m_filePollTimer, &QTimer::timeout, this, [this] { pollSettingsFile(); });
     initialize();
@@ -288,14 +293,19 @@ void AppSettings::loadEditorState() {
 
 void AppSettings::rememberEditorPreference(const QString &key, const QVariant &value) {
     const QVariant valid = editorPreferences::validated(key, value);
-    if (!valid.isValid() || m_editorState.value(key) == valid) return;
+    if (!valid.isValid() || (m_editorState.value(key) == valid && !m_editorStateSaveFailed)) return;
     m_editorState.insert(key, valid);
     QSettings state(editorStateFile(), QSettings::IniFormat);
-    state.setValue(QStringLiteral("Editor/") + key, valid);
+    // This is the shared, current snapshot, not a window's local preferences.
+    // Include earlier failed writes when retrying after a transient failure.
+    for (auto it = m_editorState.begin(); it != m_editorState.end(); ++it)
+        state.setValue(QStringLiteral("Editor/") + it.key(), it.value());
     state.sync();
-    if (state.status() != QSettings::NoError)
-        emit reloadFailed(QStringLiteral("Could not save the last-used editor preferences to %1.")
-                          .arg(QDir::toNativeSeparators(editorStateFile())));
+    const bool failed = state.status() != QSettings::NoError;
+    if (failed && !m_editorStateSaveFailed)
+        emit editorStateSaveFailed(QStringLiteral("Could not remember editor choices in %1. Changes are kept for this session.")
+                                   .arg(QDir::toNativeSeparators(editorStateFile())));
+    m_editorStateSaveFailed = failed;
 }
 
 bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
@@ -490,6 +500,8 @@ void AppSettings::publish(const Candidate &candidate) {
 }
 
 bool AppSettings::reloadNow() {
+    m_reloadTimer.stop();
+    observeSettingsFile();
     Candidate candidate;
     QString error;
     if (!parseCandidate(&candidate, &error)) {
@@ -558,13 +570,17 @@ void AppSettings::watchFiles() {
 }
 
 void AppSettings::pollSettingsFile() {
+    if (observeSettingsFile()) scheduleReload();
+}
+
+bool AppSettings::observeSettingsFile() {
     const bool exists = QFileInfo::exists(m_paths.settingsFile);
     QByteArray contents;
     if (exists) {
         QFile file(m_paths.settingsFile);
-        if (!file.open(QIODevice::ReadOnly)) return;
+        if (!file.open(QIODevice::ReadOnly)) return false;
         contents = file.readAll();
-        if (file.error() != QFileDevice::NoError) return;
+        if (file.error() != QFileDevice::NoError) return false;
     }
 
     const bool changed = m_hasObservedSettingsFile
@@ -575,7 +591,7 @@ void AppSettings::pollSettingsFile() {
     // QFileSystemWatcher implementations can miss in-place changes on some
     // platforms. The settings file is small, so byte comparison provides a
     // portable fallback for edits as well as delete/recreate cycles.
-    if (changed) scheduleReload();
+    return changed;
 }
 
 void AppSettings::scheduleReload() { m_reloadTimer.start(); }

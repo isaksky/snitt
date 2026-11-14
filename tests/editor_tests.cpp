@@ -69,6 +69,8 @@ private slots:
     void init();
     void rememberedEditorPreferences();
     void invalidEditorPreferences();
+    void editorStateDoesNotReloadConfiguration();
+    void editorStateSaveFailureRecovers();
     void captureCursors();
     void cutsJoinExactPixels();
     void invalidCutsDoNotAlterHistory();
@@ -330,6 +332,76 @@ void EditorTests::invalidEditorPreferences() {
     QCOMPARE(restarted.editorState().value("tool").toString(), QString("cut"));
 }
 
+void EditorTests::editorStateDoesNotReloadConfiguration() {
+    QTemporaryDir dir;
+    const auto paths = settingsPaths(dir.path());
+    AppSettings settings(paths);
+    QSignalSpy reloaded(&settings, &AppSettings::reloaded);
+    QSignalSpy changed(&settings, &AppSettings::settingsChanged);
+    QSignalSpy failed(&settings, &AppSettings::reloadFailed);
+    settings.rememberEditorPreference("tool", "arrow");
+    QTest::qWait(700); // Directory notification, debounce and polling fallback.
+    QCOMPARE(reloaded.size(), 0);
+    QCOMPARE(changed.size(), 0);
+    QCOMPARE(failed.size(), 0);
+
+    QFile input(paths.settingsFile);
+    QVERIFY(input.open(QIODevice::ReadOnly));
+    const QByteArray original = input.readAll();
+    input.close();
+    const auto replaceConfiguration = [&](const QByteArray &contents) {
+        QSaveFile file(paths.settingsFile);
+        return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size() && file.commit();
+    };
+    QVERIFY(replaceConfiguration("[Colors]\ngood=invalid\n"));
+    QTRY_VERIFY(!failed.isEmpty());
+    QTest::qWait(700);
+    failed.clear();
+    changed.clear();
+    reloaded.clear();
+    settings.rememberEditorPreference("colorMode", "good");
+    QTest::qWait(700);
+    QCOMPARE(failed.size(), 0);
+    QCOMPARE(changed.size(), 0);
+    QCOMPARE(reloaded.size(), 0);
+    QVERIFY(!settings.lastError().isEmpty());
+
+    // Real configuration edits still apply, including atomic replacements.
+    QVERIFY(replaceConfiguration(original));
+    QTRY_VERIFY(settings.lastError().isEmpty());
+    QVERIFY(!reloaded.isEmpty());
+    QVERIFY(!changed.isEmpty());
+}
+
+void EditorTests::editorStateSaveFailureRecovers() {
+    QTemporaryDir dir;
+    const auto paths = settingsPaths(dir.path());
+    AppSettings settings(paths);
+    const QString statePath = dir.filePath("config/state.ini");
+    // A directory at the target file path reliably denies writes on both OSes.
+    QVERIFY(QDir().mkpath(statePath));
+    QSignalSpy failed(&settings, &AppSettings::editorStateSaveFailed);
+    QSignalSpy configFailed(&settings, &AppSettings::reloadFailed);
+    settings.rememberEditorPreference("tool", "arrow");
+    QCOMPARE(failed.size(), 1);
+    settings.rememberEditorPreference("colorMode", "good");
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(configFailed.size(), 0);
+    QCOMPARE(settings.editorState().value("tool").toString(), QString("arrow"));
+    QCOMPARE(settings.editorState().value("colorMode").toString(), QString("good"));
+
+    QVERIFY(QDir().rmdir(statePath));
+    settings.rememberEditorPreference("colorMode", "good");
+    QCOMPARE(failed.size(), 1);
+    AppSettings restarted(paths);
+    QCOMPARE(restarted.editorState(), settings.editorState());
+    QVERIFY(QFile::remove(statePath));
+    QVERIFY(QDir().mkpath(statePath));
+    settings.rememberEditorPreference("tool", "text");
+    QCOMPARE(failed.size(), 2); // A new failure after recovery gets one notice.
+    QCOMPARE(configFailed.size(), 0);
+}
+
 void EditorTests::captureCursors() {
     EditorCanvas canvas;
     QQuickItem pointer;
@@ -377,7 +449,8 @@ void EditorTests::captureCursors() {
         }
     }
     painter.end();
-    QVERIFY(preview.save("cursor-preview.png"));
+    const QString previewPath = qEnvironmentVariable("SNITT_CURSOR_PREVIEW");
+    if (!previewPath.isEmpty()) QVERIFY(preview.save(previewPath));
 #endif
 }
 
