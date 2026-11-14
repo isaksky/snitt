@@ -1280,6 +1280,8 @@ void EditorTests::qmlResizeTextDraft() {
     const QString draft = "One two three four five six seven eight nine ten";
     text->setProperty("text", draft);
     QTRY_VERIFY(handle->isVisible());
+    window->requestActivate();
+    QVERIFY(waitForEditorInput(window));
     const int originalLines = text->property("lineCount").toInt();
     const auto resizeTo = [&](qreal width) {
         const QPoint from = handle->mapToScene(QPointF(handle->width() / 2, handle->height() / 2)).toPoint();
