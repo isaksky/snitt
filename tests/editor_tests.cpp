@@ -444,7 +444,9 @@ void EditorTests::editorStateSavesOnApplicationExit() {
     QProcess child;
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.insert("SNITT_EDITOR_STATE_EXIT_PROBE", directory.path());
-    environment.insert("QT_QPA_PLATFORM", "offscreen");
+    // Packaged desktop probes contain only the native platform plugin; CI
+    // inherits offscreen from its parent without requiring it in release ZIPs.
+    environment.insert("QT_QPA_PLATFORM", QGuiApplication::platformName());
     child.setProcessEnvironment(environment);
     child.start(QCoreApplication::applicationFilePath(), {"editorStateSavesOnApplicationExit"});
     QVERIFY(child.waitForFinished(15000));
