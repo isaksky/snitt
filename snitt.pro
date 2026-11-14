@@ -9,6 +9,7 @@ macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 
 HEADERS += src/backend.h src/imagedocument.h src/editorcanvas.h src/annotationfont.h
 HEADERS += src/editorsessions.h
+HEADERS += src/editorpreferences.h src/capturecursor.h
 SOURCES += src/editorsessions.cpp
 HEADERS += src/clipboard.h
 SOURCES += src/clipboard.cpp

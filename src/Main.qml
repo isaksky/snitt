@@ -1351,6 +1351,9 @@ ApplicationWindow {
     EditorCanvas {
         id: canvas
         objectName: "canvas"
+        pointerArea: canvasPointer
+        Component.onCompleted: restorePreferences(appSettings.editorState())
+        onPreferenceChanged: (key, value) => appSettings.rememberEditorPreference(key, value)
         goodColor: appSettings.goodColor
         badColor: appSettings.badColor
         saveRoot: appSettings.picturesRoot
@@ -1368,9 +1371,10 @@ ApplicationWindow {
             textInput.forceActiveFocus()
         }
         MouseArea {
+            id: canvasPointer
+            objectName: "canvasPointer"
             anchors.fill: parent
             enabled: canvas.hasImage
-            cursorShape: canvas.arranging ? Qt.OpenHandCursor : canvas.tool === "text" ? Qt.IBeamCursor : Qt.CrossCursor
             onPressed: mouse => {
                 if (win.editingText) { win.commitText(); return }
                 canvas.forceActiveFocus()

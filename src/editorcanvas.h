@@ -2,6 +2,7 @@
 #include <QQuickPaintedItem>
 #include <QUrl>
 #include <QVariantList>
+#include <QPointer>
 #include "imagedocument.h"
 
 class EditorCanvas : public QQuickPaintedItem {
@@ -15,6 +16,7 @@ class EditorCanvas : public QQuickPaintedItem {
     Q_PROPERTY(qreal imageScale READ imageScale NOTIFY imageRectChanged)
     Q_PROPERTY(qreal previewPixelRatio READ previewPixelRatio NOTIFY imageRectChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
+    Q_PROPERTY(QQuickItem *pointerArea READ pointerArea WRITE setPointerArea)
     Q_PROPERTY(QColor ink READ ink WRITE setInk NOTIFY inkChanged)
     Q_PROPERTY(QString colorMode READ colorMode NOTIFY inkChanged)
     Q_PROPERTY(QColor goodColor READ goodColor WRITE setGoodColor NOTIFY inkChanged)
@@ -44,6 +46,9 @@ public:
     Q_INVOKABLE QSize nativeCanvasSize() const;
     QString tool() const { return m_tool; }
     void setTool(const QString &tool);
+    QQuickItem *pointerArea() const { return m_pointerArea; }
+    void setPointerArea(QQuickItem *area);
+    Q_INVOKABLE void restorePreferences(const QVariantMap &preferences);
     QColor ink() const { return m_ink; }
     void setInk(QColor ink);
     QString colorMode() const { return m_colorMode; }
@@ -96,6 +101,7 @@ signals:
     void error(const QString &message);
     void textRequested(qreal x, qreal y);
     void arrangementChanged();
+    void preferenceChanged(const QString &key, const QVariant &value);
 protected:
     void itemChange(ItemChange change, const ItemChangeData &data) override;
     void geometryChange(const QRectF &next, const QRectF &previous) override;
@@ -106,6 +112,8 @@ private:
     bool composeRegions(bool newSource = false);
     void clearRegions();
     int regionAt(const QPointF &point) const;
+    void updatePointerCursor();
+    QPointer<QQuickItem> m_pointerArea;
     ImageDocument m_document;
     QString m_tool = QStringLiteral("rect");
     QColor m_ink = QColor("#ef4444");

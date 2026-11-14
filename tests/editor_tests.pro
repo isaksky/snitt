@@ -5,6 +5,7 @@ TARGET = editor_tests
 TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
+HEADERS += ../src/editorpreferences.h ../src/capturecursor.h
 HEADERS += ../src/imagedocument.h ../src/editorcanvas.h ../src/annotationfont.h ../src/backend.h ../src/regionselector.h ../src/globalhotkey.h ../src/appsettings.h
 HEADERS += ../src/editorsessions.h ../src/appservice.h
 SOURCES += ../src/editorsessions.cpp ../src/appservice.cpp

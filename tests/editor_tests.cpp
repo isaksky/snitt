@@ -41,6 +41,8 @@
 #include "regionselector.h"
 #include "globalhotkey.h"
 #include "appsettings.h"
+#include "editorpreferences.h"
+#include "capturecursor.h"
 #include "annotationfont.h"
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -64,6 +66,10 @@ class EditorTests : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() { qmlRegisterType<PlaybackClock>("Snitt", 1, 0, "PlaybackClock"); }
+    void init();
+    void rememberedEditorPreferences();
+    void invalidEditorPreferences();
+    void captureCursors();
     void cutsJoinExactPixels();
     void invalidCutsDoNotAlterHistory();
     void undoRedoAndBranch();
@@ -219,6 +225,160 @@ static AppSettings::Paths settingsPaths(const QString &directory) {
     paths.defaultPicturesRoot = QDir(directory).filePath("Pictures/snitt");
     paths.defaultVideosRoot = QDir(directory).filePath("Videos/snitt");
     return paths;
+}
+
+void EditorTests::init() {
+    const QVariantMap defaults = editorPreferences::defaults();
+    for (auto it = defaults.begin(); it != defaults.end(); ++it)
+        isolatedSettings().rememberEditorPreference(it.key(), it.value());
+}
+
+void EditorTests::rememberedEditorPreferences() {
+    QTemporaryDir dir;
+    const auto paths = settingsPaths(dir.path());
+    AppSettings settings(paths);
+    QCOMPARE(settings.editorState(), editorPreferences::defaults());
+    QFile configuration(paths.settingsFile);
+    QVERIFY(configuration.open(QIODevice::ReadOnly));
+    const QByteArray originalConfiguration = configuration.readAll();
+    configuration.close();
+    const QString largePath = dir.filePath("large.png");
+    const QString tinyPath = dir.filePath("tiny.png");
+    QImage large(640, 480, QImage::Format_RGB32); large.fill(Qt::gray);
+    QImage tiny(16, 16, QImage::Format_RGB32); tiny.fill(Qt::gray);
+    QVERIFY(large.save(largePath));
+    QVERIFY(tiny.save(tinyPath));
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QQmlEngine engine;
+    EditorSessions editors(&engine, &settings);
+    QVERIFY(editors.isReady());
+    editors.openImage(QUrl::fromLocalFile(largePath));
+    auto *first = editors.windows().last()->findChild<EditorCanvas *>("canvas");
+    QVERIFY(first);
+    first->setInkMode("good");
+    first->adjustToolSize(120); // 6 px line
+    first->setTool("text");
+    first->adjustToolSize(120); // 26 px text
+    first->setTool("blur");
+    first->adjustToolSize(120); // 16 px blocks
+    first->setTool("arrow");
+    const QVariantMap chosen{{"tool", "arrow"}, {"colorMode", "good"},
+        {"strokeWidth", 6}, {"textSize", 26}, {"pixelBlockSize", 16}};
+    QCOMPARE(settings.editorState(), chosen);
+    editors.openImage(QUrl::fromLocalFile(largePath));
+    auto *second = editors.windows().last()->findChild<EditorCanvas *>("canvas");
+    QVERIFY(second);
+    QCOMPARE(second->tool(), QString("arrow"));
+    QCOMPARE(second->colorMode(), QString("good"));
+    QCOMPARE(second->strokeWidth(), 6);
+    QCOMPARE(second->textSize(), 26);
+    QCOMPARE(second->pixelBlockSize(), 16);
+    second->setTool("erase");
+    second->setInkMode("bad");
+    QCOMPARE(first->tool(), QString("arrow"));
+    QCOMPARE(first->colorMode(), QString("good"));
+    first->adjustToolSize(120);
+    QCOMPARE(settings.editorState().value("strokeWidth").toInt(), 8);
+    QCOMPARE(settings.editorState().value("tool").toString(), QString("erase"));
+    QCOMPARE(settings.editorState().value("colorMode").toString(), QString("bad"));
+    const QVariantMap beforeTiny = settings.editorState();
+    editors.openImage(QUrl::fromLocalFile(tinyPath));
+    auto *small = editors.windows().last()->findChild<EditorCanvas *>("canvas");
+    QVERIFY(small);
+    QCOMPARE(small->strokeWidth(), 2);
+    QCOMPARE(small->textSize(), 8);
+    QCOMPARE(small->pixelBlockSize(), 8);
+    small->setGoodColor(QColor("#123456"));
+    small->clear();
+    QCOMPARE(settings.editorState(), beforeTiny);
+    AppSettings restarted(paths);
+    QCOMPARE(restarted.editorState(), beforeTiny);
+    EditorSessions afterRestart(&engine, &restarted);
+    afterRestart.openImage(QUrl::fromLocalFile(largePath));
+    auto *restored = afterRestart.windows().last()->findChild<EditorCanvas *>("canvas");
+    QVERIFY(restored);
+    QCOMPARE(restored->tool(), QString("erase"));
+    QCOMPARE(restored->colorMode(), QString("bad"));
+    QCOMPARE(restored->strokeWidth(), 8);
+    QCOMPARE(restored->textSize(), 26);
+    QCOMPARE(restored->pixelBlockSize(), 16);
+    QVERIFY(configuration.open(QIODevice::ReadOnly));
+    QCOMPARE(configuration.readAll(), originalConfiguration);
+}
+
+void EditorTests::invalidEditorPreferences() {
+    QTemporaryDir dir;
+    const auto paths = settingsPaths(dir.path());
+    QDir().mkpath(QFileInfo(paths.settingsFile).absolutePath());
+    QSettings disk(dir.filePath("config/state.ini"), QSettings::IniFormat);
+    disk.setValue("Editor/tool", "unknown");
+    disk.setValue("Editor/colorMode", "custom");
+    disk.setValue("Editor/strokeWidth", -1);
+    disk.setValue("Editor/textSize", "huge");
+    disk.setValue("Editor/pixelBlockSize", 65);
+    disk.sync();
+    AppSettings settings(paths);
+    QCOMPARE(settings.editorState(), editorPreferences::defaults());
+    settings.rememberEditorPreference("tool", "unknown");
+    settings.rememberEditorPreference("textSize", 1.5);
+    settings.rememberEditorPreference("strokeWidth", QStringList{"4", "8"});
+    settings.rememberEditorPreference("unknown", true);
+    QCOMPARE(settings.editorState(), editorPreferences::defaults());
+    settings.rememberEditorPreference("tool", "cut");
+    AppSettings restarted(paths);
+    QCOMPARE(restarted.editorState().value("tool").toString(), QString("cut"));
+}
+
+void EditorTests::captureCursors() {
+    EditorCanvas canvas;
+    QQuickItem pointer;
+    canvas.setPointerArea(&pointer);
+    const auto checkCrosshair = [](const QCursor &cursor) {
+#ifdef Q_OS_WIN
+        QCOMPARE(cursor.shape(), Qt::BitmapCursor);
+        QVERIFY(!cursor.pixmap().isNull());
+        QCOMPARE(cursor.hotSpot(), QPoint(15, 15));
+#else
+        QCOMPARE(cursor.shape(), Qt::CrossCursor);
+#endif
+    };
+    checkCrosshair(pointer.cursor());
+    canvas.setTool("text");
+    QCOMPARE(pointer.cursor().shape(), Qt::IBeamCursor);
+    canvas.setTool("arrow");
+    checkCrosshair(pointer.cursor());
+    QVERIFY(canvas.loadRegions({QVariant::fromValue(pattern()), QVariant::fromValue(pattern())}));
+    QCOMPARE(pointer.cursor().shape(), Qt::OpenHandCursor);
+    canvas.annotate();
+    checkCrosshair(pointer.cursor());
+    RegionSelector selector(pattern(), QRect(0, 0, 400, 300), &isolatedSettings());
+    checkCrosshair(selector.cursor());
+    QCOMPARE(selector.findChild<QWidget *>("captureToolbar")->cursor().shape(), Qt::ArrowCursor);
+#ifdef Q_OS_WIN
+    QImage preview(320, 160, QImage::Format_RGB32);
+    QPainter painter(&preview);
+    const QList<qreal> ratios{1, 1.25, 1.5, 2};
+    for (int column = 0; column < ratios.size(); ++column) {
+        const qreal ratio = ratios[column];
+        const QCursor cursor = captureCursor::crosshair(ratio);
+        checkCrosshair(cursor);
+        const QPixmap pixmap = cursor.pixmap();
+        QCOMPARE(pixmap.size(), QSize(qCeil(32 * ratio), qCeil(32 * ratio)));
+        QCOMPARE(pixmap.devicePixelRatio(), ratio);
+        const QImage pixels = pixmap.toImage();
+        QCOMPARE(pixels.pixelColor(qFloor(15.5 * ratio), qFloor(15.5 * ratio)), QColor(Qt::black));
+        QCOMPARE(pixels.pixelColor(qFloor(14.5 * ratio), qFloor(8.5 * ratio)), QColor(Qt::white));
+        QCOMPARE(pixels.pixelColor(0, 0).alpha(), 0);
+        for (int row = 0; row < 4; ++row) {
+            painter.fillRect(column * 80, row * 40, 80, 40,
+                             QList<QColor>{Qt::white, QColor("#808080"), QColor("#303030"), Qt::black}[row]);
+            painter.drawPixmap(QPoint(column * 80 + 24, row * 40 + 4), pixmap);
+        }
+    }
+    painter.end();
+    QVERIFY(preview.save("cursor-preview.png"));
+#endif
 }
 
 static QByteArray readBytes(const QString &path) {

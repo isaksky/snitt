@@ -43,6 +43,8 @@ public:
     QString lastError() const { return m_lastError; }
     bool reloadNow();
     void attachGlobalHotkey(GlobalHotkey *hotkey);
+    Q_INVOKABLE QVariantMap editorState() const { return m_editorState; }
+    Q_INVOKABLE void rememberEditorPreference(const QString &key, const QVariant &value);
 signals:
     void settingsChanged();
     void errorChanged();
@@ -69,6 +71,8 @@ private:
     bool createGuideIfMissing(QString *error) const;
     bool createDefaultIniIfMissing(QString *error) const;
     QString initialIni() const;
+    QString editorStateFile() const;
+    void loadEditorState();
 
     Paths m_paths;
     QFileSystemWatcher m_watcher;
@@ -85,4 +89,5 @@ private:
     QString m_picturesRoot;
     QString m_videosRoot;
     QString m_lastError;
+    QVariantMap m_editorState;
 };

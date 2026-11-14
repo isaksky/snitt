@@ -7,6 +7,7 @@ HEADERS += ../src/mp4duration.h
 SOURCES += ../src/mp4duration.cpp
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
+HEADERS += ../src/editorpreferences.h ../src/capturecursor.h
 HEADERS += ../src/backend.h ../src/regionselector.h ../src/videorecorder.h ../src/trimsession.h ../src/savepaths.h ../src/appsettings.h ../src/globalhotkey.h
 SOURCES += recording_tests.cpp ../src/backend.cpp ../src/regionselector.cpp ../src/videorecorder.cpp ../src/trimsession.cpp ../src/appsettings.cpp ../src/globalhotkey.cpp
 macx {

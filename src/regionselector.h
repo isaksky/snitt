@@ -31,6 +31,7 @@ signals:
     void removeLastRequested();
     void accepted();
 protected:
+    bool event(QEvent *) override;
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;

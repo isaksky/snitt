@@ -5,6 +5,7 @@ TARGET = imagetool_tests
 TEMPLATE = app
 macx: QMAKE_MACOSX_DEPLOYMENT_TARGET = 15.0
 INCLUDEPATH += ../src
+HEADERS += ../src/editorpreferences.h ../src/capturecursor.h
 HEADERS += ../src/clipboard.h
 SOURCES += ../src/clipboard.cpp
 win32: LIBS += -luser32

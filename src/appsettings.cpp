@@ -1,4 +1,5 @@
 #include "appsettings.h"
+#include "editorpreferences.h"
 
 #include "globalhotkey.h"
 
@@ -257,6 +258,7 @@ bool AppSettings::createDefaultIniIfMissing(QString *error) const {
 }
 
 void AppSettings::initialize() {
+    loadEditorState();
     Candidate initial = defaults();
     publish(initial);
     QString error;
@@ -266,6 +268,34 @@ void AppSettings::initialize() {
     pollSettingsFile();
     if (QFileInfo::exists(m_paths.settingsFile)) reloadNow();
     watchFiles();
+}
+
+QString AppSettings::editorStateFile() const {
+    return QFileInfo(m_paths.settingsFile).dir().filePath(QStringLiteral("state.ini"));
+}
+
+void AppSettings::loadEditorState() {
+    m_editorState = editorPreferences::defaults();
+    QSettings state(editorStateFile(), QSettings::IniFormat);
+    state.setFallbacksEnabled(false);
+    state.beginGroup(QStringLiteral("Editor"));
+    for (auto it = m_editorState.begin(); it != m_editorState.end(); ++it) {
+        const QVariant value = editorPreferences::validated(it.key(), state.value(it.key()));
+        if (value.isValid()) it.value() = value;
+    }
+    if (state.status() != QSettings::NoError) m_editorState = editorPreferences::defaults();
+}
+
+void AppSettings::rememberEditorPreference(const QString &key, const QVariant &value) {
+    const QVariant valid = editorPreferences::validated(key, value);
+    if (!valid.isValid() || m_editorState.value(key) == valid) return;
+    m_editorState.insert(key, valid);
+    QSettings state(editorStateFile(), QSettings::IniFormat);
+    state.setValue(QStringLiteral("Editor/") + key, valid);
+    state.sync();
+    if (state.status() != QSettings::NoError)
+        emit reloadFailed(QStringLiteral("Could not save the last-used editor preferences to %1.")
+                          .arg(QDir::toNativeSeparators(editorStateFile())));
 }
 
 bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {

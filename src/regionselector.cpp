@@ -1,5 +1,7 @@
 #include "regionselector.h"
 #include "appsettings.h"
+#include "capturecursor.h"
+#include <QEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -83,7 +85,7 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     setAttribute(Qt::WA_OpaquePaintEvent);
     m_image.setDevicePixelRatio(1);
     setGeometry(geometry);
-    setCursor(Qt::CrossCursor);
+    setCursor(captureCursor::crosshair(devicePixelRatioF()));
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
 
@@ -165,6 +167,13 @@ RegionSelector::RegionSelector(QImage image, const QRect &geometry, AppSettings 
     updateToolbar();
     layoutControls();
     if (m_settings) connect(m_settings, &AppSettings::settingsChanged, this, &RegionSelector::updateToolbar);
+}
+
+bool RegionSelector::event(QEvent *event) {
+    const bool handled = QWidget::event(event);
+    if (event->type() == QEvent::DevicePixelRatioChange || event->type() == QEvent::Show)
+        setCursor(captureCursor::crosshair(devicePixelRatioF()));
+    return handled;
 }
 
 void RegionSelector::updateToolbar() {

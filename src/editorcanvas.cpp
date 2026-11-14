@@ -1,4 +1,6 @@
 #include "editorcanvas.h"
+#include "capturecursor.h"
+#include "editorpreferences.h"
 #include "annotationfont.h"
 #include "clipboard.h"
 #include <QClipboard>
@@ -17,6 +19,43 @@ EditorCanvas::EditorCanvas(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setAntialiasing(true);
     setSmooth(false);
     setClip(true);
+    connect(this, &EditorCanvas::toolChanged, this, &EditorCanvas::updatePointerCursor);
+    connect(this, &EditorCanvas::arrangementChanged, this, &EditorCanvas::updatePointerCursor);
+}
+
+void EditorCanvas::setPointerArea(QQuickItem *area) {
+    if (m_pointerArea == area) return;
+    if (m_pointerArea) m_pointerArea->unsetCursor();
+    m_pointerArea = area;
+    updatePointerCursor();
+}
+
+void EditorCanvas::updatePointerCursor() {
+    if (!m_pointerArea) return;
+    m_pointerArea->setCursor(m_arranging ? QCursor(Qt::OpenHandCursor)
+        : m_tool == "text" ? QCursor(Qt::IBeamCursor)
+        : captureCursor::crosshair(previewPixelRatio()));
+}
+
+void EditorCanvas::restorePreferences(const QVariantMap &preferences) {
+    QVariantMap values = editorPreferences::defaults();
+    for (auto it = preferences.begin(); it != preferences.end(); ++it) {
+        const QVariant valid = editorPreferences::validated(it.key(), it.value());
+        if (valid.isValid()) values.insert(it.key(), valid);
+    }
+    // Restore a snapshot without publishing user changes back to shared state.
+    cancel();
+    m_tool = values.value("tool").toString();
+    m_colorMode = values.value("colorMode").toString();
+    m_ink = m_colorMode == "good" ? m_goodColor : m_badColor;
+    m_strokeWidth = qMin(values.value("strokeWidth").toInt(), maxStrokeWidth());
+    m_textSize = qMin(values.value("textSize").toInt(), maxTextSize());
+    m_pixelBlockSize = qMin(values.value("pixelBlockSize").toInt(), maxPixelBlockSize());
+    m_wheelRemainder = 0;
+    emit toolChanged();
+    emit inkChanged();
+    emit sizeChanged();
+    update();
 }
 
 QString EditorCanvas::annotationFontFamily() const { return annotationfont::family(); }
@@ -48,6 +87,7 @@ QRectF EditorCanvas::imageRect() const {
 void EditorCanvas::itemChange(ItemChange change, const ItemChangeData &data) {
     QQuickPaintedItem::itemChange(change, data);
     if (change == ItemSceneChange || change == ItemDevicePixelRatioHasChanged) {
+        updatePointerCursor();
         emit imageRectChanged();
         update();
     }
@@ -60,11 +100,12 @@ void EditorCanvas::geometryChange(const QRectF &next, const QRectF &previous) {
 }
 
 void EditorCanvas::setTool(const QString &tool) {
-    if (tool == m_tool) return;
+    if (!editorPreferences::validated("tool", tool).isValid() || tool == m_tool) return;
     cancel();
     m_tool = tool;
     m_wheelRemainder = 0;
     emit toolChanged();
+    emit preferenceChanged(QStringLiteral("tool"), m_tool);
 }
 
 void EditorCanvas::setInk(QColor ink) {
@@ -99,6 +140,7 @@ void EditorCanvas::setInkMode(const QString &mode) {
     m_colorMode = mode;
     m_ink = color;
     emit inkChanged();
+    emit preferenceChanged(QStringLiteral("colorMode"), m_colorMode);
     update();
 }
 
@@ -124,11 +166,17 @@ void EditorCanvas::adjustToolSize(qreal wheelDelta) {
     if (!steps) return;
     m_wheelRemainder -= steps * 120;
     if (m_tool == "blur") {
+        const int previous = m_pixelBlockSize;
         m_pixelBlockSize = qBound(4, m_pixelBlockSize + steps * 2, maxPixelBlockSize());
+        if (previous != m_pixelBlockSize) emit preferenceChanged(QStringLiteral("pixelBlockSize"), m_pixelBlockSize);
     } else if (m_tool == "text") {
+        const int previous = m_textSize;
         m_textSize = qBound(8, m_textSize + steps, maxTextSize());
+        if (previous != m_textSize) emit preferenceChanged(QStringLiteral("textSize"), m_textSize);
     } else {
+        const int previous = m_strokeWidth;
         m_strokeWidth = qBound(1, m_strokeWidth + steps, maxStrokeWidth());
+        if (previous != m_strokeWidth) emit preferenceChanged(QStringLiteral("strokeWidth"), m_strokeWidth);
     }
     emit sizeChanged();
     update();

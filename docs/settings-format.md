@@ -71,6 +71,20 @@ picturesRoot=~/Pictures/work-captures
 videosRoot=/Volumes/archive/video-captures
 ```
 
+## Remembered editor choices
+
+Snitt automatically remembers the last annotation tool, Good/Bad mode, line
+thickness, text size, and pixelation block size across screenshots and restarts.
+New editor windows start with those choices; existing windows retain their own
+choices. Sizes may be limited to fit a small image without changing the saved
+preference. Each explicit change updates only that preference, so an older
+window cannot overwrite unrelated choices made in another window.
+
+These choices are stored in `state.ini` beside `settings.ini`. Snitt writes only
+the state file when remembering choices, preserving your configuration and its
+comments. Missing or invalid remembered values use the original defaults:
+Rectangle, Bad, 4 px lines, 24 px text, and 12 px pixelation blocks.
+
 ## Validation and live reload
 
 Snitt validates a complete candidate before applying it. It watches the file and its containing directory, debounces edits, and reloads both ordinary saves and atomic file replacements without restarting. A missing key uses its default; removing a key therefore restores that key's default after a successful reload. Unknown keys are ignored and preserved. A malformed INI file, invalid color or path, unsupported shortcut, conflicting binding, or unavailable native global hotkey leaves the last valid settings active and reports the specific key to fix. Correct the file and save it again to reload. If the file is removed while Snitt is running, the last valid values remain active; recreate the file to resume watching. Snitt creates the default file only when starting with no settings file and never replaces an existing file.
