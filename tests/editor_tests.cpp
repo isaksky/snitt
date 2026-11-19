@@ -87,6 +87,8 @@ private slots:
     void qmlResizeTextDraft();
     void qmlWheelSizes();
     void qmlSaveAndClose();
+    void qmlSaveAndCopyPath_data();
+    void qmlSaveAndCopyPath();
     void qmlKeyboardCommands();
     void qmlDismissal();
     void captureEditorPlacement();
@@ -1550,6 +1552,95 @@ void EditorTests::qmlSaveAndClose() {
     for (const QString &path : created) QVERIFY(QFileInfo::exists(path));
 }
 
+void EditorTests::qmlSaveAndCopyPath_data() {
+    QTest::addColumn<bool>("arrange");
+    QTest::addColumn<bool>("useMenu");
+    QTest::newRow("annotate-shortcut") << false << false;
+    QTest::newRow("annotate-menu") << false << true;
+    QTest::newRow("arrange-shortcut") << true << false;
+    QTest::newRow("arrange-menu") << true << true;
+}
+
+void EditorTests::qmlSaveAndCopyPath() {
+    QFETCH(bool, arrange);
+    QFETCH(bool, useMenu);
+    qmlRegisterType<EditorCanvas>("Snitt", 1, 0, "EditorCanvas");
+    if (QQuickStyle::name() != "Material") QQuickStyle::setStyle("Material");
+    QTemporaryDir dir;
+    auto paths = settingsPaths(dir.path());
+    paths.defaultPicturesRoot = dir.filePath(QString::fromUtf8("Saved pictures – café"));
+    AppSettings settings(paths);
+    const QString input = dir.filePath("input.png");
+    QVERIFY(pattern().save(input));
+    QQmlEngine engine;
+    EditorSessions editors(&engine, &settings);
+    QVERIFY(editors.isReady());
+    editors.openImage(QUrl::fromLocalFile(input));
+    QCOMPARE(editors.windows().size(), 1);
+    QPointer<QQuickWindow> window = editors.windows().first();
+    auto *canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    if (arrange)
+        QVERIFY(canvas->loadRegions({pattern(), pattern()}));
+    else
+        canvas->addText(2, 2, 60, 40, "Edited", 14);
+    QVERIFY(waitForEditorInput(window));
+    QTRY_COMPARE(window->property("fitPasses").toInt(), 0);
+    const QImage expected(canvas->saveTo(dir.filePath("expected")));
+    QVERIFY(!expected.isNull());
+    QVERIFY(setClipboardText("previous clipboard"));
+
+    if (useMenu) {
+        auto *arrow = visualItem(window->contentItem(), arrange ? "arrangeCopyOptionsButton" : "copyOptionsButton");
+        auto *menu = window->findChild<QObject *>("copyMenu");
+        QVERIFY(arrow && menu);
+        const auto click = [&](QQuickItem *item) {
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                              item->mapToScene(item->boundingRect().center()).toPoint());
+        };
+        click(arrow);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->property("visible").toBool());
+        QVERIFY(window && window->isVisible());
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("previous clipboard"));
+        if (arrange) {
+            QVERIFY(atomicWrite(paths.settingsFile, "[Shortcuts]\ncopyPathClose=Shift+C|Ctrl+Alt+Shift+F11\n"));
+            QVERIFY(settings.reloadNow());
+        }
+        click(arrow);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        auto *item = visualItem(window->contentItem(), "copyPathMenuItem");
+        QVERIFY(item && item->isVisible());
+        QVERIFY2(item->width() >= item->implicitWidth(),
+                 qPrintable(QString("Menu row is %1 px wide but needs %2 px")
+                            .arg(item->width()).arg(item->implicitWidth())));
+        QCOMPARE(item->property("text").toString(), QString("Save and Copy Path"));
+        auto *hint = visualItem(item, "copyPathShortcutHint");
+        QVERIFY(hint && hint->isVisible());
+        QCOMPARE(hint->property("text").toString(), settings.shortcutHints().value("copyPathClose").toString());
+        click(item);
+    } else {
+        canvas->forceActiveFocus();
+        canvas->setSaveRoot(input); // A file cannot contain the dated output directory.
+        QTest::keyClick(window, Qt::Key_C, Qt::ShiftModifier);
+        QTRY_VERIFY(!window->property("notice").toString().isEmpty());
+        QVERIFY(window->isVisible() && canvas->hasImage());
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("previous clipboard"));
+        canvas->setSaveRoot(paths.defaultPicturesRoot);
+        QTest::keyClick(window, Qt::Key_C, Qt::ShiftModifier);
+    }
+
+    QTRY_VERIFY(window.isNull());
+    QDirIterator pngs(paths.defaultPicturesRoot, {"*.png"}, QDir::Files, QDirIterator::Subdirectories);
+    QVERIFY(pngs.hasNext());
+    const QString saved = pngs.next();
+    QVERIFY(!pngs.hasNext());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QDir::toNativeSeparators(saved));
+    QVERIFY(!QGuiApplication::clipboard()->mimeData()->hasImage());
+    QCOMPARE(QImage(saved), expected);
+}
+
 void EditorTests::qmlKeyboardCommands() {
 #ifdef Q_OS_WIN
     QGuiApplication::setFont(QFont("Segoe UI"));
@@ -1708,6 +1799,9 @@ void EditorTests::qmlKeyboardCommands() {
     canvas->begin(textPoint.x(), textPoint.y());
     QVERIFY(window->property("editingText").toBool());
     const QColor textInk = canvas->ink();
+    QTest::keyClick(window, Qt::Key_C, Qt::ShiftModifier);
+    QVERIFY(window->property("editingText").toBool());
+    QTest::keyClick(window, Qt::Key_Backspace);
     QTest::keyClick(window, Qt::Key_C);
     QTest::keyClick(window, Qt::Key_H);
     QTest::keyClick(window, Qt::Key_P);
@@ -1935,9 +2029,15 @@ void EditorTests::independentEditorSessions() {
     auto *captureBackend = backends.last();
     QVERIFY(captureBackend->capturing());
     QVERIFY(!first->isVisible());
+    auto *picker = captureBackend->m_selectors.first().data();
+    picker->hide();
+    editors.capture(); // The tray action should bring an existing picker back.
+    QVERIFY(picker->isVisible());
     editors.hotkeyCapture(); // A repeated press during region selection keeps one selector session.
     QCOMPARE(editors.windows().size(), 2);
-    emit captureBackend->m_selectors.first()->selected(pattern());
+    QCOMPARE(captureBackend->m_selectors.size(), 1);
+    QCOMPARE(captureBackend->m_selectors.first().data(), picker);
+    emit picker->selected(pattern());
     QTRY_VERIFY(first->isVisible() && second->isVisible());
     QVERIFY(first->property("editingText").toBool());
     QCOMPARE(draft->property("text").toString(), QString("unfinished text"));
@@ -3233,6 +3333,29 @@ void EditorTests::windowsClipboardContention() {
     QCOMPARE(QGuiApplication::clipboard()->image().convertToFormat(QImage::Format_ARGB32_Premultiplied),
              expected.convertToFormat(QImage::Format_ARGB32_Premultiplied));
     QCOMPARE(errors.size(), 1);
+
+    editors.openImage(QUrl::fromLocalFile(path));
+    window = editors.windows().first();
+    canvas = window->findChild<EditorCanvas *>("canvas");
+    QVERIFY(canvas);
+    const QString root = dir.filePath("path retry");
+    canvas->setSaveRoot(root);
+    {
+        ClipboardLock lock;
+        QVERIFY(lock.acquired());
+        QVERIFY(QMetaObject::invokeMethod(window, "saveAndCopyPath"));
+        QVERIFY(window && window->isVisible() && canvas->hasImage());
+    }
+    QDirIterator saved(root, {"*.png"}, QDir::Files, QDirIterator::Subdirectories);
+    QVERIFY(saved.hasNext());
+    const QString savedPath = QDir::toNativeSeparators(saved.next());
+    QVERIFY(window->property("notice").toString().contains(savedPath));
+    QVERIFY(QMetaObject::invokeMethod(window, "saveAndCopyPath"));
+    QTRY_VERIFY(window.isNull());
+    QCOMPARE(QGuiApplication::clipboard()->text(), savedPath);
+    QDirIterator afterRetry(root, {"*.png"}, QDir::Files, QDirIterator::Subdirectories);
+    QCOMPARE(QDir::toNativeSeparators(afterRetry.next()), savedPath);
+    QVERIFY(!afterRetry.hasNext());
 #else
     QSKIP("Windows native clipboard test");
 #endif
@@ -3547,6 +3670,18 @@ void EditorTests::settingsCopySaveAliases() {
     QVERIFY(atomicWrite(paths.settingsFile, changed));
     QVERIFY(settings.reloadNow());
     QCOMPARE(settings.shortcuts().value("copyClose").toStringList().size(), 2);
+
+    changed = defaults;
+    changed.replace("copyPathClose=Shift+C\n", "");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    QCOMPARE(settings.shortcuts().value("copyPathClose").toStringList(), QStringList{"Shift+C"});
+    changed.replace("toolRectangle=R\n", "toolRectangle=Shift+C\n");
+    QVERIFY(atomicWrite(paths.settingsFile, changed));
+    QVERIFY(settings.reloadNow());
+    QCOMPARE(settings.shortcuts().value("toolRectangle").toStringList(), QStringList{"Shift+C"});
+    QVERIFY(settings.shortcuts().value("copyPathClose").toStringList().isEmpty());
+    QCOMPARE(readBytes(paths.settingsFile), changed);
 }
 
 void EditorTests::captureEditorPlacement() {

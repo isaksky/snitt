@@ -57,7 +57,7 @@ public:
     void setGoodColor(const QColor &color);
     void setBadColor(const QColor &color);
     QString saveRoot() const { return m_saveRoot; }
-    void setSaveRoot(const QString &root) { m_saveRoot = root; }
+    void setSaveRoot(const QString &root);
     Q_INVOKABLE void setInkMode(const QString &mode);
     int strokeWidth() const { return m_strokeWidth; }
     int textSize() const { return m_textSize; }
@@ -80,6 +80,7 @@ public:
     Q_INVOKABLE bool load(const QUrl &url);
     Q_INVOKABLE bool paste();
     Q_INVOKABLE bool copy();
+    Q_INVOKABLE bool saveAndCopyPath();
     Q_INVOKABLE QString save();
     QString saveTo(const QString &picturesDirectory);
     Q_INVOKABLE void clear();
@@ -121,6 +122,7 @@ private:
     QColor m_badColor = QColor("#ef4444");
     QString m_colorMode = QStringLiteral("bad");
     QString m_saveRoot;
+    QString m_pendingCopyPath;
     int m_strokeWidth = 4;
     int m_textSize = 24;
     int m_pixelBlockSize = 12;

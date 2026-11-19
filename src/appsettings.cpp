@@ -32,6 +32,7 @@ const ShortcutDefinition shortcutDefinitions[] = {
     {"openImage", "Ctrl+O", "Meta+O", "editorBase"},
     {"pasteImage", "Ctrl+V", "Meta+V", "editorBase"},
     {"copyClose", "C", "C", "editorBase"},
+    {"copyPathClose", "Shift+C", "Shift+C", "editorBase"},
     {"saveClose", "S", "S", "editorBase"},
     {"dismiss", "Escape", "Escape", "editorBase"},
     {"undo", "Ctrl+Z", "Meta+Z", "editorAnnotate"},
@@ -135,6 +136,19 @@ QString normalizedRoot(QString value, const QString &fallback, QString *error, c
 bool sameSequence(const QString &left, const QString &right) {
     return QKeySequence::fromString(left, QKeySequence::PortableText)
         == QKeySequence::fromString(right, QKeySequence::PortableText);
+}
+
+bool editorShortcutClaimed(const QVariantMap &shortcuts, const QString &key, const QString &except = {}) {
+    for (const auto &definition : shortcutDefinitions) {
+        const QString name = QString::fromLatin1(definition.name);
+        const QString context = QString::fromLatin1(definition.context);
+        if (name == except || (context != QStringLiteral("global") && !context.startsWith(QStringLiteral("editor"))))
+            continue;
+        const QStringList bindings = shortcuts.value(name).toStringList();
+        for (const QString &binding : bindings)
+            if (sameSequence(binding, key)) return true;
+    }
+    return false;
 }
 }
 
@@ -387,6 +401,13 @@ bool AppSettings::parseCandidate(Candidate *candidate, QString *error) const {
         candidate->configuredShortcuts.insert(key, alternatives);
     }
 
+    // Older configurations may already use the new default for another editor action.
+    const QString copyPath = QStringLiteral("copyPathClose");
+    const QString defaultCopyPathKey = candidate->configuredShortcuts.value(copyPath).toStringList().value(0);
+    if (!input.contains(QStringLiteral("Shortcuts/copyPathClose"))
+        && editorShortcutClaimed(candidate->configuredShortcuts, defaultCopyPathKey, copyPath))
+        candidate->configuredShortcuts.insert(copyPath, QStringList{});
+
     const QString good = input.contains(QStringLiteral("Colors/good"))
         ? input.value(QStringLiteral("Colors/good")).toString().trimmed() : candidate->goodColor.name();
     const QString bad = input.contains(QStringLiteral("Colors/bad"))
@@ -487,16 +508,7 @@ void AppSettings::publish(const Candidate &candidate) {
         QStringList sequences = m_shortcuts.value(alias.first).toStringList();
         if (sequences.isEmpty()) continue;
         const QString key = alias.second.toString(QKeySequence::PortableText);
-        bool claimed = false;
-        for (const auto &definition : shortcutDefinitions) {
-            const QString context = QString::fromLatin1(definition.context);
-            if ((context == QStringLiteral("global") || context.startsWith(QStringLiteral("editor")))
-                && m_shortcuts.value(QString::fromLatin1(definition.name)).toStringList().contains(key)) {
-                claimed = true;
-                break;
-            }
-        }
-        if (!claimed) {
+        if (!editorShortcutClaimed(m_shortcuts, key)) {
             sequences.append(key);
             m_shortcuts.insert(alias.first, sequences);
         }

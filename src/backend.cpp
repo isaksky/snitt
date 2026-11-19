@@ -10,6 +10,7 @@
 #include <QPixmap>
 #include <QDir>
 #include <QWindow>
+#include <utility>
 #include "regionselector.h"
 #include "appsettings.h"
 #ifdef Q_OS_MACOS
@@ -270,12 +271,10 @@ void Backend::captureNextScreen() {
 }
 
 void Backend::showSelectors() {
-    QPointer<RegionSelector> active;
     for (const auto &screen : m_screens) {
         if (screen.image.isNull()) continue;
         auto *selector = new RegionSelector(screen.image, screen.geometry, m_settings);
         m_selectors.append(selector);
-        if (screen.geometry.contains(QCursor::pos())) active = selector;
         connect(selector, &RegionSelector::canceled, this, [this] { finish(); });
         connect(selector, &RegionSelector::selected, this, [this, selector](const QImage &image) {
             if (!m_capturing) return;
@@ -336,8 +335,18 @@ void Backend::showSelectors() {
         return;
     }
     updateSelections();
-    for (auto selector : m_selectors) selector->show();
-    if (!active) active = m_selectors.first();
+    activateSelectors();
+}
+
+void Backend::activateSelectors() {
+    RegionSelector *active = nullptr;
+    const QPoint cursor = QCursor::pos();
+    for (RegionSelector *selector : std::as_const(m_selectors)) {
+        if (!selector) continue;
+        selector->show();
+        if (!active || selector->geometry().contains(cursor)) active = selector;
+    }
+    if (!active) return;
     active->raise();
     active->activateWindow();
     active->setFocus();

@@ -125,7 +125,10 @@ void EditorSessions::hotkeyCapture() {
 }
 
 void EditorSessions::capture(bool multiple, bool video) {
-    if (m_capture) return;
+    if (m_capture) {
+        m_capture->backend->activateSelectors();
+        return;
+    }
     for (auto *session : m_sessions) {
         if (!qobject_cast<TrimSession *>(session->backend->trim())->path().isEmpty()) {
             activate(session);

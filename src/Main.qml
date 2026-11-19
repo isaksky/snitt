@@ -31,8 +31,9 @@ ApplicationWindow {
     readonly property string commandKey: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
     readonly property var keys: appSettings.shortcutHints
     readonly property var shortcuts: appSettings.shortcuts
-    readonly property bool shortcutsOn: !editingText && !backend.capturing && !backend.recording && !reviewWindow.visible && !openDialog.visible
+    readonly property bool editorAcceptsShortcuts: !editingText && !backend.capturing && !backend.recording && !reviewWindow.visible && !openDialog.visible
         && !rearrangeDialog.visible && !captureErrorDialog.visible
+    readonly property bool shortcutsOn: editorAcceptsShortcuts && !copyMenu.visible
     readonly property bool annotationShortcuts: shortcutsOn && !canvas.arranging
     readonly property bool imageInputShortcuts: shortcutsOn && (!canvas.hasImage || canvas.arranging)
     readonly property bool captureShortcuts: shortcutsOn && (sessionManager !== null || !canvas.hasImage || canvas.arranging)
@@ -100,11 +101,13 @@ ApplicationWindow {
     function finish() {
         commitText()
         canvas.cancel()
-        if (canvas.copy()) {
-            win.hide(); canvas.clear()
-            if (sessionManager) sessionManager.closeEditor(win)
-            else appSettings.saveEditorState()
-        }
+        if (canvas.copy()) dismissEditor()
+    }
+    function saveAndCopyPath() {
+        copyMenu.close()
+        commitText()
+        canvas.cancel()
+        if (canvas.saveAndCopyPath()) dismissEditor()
     }
     function saveAndClose() {
         commitText()
@@ -859,6 +862,11 @@ ApplicationWindow {
         onActivated: win.finish()
     }
     Shortcut {
+        sequences: win.shortcuts.copyPathClose
+        enabled: win.editorAcceptsShortcuts && canvas.hasImage
+        onActivated: win.saveAndCopyPath()
+    }
+    Shortcut {
         sequences: win.shortcuts.saveClose; enabled: win.shortcutsOn && canvas.hasImage
         onActivated: win.saveAndClose()
     }
@@ -934,6 +942,65 @@ ApplicationWindow {
         }
     }
 
+    Menu {
+        id: copyMenu
+        objectName: "copyMenu"
+        popupType: Popup.Item
+        implicitWidth: Math.ceil(copyPathItem.implicitWidth + leftPadding + rightPadding)
+        // Open immediately, including when the Windows render loop is idle.
+        enter: null
+        exit: null
+        MenuItem {
+            id: copyPathItem
+            objectName: "copyPathMenuItem"
+            text: "Save and Copy Path"
+            rightPadding: leftPadding + (copyPathHint.text.length ? spacing + copyPathHint.implicitWidth : 0)
+            onTriggered: win.saveAndCopyPath()
+            Label {
+                id: copyPathHint
+                objectName: "copyPathShortcutHint"
+                anchors.right: parent.right
+                anchors.rightMargin: copyPathItem.leftPadding
+                anchors.verticalCenter: parent.verticalCenter
+                text: win.keys.copyPathClose
+                visible: text.length > 0
+                font: copyPathItem.font
+                color: Material.secondaryTextColor
+            }
+        }
+    }
+
+    component CopySegment: Rectangle {
+        required property Button control
+        property bool arrow: false
+        topLeftRadius: arrow ? 0 : 7
+        bottomLeftRadius: topLeftRadius
+        topRightRadius: arrow ? 7 : 0
+        bottomRightRadius: topRightRadius
+        color: !control.enabled ? "#30343b"
+            : canvas.arranging ? (control.down || control.hovered ? "#394149" : "#292e35")
+            : control.down ? "#84ccb0" : control.hovered ? "#b5efd8" : "#a3e6ca"
+        border.width: control.visualFocus ? 2 : 0
+        border.color: canvas.arranging ? "#91bff0" : "#142820"
+    }
+
+    component CopyOptionsButton: ShortcutButton {
+        id: copyOptions
+        text: "▾"
+        textColor: canvas.arranging ? "#dfe5ed" : "#142820"
+        font.pixelSize: 20
+        Accessible.name: "Copy options"
+        focusPolicy: Qt.TabFocus
+        enabled: canvas.hasImage
+        implicitWidth: 28
+        leftPadding: 0
+        rightPadding: 0
+        ToolTip.visible: hovered || visualFocus
+        ToolTip.text: "Copy options"
+        onClicked: copyMenu.popup(copyOptions, width - copyMenu.width, height)
+        background: CopySegment { control: copyOptions; arrow: true }
+    }
+
     component PrimaryButton: Button {
         id: primaryControl
         property bool underlineShortcut: false
@@ -994,14 +1061,20 @@ ApplicationWindow {
                     ToolTip.text: "Save under " + appSettings.picturesRoot + "/YEAR/MONTH and close (" + win.keys.saveClose + ")"
                 }
                 ShortcutButton {
+                    id: arrangementCopy
                     objectName: "copyArrangementButton"
                     text: "Copy and close"
                     underlineShortcut: win.shortcuts.copyClose.indexOf("C") >= 0
                     visible: canvas.arranging
                     enabled: canvas.hasImage
                     onClicked: win.finish()
+                    background: CopySegment { control: arrangementCopy }
                     ToolTip.visible: pressed
                     ToolTip.text: "Copy the combined image and close (" + win.keys.copyClose + ")"
+                }
+                CopyOptionsButton {
+                    objectName: "arrangeCopyOptionsButton"
+                    Layout.leftMargin: -10
                 }
                 PrimaryButton {
                     objectName: "continueToAnnotateButton"
@@ -1324,6 +1397,7 @@ ApplicationWindow {
                             onClicked: win.saveAndClose()
                         }
                         PrimaryButton {
+                            id: annotationCopy
                             objectName: "copyButton"
                             text: "Copy"
                             underlineShortcut: win.shortcuts.copyClose.indexOf("C") >= 0
@@ -1337,6 +1411,11 @@ ApplicationWindow {
                             ToolTip.visible: pressed
                             ToolTip.text: "Copy image to clipboard and close (" + win.keys.copyClose + ")"
                             onClicked: win.finish()
+                            background: CopySegment { control: annotationCopy }
+                        }
+                        CopyOptionsButton {
+                            objectName: "copyOptionsButton"
+                            Layout.leftMargin: -2
                         }
                     }
                     Label {

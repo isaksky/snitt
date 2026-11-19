@@ -4,6 +4,8 @@
 #include "annotationfont.h"
 #include "clipboard.h"
 #include <QClipboard>
+#include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImageReader>
 #include "screenshotsave.h"
@@ -251,6 +253,7 @@ void EditorCanvas::paint(QPainter *p) {
 }
 
 void EditorCanvas::changed() {
+    m_pendingCopyPath.clear();
     cancel();
     m_strokeWidth = qBound(1, m_strokeWidth, maxStrokeWidth());
     m_textSize = qBound(8, m_textSize, maxTextSize());
@@ -297,6 +300,29 @@ bool EditorCanvas::copy() {
         emit error(QStringLiteral("Could not copy the image to the clipboard. Please try again."));
         return false;
     }
+    return true;
+}
+
+void EditorCanvas::setSaveRoot(const QString &root) {
+    if (m_saveRoot == root) return;
+    m_saveRoot = root;
+    m_pendingCopyPath.clear();
+}
+
+bool EditorCanvas::saveAndCopyPath() {
+    // If the clipboard was busy, retry with the same PNG until the image or save root changes.
+    if (m_pendingCopyPath.isEmpty() || !QFileInfo::exists(m_pendingCopyPath))
+        m_pendingCopyPath = save();
+    if (m_pendingCopyPath.isEmpty()) return false;
+
+    const QString path = QDir::toNativeSeparators(m_pendingCopyPath);
+    auto data = std::make_unique<QMimeData>();
+    data->setText(path);
+    if (!snittClipboard::publish(std::move(data))) {
+        emit error(QStringLiteral("Could not copy the path. Screenshot saved at %1. Try copying the path again.").arg(path));
+        return false;
+    }
+    m_pendingCopyPath.clear();
     return true;
 }
 

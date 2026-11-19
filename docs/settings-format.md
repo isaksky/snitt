@@ -19,6 +19,7 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | `openImage` | Open an image | `Ctrl+O` | `Meta+O` | Empty editor or Arrange |
 | `pasteImage` | Paste an image | `Ctrl+V` | `Meta+V` | Empty editor or Arrange |
 | `copyClose` | Copy and close | `C` | `C` | Editor |
+| `copyPathClose` | Save and Copy Path | `Shift+C` | `Shift+C` | Editor |
 | `saveClose` | Save and close | `S` | `S` | Editor |
 | `dismiss` | Cancel current action or close editor | `Escape` | `Escape` | Editor |
 | `undo` / `redo` | Undo / redo edits | `Ctrl+Z` / `Ctrl+Y` | `Meta+Z` / `Meta+Shift+Z` | Annotate |
@@ -39,6 +40,8 @@ Bindings may be empty to disable that optional shortcut. `globalCapture` is requ
 | `reviewCancel` | Cancel export or keep the original recording | `Escape` | Same | Trim review |
 
 Copy and Save also accept Ctrl+C / Ctrl+S on Windows and Command+C / Command+S on macOS. The displayed hints remain the configured shortcuts (C / S by default). These aliases are inactive while editing text, when the corresponding action is disabled, or when an explicit editor or global binding already uses that key. Existing settings files need no changes.
+
+In Arrange or Annotate, choose **Save and Copy Path** from the arrow beside **Copy**, or press **Shift+C**. Snitt saves the PNG, copies its full path as plain text, and closes the editor. If an older settings file already assigns Shift+C to another editor or global action, that binding takes priority and the menu remains available.
 
 For example, this changes the Pixelate tool and preserves the other shortcut entries:
 

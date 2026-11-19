@@ -53,6 +53,7 @@ public:
     Q_INVOKABLE QRect availableEditorBounds(QObject *editor) const;
     Q_INVOKABLE void positionEditorForCapture(QObject *editor);
     Q_INVOKABLE virtual void capture(bool multiple = false, bool video = false);
+    void activateSelectors();
     Q_INVOKABLE void finishRecording() { if (!m_pendingRecording) m_recorder.finish(); }
     Q_INVOKABLE void stopRecordingFromHotkey();
     Q_INVOKABLE void cancelRecording();
