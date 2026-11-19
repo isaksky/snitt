@@ -1,12 +1,12 @@
 {
-    "version": "0.2.5",
+    "version": "0.2.6",
     "description": "Capture, annotate, combine, and record screen regions",
     "homepage": "https://github.com/isaksky/snitt",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/isaksky/snitt/releases/download/v0.2.5/snitt_0.2.5_windows_amd64.zip",
-            "hash": "3b031004d6dd01eaa799be758fce80eb47ce3415cc947d3cd4a2dfe0f627e291"
+            "url": "https://github.com/isaksky/snitt/releases/download/v0.2.6/snitt_0.2.6_windows_amd64.zip",
+            "hash": "bf1bb7217ee954dadb7626f57fcd29c234dfa3634c060f30b744f0fc8f2d6395"
         }
     },
     "depends": "main/ffmpeg",
